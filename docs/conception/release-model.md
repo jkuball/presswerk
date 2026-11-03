@@ -413,6 +413,9 @@ one section per version, newest on top, in the commonly understood Keep a Change
 `prepare` renders the notes for the new version with the analyzer, writes them as a new section,
 and commits them in the release commit.
 
+M1 always declares one changelog for generated commit-derived notes. It does not require a
+manually maintained `Unreleased` section or other developer-written notes.
+
 The flake declares where the changelogs live, just as it declares the version files.
 `publish` reads the section for the candidate's version back from the evaluated commit.
 Republishing from a tag therefore reads the notes exactly as they were committed.

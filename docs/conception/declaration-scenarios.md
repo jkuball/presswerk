@@ -55,6 +55,8 @@ outside and evaluates `presswerk.default`.
         backend = "git-cliff";  # the default
       };
 
+      changelog.path = "CHANGELOG.md";
+
       publishers.github-release.default = {
         repository = "jkuball/presswerk";
         token.secret = "GITHUB_TOKEN";
@@ -155,7 +157,6 @@ other flakes.
           changelog.path = lib.mkDefault "CHANGELOG.md";
         })
         {
-          changelog.enable = true;
           versionFiles.cargo.presswerk = {};
 
           publishers.github-release.default = {
@@ -190,10 +191,9 @@ other flakes.
   option overrides the instance name when needed.
 - The standard defaults are `v{{ version }}` tags, Gitmoji analysis for the first milestone,
   `GITHUB_TOKEN` as the logical GitHub Release secret name, conventional root Cargo filenames,
-  and a changelog declared with `mkEnableOption` whose default path is `CHANGELOG.md`.
-- Disabled features are omitted from the normalized declaration. In particular, a disabled
-  changelog produces no `changelog` field; an enabled changelog produces its path without the
-  authoring-only `enabled` flag.
+  and `CHANGELOG.md` as the changelog path.
+- M1 always emits the changelog path. Generated notes are committed there as part of the master
+  record and the GitHub Release publisher reads them back for publication.
 - Only the normalized plain result is exposed at `presswerk.default` and read by the CLI.
 - Presswerk becomes a flake input. The module version is pinned in the master record, but the
   [press is not](product-shape.md#the-press-is-not-part-of-the-master): only declaration

@@ -1,6 +1,6 @@
 { config, lib, ... }:
 let
-  inherit (lib) mkEnableOption mkOption types;
+  inherit (lib) mkOption types;
 
   relativePath = types.addCheck types.str (
     path:
@@ -81,14 +81,10 @@ in
       description = "Commit convention analyzed for releases.";
     };
 
-    changelog = {
-      enable = mkEnableOption "the release changelog";
-
-      path = mkOption {
-        type = relativePath;
-        default = "CHANGELOG.md";
-        description = "Repository-relative changelog path.";
-      };
+    changelog.path = mkOption {
+      type = relativePath;
+      default = "CHANGELOG.md";
+      description = "Repository-relative changelog path.";
     };
 
     publishers.github-release = mkOption {

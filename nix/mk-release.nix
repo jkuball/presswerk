@@ -36,8 +36,6 @@ assert lib.assertMsg (failedAssertions == [ ]) "Release module assertions failed
 
   tag.format = config.tag.format;
   analyzer.convention = config.analyzer.convention;
-  publishers.github-release = config.publishers.github-release;
-}
-  // lib.optionalAttrs config.changelog.enable {
   changelog.path = config.changelog.path;
+  publishers.github-release = config.publishers.github-release;
 }

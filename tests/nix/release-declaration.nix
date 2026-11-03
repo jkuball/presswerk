@@ -19,10 +19,7 @@ let
       cargoToml = "nested/Cargo.toml";
       cargoLock = "nested/Cargo.lock";
     };
-    changelog = {
-      enable = true;
-      path = "docs/NEWS.md";
-    };
+    changelog.path = "docs/NEWS.md";
   };
 
   matchingVersions = mkRelease {
@@ -76,10 +73,7 @@ let
     (mkRelease {
       inherit sourceRoot;
       version = "1.2.3";
-      changelog = {
-        enable = true;
-        path = "docs\\NEWS.md";
-      };
+      changelog.path = "docs\\NEWS.md";
     }).changelog.path
   );
 
@@ -110,7 +104,7 @@ assert defaults.versionFiles == [
 ];
 assert defaults.tag.format == "v{{ version }}";
 assert defaults.analyzer.convention == "gitmoji";
-assert !(defaults ? changelog);
+assert defaults.changelog == { path = "CHANGELOG.md"; };
 assert defaults.publishers.github-release.default.token.secret == "GITHUB_TOKEN";
 assert overrides.version == "1.2.3";
 assert overrides.versionFiles == [

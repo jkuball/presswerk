@@ -15,8 +15,7 @@ pub struct ReleaseDeclaration {
     pub version_files: Vec<VersionFile>,
     pub tag: Tag,
     pub analyzer: Analyzer,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub changelog: Option<Changelog>,
+    pub changelog: Changelog,
     pub publishers: Publishers,
 }
 
@@ -51,10 +50,7 @@ impl ReleaseDeclaration {
             version_file.validate()?;
         }
         self.tag.validate()?;
-
-        if let Some(changelog) = &self.changelog {
-            validate_relative_path(&changelog.path)?;
-        }
+        validate_relative_path(&self.changelog.path)?;
 
         for (name, publisher) in &self.publishers.github_release {
             if name.is_empty() {
@@ -261,6 +257,7 @@ mod tests {
         ],
         "tag": { "format": "v{{ version }}" },
         "analyzer": { "convention": "gitmoji" },
+        "changelog": { "path": "CHANGELOG.md" },
         "publishers": {
             "github-release": {
                 "default": {
@@ -272,24 +269,28 @@ mod tests {
     }"#;
 
     #[test]
-    fn parses_the_m1_schema_with_an_optional_changelog() {
+    fn parses_the_m1_schema_with_a_required_changelog() {
         let declaration = ReleaseDeclaration::from_json(DECLARATION).unwrap();
         assert_eq!(declaration.schema_version, 1);
         assert_eq!(declaration.version, Version::new(1, 2, 3));
-        assert_eq!(declaration.changelog, None);
-
-        let with_changelog = DECLARATION.replace(
-            "\"publishers\"",
-            "\"changelog\": { \"path\": \"CHANGELOG.md\" }, \"publishers\"",
-        );
         assert_eq!(
-            ReleaseDeclaration::from_json(&with_changelog)
-                .unwrap()
-                .changelog,
-            Some(Changelog {
+            declaration.changelog,
+            Changelog {
                 path: "CHANGELOG.md".into()
-            })
+            }
         );
+    }
+
+    #[test]
+    fn rejects_a_missing_changelog() {
+        let missing = DECLARATION.replace(
+            "        \"changelog\": { \"path\": \"CHANGELOG.md\" },\n",
+            "",
+        );
+        assert!(matches!(
+            ReleaseDeclaration::from_json(&missing).unwrap_err(),
+            DeclarationError::InvalidDeclaration(_)
+        ));
     }
 
     #[test]

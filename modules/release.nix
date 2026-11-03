@@ -13,7 +13,6 @@ in
 
     presswerk.default = mkRelease {
       sourceRoot = ../.;
-      changelog.enable = true;
       versionFiles.cargo.presswerk = { };
       publishers.github-release.default.repository = "jkuball/presswerk";
     };
