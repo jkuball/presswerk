@@ -88,8 +88,8 @@ private repository inside an organization, it has failed. Concretely, this means
 1. The release configuration is declared in the consumer's flake and read by the CLI. Its exact
    shape is open (see [product shape](product-shape.md)).
 1. A flake-parts module is an optional convenience layer that produces the same declaration.
-1. Releases can be run from a local machine as well as from any CI system, with the same safety
-   checks.
+1. Releases can eventually be run from a local machine as well as from any CI system, with the
+   same safety checks. Automatic CI-driven releases come first.
 1. The core is runtime-agnostic and contains no code specific to one CI system. Runtime wiring
    is the consumer's job, helped by documentation and possibly thin wrappers such as a GitHub
    Action.
@@ -97,8 +97,8 @@ private repository inside an organization, it has failed. Concretely, this means
 1. A candidate is identified by repository, commit, and version.
 1. The version is the first thing a release commits. It is committed before final candidate
    artifacts are built. This is a hard requirement.
-1. Artifacts for several systems are supported from the first release. Presswerk's own first
-   release ships static binaries for at least `x86_64-linux` and `aarch64-darwin`.
+1. Artifacts for several systems are a goal, but Presswerk's first self-release does not need
+   binary assets. Its initial CI targets `x86_64-linux` only.
 1. Commit analysis and release-note rendering are mandatory features behind a replaceable
    adapter. git-cliff is the first implementation.
 1. Publication is idempotent: rerunning the same candidate completes missing state and never

@@ -2,7 +2,8 @@
 
 Concrete release cases, each with a Git graph and the terminal session a developer would see.
 Everything here is illustrative: command names, flags, and output are sketches meant to try
-out the developer experience before the design settles.
+out the developer experience before the design settles. Many scenarios describe later features;
+the first milestone prioritizes automatic CI-driven self-release.
 
 The examples assume:
 
@@ -232,8 +233,9 @@ pending release  1.4.0 at 3b4c5d6 is not published yet
 `presswerk prepare` to release again.
 ```
 
-`publish` exits successfully here: the failed pipeline of `3b4c5d6` is already the alarm (see
-[pending releases](release-model.md#pending-releases)).
+`publish` exits with failure while the later commit inherits this untagged release version.
+The diagnostic reports a pending release; Git alone does not establish whether its CI has
+failed or is still running (see [pending releases](release-model.md#pending-releases)).
 
 ```mermaid
 gitGraph
@@ -381,14 +383,10 @@ committed  6e7f8a9  chore(release): 1.4.0-rc.2
 pushed     main
 ```
 
-The pushed release commit triggers CI again. Its tag does not exist yet, because `publish` only
-runs after CI passed, so the release is pending and `prepare` does nothing:
-
-```console
-$ presswerk prepare --pre rc --push
-pending release  1.4.0-rc.2 at 6e7f8a9 is not published yet
-Nothing to prepare until it is published or reverted.
-```
+The runtime runs CI for the exact release commit. It is the candidate to publish, not a later
+commit inheriting a pending version. Once its checks pass, `publish` creates `v1.4.0-rc.2`.
+A later commit encountered before publication would instead report the pending release and
+fail.
 
 After `publish` created `v1.4.0-rc.2`, the next push to main runs `prepare` normally, with
 `v1.4.0-rc.2` as the previous release.
@@ -423,40 +421,25 @@ Had the developer also written a correct `CHANGELOG.md` section, with a valid su
 version at least as high as the analysis requires, `publish` would have released it like any
 other release commit. `prepare` is a convenience, not a requirement.
 
-## 13. Adopting an existing flake
+## 13. First automatic release
 
-A project at version `0.3.0` was never released. The developer adds the declaration and a
-`CHANGELOG.md` section for `0.3.0` in one boundary commit. Its parent has no declaration, so it
-counts as `0.0.0`, and the commit is the first release commit.
+A fresh repository has no release tags. Its implicit baseline is `0.0.0`, and the initial
+analysis includes the root commit. Normal CI-driven preparation creates the first release
+commit when the history contains a release-worthy Gitmoji. There is no manual bootstrap tag,
+release commit, or special command.
 
 ```mermaid
 gitGraph
-  commit id: "feat: first feature"
-  commit id: "fix: something"
-  commit id: "chore: adopt presswerk, release 0.3.0" type: HIGHLIGHT tag: "v0.3.0"
-  commit id: "feat: next feature"
+  commit id: "🎉 Begin project"
+  commit id: "✨ Add first feature"
+  commit id: "🔖 Prepare first release" type: HIGHLIGHT tag: "v0.1.0"
 ```
 
-```console
-$ presswerk publish
-candidate  5a6b7c8  0.3.0  introduces Presswerk (parent counts as 0.0.0) -> first release
+CI checks the generated release commit and publishes its exact tag and GitHub Release. Under
+the Gitmoji catalog, `🎉` has no SemVer bump of its own, while `✨` is a minor change, so the
+implicit `0.0.0` baseline becomes `0.1.0`.
 
-tag      v0.3.0 (annotated)          missing  -> created
-github   release v0.3.0              missing  -> created
-
-Released 0.3.0.
-```
-
-Had the developer committed only the declaration, `publish` would have refused it:
-
-```console
-$ presswerk publish
-candidate  4f2a91c  0.3.0  introduces Presswerk at version 0.3.0, but is not a valid release commit:
-  - CHANGELOG.md has no section for 0.3.0
-
-If 0.3.0 was released before Presswerk, tag that commit as v0.3.0.
-To release 0.3.0 now, add its section to CHANGELOG.md in the same commit.
-```
+Adoption of an already versioned or released project is a separate, open question.
 
 ## Questions these scenarios raise
 

@@ -13,6 +13,11 @@ relevant document and remove it from this list.
 
 ## Release flow
 
+- how GitHub Actions triggers candidate CI and handles overlapping pushes without advancing a
+  run to a newer commit, including whether explicit `workflow_dispatch` using `GITHUB_TOKEN`
+  is sufficient and how an optional stale-run check is configured;
+- whether automatic recovery should ever be added beyond M1's manual retry, revert, and CI
+  rerun;
 - the preparation-branch flow, deliberately after the first release (see
   [release model](release-model.md#preparation-branches-later)): recording the base the notes
   were rendered from, and whether human commits on the preparation branch are incorporated
@@ -24,7 +29,8 @@ relevant document and remove it from this list.
   [product shape](product-shape.md#shape-of-the-declaration));
 - per-system handling (the output is `presswerk.default`; other names are not supported yet);
 - exact analyzer options for conventions and backends;
-- required Nix version for nix-bindings-rust, and whether the CLI is distributed outside Nix.
+- whether to embed Nix through nix-bindings-rust or invoke a Nix CLI, the corresponding runtime
+  requirement, and whether the CLI is distributed outside Nix.
 
 ## Developer experience
 
@@ -39,12 +45,13 @@ relevant document and remove it from this list.
 - build metadata;
 - pre-release identifiers other than `rc` (`alpha`, `beta`) and switching between them;
 - default branch policy;
+- how an existing versioned repository without Presswerk tags is distinguished from a fresh
+  repository's implicit `0.0.0` baseline;
 - stable candidate integration.
 
 ## Commit analysis and changelog
 
 - analyzer interface, independent of git-cliff;
-- default handling of unknown commits;
 - whether changelog-merge is merely documented or directly integrated;
 - layout of the place for developer-written notes (such as `Unreleased`) and how it reaches
   templates;

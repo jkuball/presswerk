@@ -1,7 +1,10 @@
 # Presswerk documentation
 
 Presswerk is at the conception stage. These documents describe intent, not an implementation
-contract. Anything marked as illustrative or open may still change completely.
+contract. The [self-release milestone](roadmap.md#self-release-milestone) sets the current
+scope; many examples describe later functionality. GitHub issues and milestones will track
+implementation, while these conception files remain useful local design references.
+Illustrative or open details may still change.
 
 | Document | Contents |
 | --- | --- |
@@ -22,6 +25,9 @@ contract. Anything marked as illustrative or open may still change completely.
 - [semantic-release](https://github.com/semantic-release/semantic-release)
 - [Python Semantic Release](https://python-semantic-release.readthedocs.io/en/latest/)
 - [git-cliff](https://git-cliff.org/)
+- [Gitmoji specification](https://gitmoji.dev/specification) and
+  [Gitmoji catalog](https://github.com/carloscuesta/gitmoji/blob/master/packages/gitmojis/src/gitmojis.json)
+- [rust-flake single-crate example](https://github.com/juspay/rust-flake/blob/main/examples/single-crate/flake.nix)
 - [minijinja](https://github.com/mitsuhiko/minijinja)
 - [changelog-merge](https://github.com/cachix/changelog-merge)
 - [nix-bindings-rust](https://github.com/cachix/nix-bindings-rust)

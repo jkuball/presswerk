@@ -55,15 +55,24 @@ Presswerk follows [SemVer](https://semver.org/) strictly. Item 4 of the specific
 major version zero is for initial development and anything may change at any time; item 5 says
 `1.0.0` defines the public API. When that point is reached is a human decision, so Presswerk
 never bumps to `1.0.0` on its own. It only happens when the developer asks for it explicitly,
-with `prepare --major` on a `0.y.z` version.
+possibly with `prepare --major` on a `0.y.z` version; the command interface is not settled.
 
-SemVer does not say how to bump within `0.x`. Presswerk follows the common convention, also
-used by Cargo: on `0.y.z`, a breaking change bumps `y`, and everything else bumps `z`.
+SemVer does not prescribe how to bump within `0.x`. Presswerk maps the analyzer's bump levels
+as follows:
 
-Without a flag, the analysis decides the bump, except that it never moves to `1.0.0`.
-`prepare --major`, `--minor`, and `--patch` override it with an explicit level. The flags name
-literal SemVer positions. `prepare` fails if the analysis requires a higher level than the one
-selected; on `0.y.z`, a breaking change therefore rejects `--patch`.
+| Analyzer recommendation | `0.4.2` becomes |
+| --- | --- |
+| patch | `0.4.3` |
+| minor | `0.5.0` |
+| major or breaking | `0.5.0` |
+
+For Gitmoji, this uses the catalog's SemVer levels: a bug fix is a patch, a feature is a minor
+change, and a breaking change also increases the minor component until `1.0.0` is explicitly
+chosen.
+
+Without an override, analysis decides the bump, except that it never moves to `1.0.0` on its
+own. Explicit overrides are a later interface question; they must not select a lower bump than
+the analysis requires.
 
 ## Release flow
 
@@ -73,7 +82,8 @@ Committing the version before building means a release has two steps:
 1. That commit goes through CI, and only then does `publish` release it.
 
 This is how Presswerk gets a pure release, where everything published is derived from one
-commit. It costs one extra commit per release.
+commit. It costs one extra commit per release. In the first milestone CI performs preparation
+automatically; no separate local preparation command is required.
 
 `publish` decides from the commit alone whether it is a release. Being a
 [release commit](glossary.md#release-commit) is a structural property: the commit changes the
@@ -84,7 +94,7 @@ with a commit depends on whether its version changed and where the tag for its v
 | --- | --- | --- | --- |
 | either | on a strict ancestor | ordinary commit | nothing |
 | changed | missing | new release | validates, then publishes |
-| unchanged | missing | inherits a [pending release](#pending-releases) | reports it and exits successfully |
+| unchanged | missing | inherits a [pending release](#pending-releases), except for the initial baseline | fails and reports it |
 | changed | on this commit | retry or republish | completes missing state |
 | unchanged | on this commit | invalid candidate | stops |
 | either | on a commit that is not an ancestor | conflict | stops |
@@ -94,9 +104,10 @@ points to.
 
 A tag on an ancestor covers ordinary development after a release, and the cases where the
 version returns to one that is already released: a revert of a failed release commit, and
-adopting a project whose current version was released before Presswerk. A commit that inherits
-an unpublished version is a fixup after a failed release commit; under the strict rule below it
-is reported, never published.
+adopting a project whose current version was released before Presswerk. It classifies the commit
+but does not prove the previous release completed. A commit that inherits an unpublished version
+is a fixup after a failed release commit; under the strict rule below it is reported, never
+published.
 
 Classification comes first. Two kinds of checks follow:
 
@@ -121,13 +132,20 @@ A new release is only published if its release commit is also valid:
    larger bump than required is allowed.
 
 If any check fails, `publish` fails loudly instead of skipping the commit, since a broken
-release commit is on the branch. Recovery is a revert. Who made the release commit does not
-matter: `prepare`, a forge's squash merge, or a developer by hand all work, as long as the
-commit is valid (see [scenario 12](scenarios.md#12-hand-made-release-commit)).
+release commit is on the branch. A revert is one possible recovery; M1 does not perform
+automatic recovery. Who made the release commit does not matter in this proposed model:
+`prepare`, a forge's squash merge, or a developer by hand all work if the commit is valid
+(see [scenario 12](scenarios.md#12-hand-made-release-commit)).
 
-By default, `prepare` only creates the release commit locally, on the current branch.
-`prepare --push` also pushes it. Pushing it to main and letting CI run `publish` is the
-standard flow, and the only one in the first release.
+The first milestone runs preparation automatically for changes on `main`, then runs CI on the
+release commit and publishes only after that candidate passes. Each run is pinned to the commit
+it was started for: it must not follow `main` to a newer commit. If `B` reaches `main` before
+`A` can push its release commit, `A` fails cleanly and `B` is handled by its own CI run. If
+`A` has already pushed its release commit, `A` completes that release and `B`'s own CI run can
+release `B` separately afterward if its changes warrant it. The CI runtime serializes releases;
+Presswerk does not add its own lock.
+A configurable stale-run check could stop preparation when `main` has already advanced. Local
+preparation and its push behavior remain goals, but are not needed for the first milestone.
 
 ### Preparation branches (later)
 
@@ -152,13 +170,15 @@ reviewed and works with protected branches. What is known so far:
 - **Human commits on the preparation branch.** Either `prepare` can incorporate them again
   (something like `prepare --reuse`), or the branch is reserved for Presswerk's own commits,
   as Renovate does with its branches. Open.
-- **Triggering CI.** On GitHub, pushes and pull requests made with the default `GITHUB_TOKEN`
-  start no workflow runs, so automated preparation needs a GitHub App token or a personal
-  token.
+- **Triggering CI.** Pushes made with the default `GITHUB_TOKEN` do not start a push workflow.
+  An explicit `workflow_dispatch` or `repository_dispatch` is a documented exception and may
+  allow automated candidate CI without a separate GitHub App or personal token. The exact
+  wiring and permissions need testing.
 
-This rule is strict on purpose, and there is no loose mode. A version is released from exactly
-its release commit and nothing else. A later commit that still carries an untagged version,
-such as a fixup or an unrelated merge, is never published; `publish` reports it and stops.
+The rule is strict: a version is released from exactly its release commit and nothing else. A
+later commit that still carries an untagged version, such as a fixup or an unrelated merge, is
+not published directly. A failed, untagged release commit can be reverted before a new candidate
+is prepared.
 
 Presswerk deliberately uses the version-changing commit as its release boundary: later changes
 require a new `prepare`, so that the boundary and the notes are always reconsidered together.
@@ -168,22 +188,40 @@ complete, since a hand-written release commit can have incomplete notes, so the 
 define what is actually guaranteed.
 
 The release commit has to pass CI before it is published, and it can fail there, since the
-version may be used by derivations and checks. Recovery is a revert: `presswerk revert`
-reverts the failed release commit, the problem is fixed, and `prepare` runs again (see
-[scenario 7](scenarios.md#7-release-commit-fails-ci)).
+version may be used by derivations and checks. The documented recovery is to revert the failed,
+untagged release commit, fix the problem, and prepare again (see
+[scenario 7](scenarios.md#7-release-commit-fails-ci)). Recovery is manual in the first
+milestone. Whether automatic recovery should ever be added is undecided.
 
 ## Previous release
 
-`plan` and `prepare` need the previous release: its version is the base for the bump, and its
-tag starts the commit range for analysis and notes. `publish` does not need it.
+The previous release provides the base version and the tag that starts the commit range for
+analysis and notes. A new release must not proceed while that previous release is incomplete.
+Preparation and publication of a new candidate both need to enforce this release-chain
+invariant. A retry of an existing candidate completes that candidate rather than selecting a
+new one.
 
-The previous release comes from the commit itself, not from scanning tags:
+For release selection, Presswerk identifies the latest applicable release tag and analyzes the
+whole Git range from that tag to the input commit, for example `v1.3.0..HEAD`. It never decides
+that there is nothing to release merely because the latest commit does not bump the version.
+The previous release must be complete before another release may proceed.
 
-1. evaluate `version` at `HEAD`, for example `1.3.0`;
-1. the previous release is the tag rendered from `tag.format`, for example `v1.3.0`;
-1. that tag must be an ancestor of `HEAD`. If it is missing, the release is
-   [pending](#pending-releases); if it points elsewhere, `plan` fails;
-1. the commit range is `v1.3.0..HEAD`, resolved by Git itself.
+In the ordinary post-release state, the committed version identifies the baseline. The intended
+lookup is:
+
+1. evaluate the committed version, for example `1.3.0`, at the input commit when preparing, or
+   at the parent when validating a new release commit;
+1. find the tag rendered from `tag.format`, for example `v1.3.0`, and check that it is an
+   ancestor of that commit. Outside the initial `0.0.0` baseline, a missing tag can mean the
+   release is [pending](#pending-releases); a tag pointing elsewhere is a conflict;
+1. verify that the previous release is fully published. For the first milestone, its GitHub
+   Release must exist and be published, not missing or a draft. A network or authentication
+   error must not be mistaken for a complete release;
+1. analyze the applicable commit range, such as `v1.3.0..HEAD`, using Git history. For the first
+   release there is no physical tag, so the range includes the root commit.
+
+An exact-candidate retry completes the frozen candidate; it does not select a new version or
+regenerate its notes.
 
 Presswerk does not implement its own commit walking, and it never reads more history than the
 task at hand needs. It does the minimum work required for exactly what it is doing. Checking
@@ -215,20 +253,26 @@ it does not walk history.
 
 ### Pending releases
 
-If the committed version has no tag, `HEAD` is a release commit whose version is not published
-yet, or it sits on top of one. That release is *pending*. To name the release commit in its
-report, Presswerk follows first parents back only until the version changes. Presswerk cannot tell whether it is
-still on its way through CI or has failed, since that would require asking the CI system. It
-does not guess:
+After preparation has created a release commit, its version can be untagged while CI is running
+or after it fails. That release is *pending*. The untagged initial `0.0.0` baseline is not a
+pending release. To name a pending release commit, Presswerk can follow first parents back until
+the version changes. Presswerk itself cannot tell whether CI is still running or has failed
+without asking the CI system, so the diagnostic says *pending*, not *failed*.
 
-- `publish` on a later commit reports the pending release and exits successfully;
-- `prepare` and `plan` report the pending release and do nothing until it is published or
-  reverted, also exiting successfully.
+A release attempt on a later commit that inherits the untagged version reports the pending
+release and exits with failure. A revert which restores the previous tagged version clears this
+condition even though the reverted release commit remains in history. The previous design's
+successful exit is superseded.
 
-If the release commit failed, its own pipeline is already red; repeating that alarm on every
-later commit would only add noise, and would raise false alarms while the release is still on
-its way. Once the pending release is published, the next `prepare` picks up everything that
-landed in the meantime.
+A tag alone does not prove that publication completed. If the tag exists but its GitHub Release
+is missing or still a draft, the release chain is also broken and a new release must not proceed.
+Retrying the exact candidate can complete a partial publication. A revert or force-push of a
+branch does not remove an existing tag.
+
+For automatic releases, a later commit is considered by its own CI run, not by advancing an
+earlier run to a newer commit. The runtime queues later work while a release is in progress.
+After a failed release is fixed, an operator may need to rerun or dispatch the appropriate
+later CI run. M1 has no autoheal or recovery scheduler.
 
 ```console
 $ presswerk prepare --pre rc --push
@@ -236,54 +280,30 @@ pending release  1.4.0-rc.2 at 6e7f8a9 is not published yet
 Nothing to prepare until it is published or reverted.
 ```
 
-This follows a general principle: Presswerk detects and reports such states precisely, and
-leaves decisions that need context, such as whether to wait or to revert, to the developer or
-to an agent using the tool.
+Detecting the state belongs in the release logic. The CI integration and operator coordinate
+retries without changing a run's candidate.
 
 ### The first release
 
-A commit without a release declaration counts as version `0.0.0`, and so does the imaginary
-parent of a root commit. The commit that introduces the declaration therefore changes the
-version from `0.0.0`, and is a release commit like any other:
+A fresh, never-released repository has an implicit `0.0.0` baseline. It needs no `v0.0.0`
+tag, manual boundary commit, or special bootstrap command. Normal automated preparation
+analyzes the history including the root commit, selects a version when a commit warrants a
+release, and creates the first release commit with its version and frozen notes. The same CI
+and publication flow then applies as for later releases.
 
-- a project created from the [flake template](roadmap.md#flake-template) releases from its
-  very first commit;
-- an existing flake that was never released releases from the commit that adds the
-  declaration and the changelog section;
-- an existing flake that was already released by other means tags that release first, so
-  adding the declaration is an ordinary commit.
+There is no release until the configured commit convention finds a release-worthy change. For
+example, a first Gitmoji feature commit bumps the implicit `0.0.0` baseline to `0.1.0`.
 
-The first version is the project's own choice. Presswerk suggests `0.1.0`, as SemVer does,
-but `0.0.1` or `0.3.0` are equally valid. Skipping versions from the implicit `0.0.0` is
-allowed for the first release only; `publish` sees from the commit alone that the parent has no
-declaration. After the first release, all checks apply as usual.
-
-The first release commit is never made by `prepare`, which needs a declaration at `HEAD` to
-work. It is a boundary commit, made by hand or by the flake template, that adds the
-declaration, the version, and the changelog section together, cleanly separating the
-repository's history before and after adoption. Committing the declaration alone would create
-an invalid release commit, which `publish` rejects (see
-[scenario 13](scenarios.md#13-adopting-an-existing-flake)).
+How to distinguish this fresh baseline from an existing untagged version, and how to adopt a
+repository with releases made by other tools, remain open. See
+[scenario 13](scenarios.md#13-first-automatic-release).
 
 ### Adoption
 
-A committed version without a tag is reported as a pending release. When a repository adopts
-Presswerk, that report is where adoption starts. This is the whole adoption story: Presswerk has
-an exact contract for what it needs to release the next version, and its error messages say
-precisely what is missing. A developer adopting Presswerk only has to create that state, for
-example by setting `tag.format` to match existing tags, or by tagging the commit that released
-the committed version. There is no `adopt` command; a short guide in the documentation covers
-it. An interactive `presswerk adopt` may come much later; it would create exactly that
-boundary commit.
-
-```console
-$ presswerk plan
-previous release   v1.3.0 (9c0ffee)    from committed version 1.3.0
-
-$ presswerk plan
-pending release  0.4.2 at 2b3c4d5 is not published yet (no tag v0.4.2)
-If 0.4.2 was released before Presswerk, tag the commit that released it as v0.4.2.
-```
+Fresh repositories require no special adoption flow. For an already released or versioned
+repository, existing tags, committed versions, and possibly incomplete releases need to be
+reconciled without mistaking them for a fresh `0.0.0` baseline. The exact workflow is not part
+of the first self-release milestone.
 
 ## Branches
 
@@ -358,9 +378,22 @@ This keeps Presswerk from being married to git-cliff. Useful conventions are:
 - Gitmoji followed by Conventional Commits, such as `✨ feat(ui): add dark mode`;
 - pure Gitmoji, where the emoji determines category and bump behavior.
 
-Advanced users should be able to provide ordinary git-cliff parser configuration through the
-git-cliff backend's options. The default behavior for unknown commits remains open: reject,
-include as `Other`, or ignore.
+For the self-release, the [Gitmoji specification](https://gitmoji.dev/specification) and its
+[catalog](https://github.com/carloscuesta/gitmoji/blob/master/packages/gitmojis/src/gitmojis.json)
+are the reference. The catalog contains SemVer levels for some Gitmojis and `null` for others;
+the specification accepts Unicode and shortcode spellings. For Presswerk's self-release, notes
+include commits with a Gitmoji even when that emoji does not trigger a version bump. Notes group
+commits by emoji, with Unicode and shortcode spellings in the same group. Groups with more
+commits come first; equal-sized groups are ordered by Gitmoji shortcode. Each entry includes at
+least the commit subject; whether the default also includes the body is an implementation
+choice. Commits without a Gitmoji are not included in those notes.
+
+Analysis uses the commits actually reachable in Git history, not forge pull-request metadata.
+After a squash merge the squash commit is analyzed, not the original commits that were not
+retained in the target branch's history.
+
+Advanced users should eventually be able to provide ordinary git-cliff parser configuration
+through the backend's options.
 
 The analyzer interface is open. It must at least accept a commit range and return a bump
 recommendation plus structured commit data, without depending on git-cliff's types.
@@ -394,11 +427,13 @@ exact layout, and how the text is handed to templates, is still open.
 
 ### Rendering notes
 
-Presswerk renders every changelog section, and tag names, itself with
-[minijinja](https://github.com/mitsuhiko/minijinja) templates. The built-in default template
-groups an unfiltered changelog's notes by the other changelogs, with an `Other` group for the
-rest. Each changelog can bring its own template from the repository, so every project can
-shape its notes freely.
+Presswerk renders changelog sections and tag names with
+[minijinja](https://github.com/mitsuhiko/minijinja) templates. Its self-release notes group
+Gitmoji commits by emoji and order the groups by cardinality. The default should be sensible
+for Presswerk without trying to satisfy every project. Custom templates let projects shape
+their notes; their configuration and template context are still open. For several changelogs,
+another possible layout groups an overall changelog by the other changelogs, with an `Other`
+group for the rest.
 
 The data passed to templates (version, date, commits, groups) is a public interface: changing
 it breaks consumer templates.

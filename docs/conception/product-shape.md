@@ -5,8 +5,8 @@ consumer's flake, and an optional flake-parts module that helps write that decla
 
 ## Rust CLI
 
-The CLI is the product. It should be usable locally and from different CI systems. Tentative
-commands are:
+The CLI is the product. It should eventually be usable locally and from different CI systems.
+The first milestone prioritizes automatic CI-driven releases. Tentative commands are:
 
 ```text
 presswerk plan
@@ -20,11 +20,11 @@ A likely interpretation is:
 
 - `plan` finds the release baseline, runs commit analysis, proposes the next version, and
   renders notes. It writes nothing and is the dry run;
-- `prepare` does exactly what `plan` shows, then writes the version files and notes and
-  commits them locally. `--push` also pushes the commit; `--no-push` is the default. `plan`
-  is `prepare` without writing.
-  When there is nothing to release since the previous release, `prepare` exits successfully
-  without a commit, so running it on every push cannot loop;
+- `prepare` writes the version files and notes and creates a release commit. It is run
+  automatically in CI for the first milestone. A local workflow, including push behavior,
+  can follow later. Preparation analyzes the full range since the previous release, not only
+  the latest commit. When the release chain is healthy and that range has nothing to release,
+  preparation exits successfully without creating a commit;
 - `check` runs the preflight that `publish` always runs before its first write, without
   publishing: candidate validity, credentials, remote state, and artifact availability (see
   [publication](publication.md#preflight));
@@ -66,9 +66,11 @@ possible.
 
 The consumer declares what to release in its flake: artifacts, publishers, version source,
 branch policy, and commit analysis settings. The CLI reads that
-[release declaration](glossary.md#release-declaration) by evaluating the flake in-process with
-[nix-bindings-rust](https://github.com/cachix/nix-bindings-rust), instead of parsing a separate
-configuration file or receiving pre-rendered JSON.
+[release declaration](glossary.md#release-declaration) by evaluating the flake, instead of
+maintaining a separate configuration file. In-process evaluation with
+[nix-bindings-rust](https://github.com/cachix/nix-bindings-rust) is one option; invoking
+`nix eval --json` or another Nix tool is also acceptable. The implementation is decided by an
+early integration spike.
 
 Reasons:
 
@@ -83,18 +85,15 @@ that guesses the forge, the version files, or the publishers.
 
 Consequences:
 
-- the CLI links against the Nix C API, so it needs a compatible Nix at runtime and Nix is its
-  primary distribution channel;
-- there is no fallback to `nix eval` or other evaluation paths. When nix-bindings-rust breaks,
-  Presswerk breaks, and the problem is reported upstream;
+- Nix is the primary distribution channel. The CLI needs a compatible Nix installation or
+  runtime; the exact contract depends on the evaluation implementation;
 - the declaration never contains secrets. It may name them, but their values only reach the
   CLI at runtime. Fetching private flake inputs during evaluation may still need
   authentication, configured in Nix itself (such as `access-tokens`), never in the
   declaration;
-- evaluating the declaration can never trigger a build. Import from derivation is allowed, so
-  flakes that rely on it can be released, but it follows the same rule as `publish`: an IFD
-  output is substituted or evaluation fails, naming the missing derivation. Local and remote
-  builds are disabled during evaluation; substitution stays on.
+- the intended publication behavior is that evaluating the declaration does not trigger a
+  build. Import from derivation, substitution-only evaluation, and clear errors for missing
+  outputs need further validation and are not gates for the first asset-free self-release.
 
 ### Only commits are evaluated
 
@@ -103,10 +102,8 @@ tree. Uncommitted or staged changes therefore never leak into a release.
 
 - `plan` evaluates `HEAD`. On a dirty tree it still works, but warns that local changes are
   not part of what it shows.
-- `prepare` refuses to start on a dirty tree, because it writes version files and commits
-  them. It then creates the release commit locally and evaluates *that commit* for the
-  consistency check. Only if the check passes does it keep the commit, and push it when asked
-  to.
+- `prepare` works from an exact commit and creates a release commit. A future local workflow
+  must handle a dirty working tree safely. CI checks the resulting candidate before publication.
 - `publish` evaluates the candidate commit.
 
 The release declaration is therefore always read from the commit being worked on.

@@ -7,13 +7,15 @@ in the flake. Everything here is illustrative and meant to compare shapes before
 
 ## The example: Presswerk's own release
 
-All sketches below declare the same release, the [self-release milestone](roadmap.md#self-release-milestone):
+All sketches below illustrate the same possible future release. They are not the scope of the
+asset-free [self-release milestone](roadmap.md#self-release-milestone):
 
 - the version lives in `Cargo.toml` and is read by the Nix package;
 - `prepare` updates `Cargo.toml` and `Cargo.lock`, which also records the crate's own version;
-- commits are analyzed as Conventional Commits with git-cliff;
+- this example analyzes Conventional Commits with git-cliff; Presswerk's self-release uses
+  Gitmoji instead;
 - the release is an annotated tag `v<version>` plus a GitHub release;
-- the GitHub release carries static binaries for `x86_64-linux` and `aarch64-darwin`;
+- the GitHub release carries binaries for `x86_64-linux` and `aarch64-darwin` (later work);
 - the GitHub token is named, never contained.
 
 The tag is not configured as a publisher. It is always created first, because it is the

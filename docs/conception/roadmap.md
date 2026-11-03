@@ -1,117 +1,116 @@
 # Roadmap
 
-## First consumers
-
-The design should be driven by real repositories. The public ones are listed here. Private and
-proprietary repositories are equally important design drivers (see
-[target users](overview.md#target-users)), but they are not named in this repository.
-
-### Presswerk itself
-
-Presswerk should release itself as soon as a minimal path works. This proves the Rust CLI, Nix
-interface, a GitHub Actions setup, Git tag, forge release, notes, and retry behavior.
-
-### nitpick.nvim
-
-`nitpick.nvim` currently:
-
-- builds on Linux and macOS with GitHub Actions;
-- uses flake-parts;
-- keeps its effective version in `flake.nix`;
-- mirrors that version in a Claude Code plugin manifest;
-- checks that both versions agree.
-
-It tests synchronized version files and a release that may only need a tag and forge release.
-
-### ferret-ingest-agents
-
-`ferret-ingest-agents` currently:
-
-- builds on Linux and macOS with GitHub Actions;
-- uses flake-parts and Rust tooling;
-- keeps its version in `Cargo.toml`;
-- can be installed through Nix and Cargo.
-
-It tests Cargo metadata, crates.io publication, release binaries, and forge releases.
-
-### Later
-
-Later consumers should be able to add OCI images, Helm charts, PyPI, npm, and other registries,
-public or private, without changing the core release model.
+GitHub milestones and issues will track implementation. Issues should link to the relevant
+conception documents. Those documents remain local product-design references; the roadmap and
+future feature requests may move to GitHub later. This document records the current self-release
+milestone and future directions without committing to a complete task breakdown for later
+milestones.
 
 ## Self-release milestone
 
-Before the release model is implemented, an early go/no-go checkpoint proves that embedding
-Nix works for this product:
+Presswerk releases itself automatically from `main`. The intended experience is that developers
+work normally and release-worthy changes that pass CI get released without a separate manual
+release step.
 
-- exact-commit evaluation and extraction of artifact references through nix-bindings-rust;
-- substitution-only realisation, where a missing output fails instead of building;
-- evaluation that cannot build: import from derivation satisfied by substitution or failing
-  with a clear error;
-- private inputs fetched with Nix-level authentication;
-- working Linux and macOS packages of the CLI under the intended installation contract,
-  outside the development shell.
+The milestone is complete when:
 
-The smallest useful bootstrap is:
+1. Presswerk's Rust CLI is built and tested through its flake on `x86_64-linux`. Its initial
+   Cargo version is `0.0.0`. The flake uses [rust-flake](https://github.com/juspay/rust-flake),
+   based on its [single-crate example](https://github.com/juspay/rust-flake/blob/main/examples/single-crate/flake.nix).
+1. Presswerk reads its own plain release declaration from the flake at an exact commit.
+1. Gitmoji commit analysis determines whether to release and selects the version from the full
+   range since the latest release tag, not just the latest commit. A repository without a
+   previous release starts from an implicit `0.0.0`, including its root commit in the analysis,
+   without a manual bootstrap command or tag.
+1. A release commit contains the selected version and frozen commit-derived notes. Minijinja
+   renders notes containing at least each Gitmoji commit's subject, including emojis that do
+   not trigger a bump. Unicode and shortcode spellings share a group; larger groups come first
+   and ties sort by shortcode. Whether the default includes bodies can be decided during
+   implementation. CI builds and checks that exact commit before publication.
+1. A Git tag points to that commit and a GitHub Release contains its notes. Retrying the same
+   candidate completes missing state without silently moving or overwriting existing state. A
+   missing tag or incomplete GitHub Release breaks the chain and blocks the next release until
+   the previous candidate is handled.
+1. An initial release and a subsequent Gitmoji-triggered release demonstrate the complete
+   automated path in Presswerk's private GitHub repository.
+1. Pushes with no release-worthy changes do not create releases. A run stays pinned to the
+   commit it started for, and never silently includes later pushes. Each later push has its own
+   CI run; a stale run may stop instead of releasing. The runtime serializes release work, with
+   no separate Presswerk locking feature.
 
-1. build and test the Rust CLI with Nix;
-1. declare the release in Presswerk's own flake and load it with nix-bindings-rust;
-1. select a version first, using commit analysis through the git-cliff analyzer;
-1. prepare and commit that version together with its section in `CHANGELOG.md`;
-1. run a GitHub Actions release job after all checks;
-1. create an exact Git tag and GitHub Release with frozen notes;
-1. attach CLI binaries for at least `x86_64-linux` and `aarch64-darwin` to that release,
-   packaged under the installation contract proven by the checkpoint. A fully static Linux
-   binary is possible; macOS does not support fully static executables, so its binary bundles
-   all non-system dependencies and links the system libraries dynamically;
-1. retry that exact release without duplicating or moving external state;
-1. republish it from its tag.
+Only `x86_64-linux` runs in CI for this milestone, and the GitHub Release does not need binary
+assets. Multi-architecture builds and artifact distribution are later work. Presswerk itself
+does not require CI to build unrelated flake outputs; CI must provide the artifacts being
+released, and consumers choose additional checks. Presswerk's own CI will build and check its
+relevant buildable flake outputs, including packages, checks, dev shells, and the formatter.
+Following the reference workflow, CI runs for pull requests and pushes to `main`; publishing is
+restricted to trusted `main` release candidates.
 
-Afterward, migrate either `nitpick.nvim` or `ferret-ingest-agents`. Its different version
-source or publisher should determine the next abstraction.
+An early Nix integration spike tests the CLI against an exact-commit flake declaration. Embedded
+Nix via [nix-bindings-rust](https://github.com/cachix/nix-bindings-rust) is a candidate, not a
+requirement: invoking Nix tools is an acceptable alternative. Artifact context extraction,
+substitution-only artifact realization, private inputs, and import-from-derivation edge cases are
+not gates for this asset-free milestone.
 
-Presswerk's own repository is currently private. Running the self-release from a private
-repository is a useful early check of the proprietary path.
+The intended work breakdown is currently:
+
+1. Test exact-commit flake evaluation from Rust.
+1. Bootstrap the Rust CLI and Nix flake.
+1. Analyze Gitmoji commits and prepare release commits, with an internal version-file generator
+   trait.
+1. Publish tags and GitHub Releases safely, behind an internal publisher trait. These boundaries
+   live in the main crate, not separate crates or a public plugin SDK.
+1. Wire the automatic GitHub Actions flow, after the underlying behavior is tested.
+1. Verify the first self-release and a subsequent automatic release.
+
+The GitHub workflow is exercised in a separate private test repository first. The production
+CI wiring is the last integration step, not a prerequisite for testing the core. Manual local
+preparation is a future goal, not a prerequisite for this milestone. Failed releases require
+manual recovery, including rerunning an appropriate CI job when needed; M1 has no autoheal.
 
 ## Testing
 
-Presswerk is implemented test-driven. Its whole point is handling the outside world correctly
-when things go wrong, so the edge cases are the product:
+Rust unit and integration tests run as Nix checks. Temporary Git repositories and a mock
+publisher or HTTP server cover analysis, version and notes preparation, exact candidate
+identity, retries, conflicts, and overlapping work. Tests distinguish a release commit ready to
+publish from a later commit inheriting its untagged version; they also cover a tag with an
+incomplete GitHub Release and a revert that restores the previous tagged version. They also
+verify that a non-triggering latest commit does not hide an earlier release-worthy commit since
+the last tag. Tests cover failures relevant to the slice without requiring every future recovery
+scenario to be implemented first.
 
-- every case in [scenarios](scenarios.md) becomes a test, including partial releases,
-  conflicts, reverts, freed versions, and invalid release commits;
-- version generators: stray outputs, rejected paths and symlinks, merge conflicts between
-  writers, files staged by another process while `prepare` runs, and an interruption between
-  the branch move and the checkout synchronization;
-- mutable aliases: republishing an older version, a slow older run, maintenance releases, and
-  a retry after a failed alias update;
-- crash cases between steps, such as a crash after uploading one asset to a draft release,
-  where a rerun must finish that same draft instead of creating another release;
-- most tests run as local Nix checks against bare Git repositories, with no network;
-- forge behavior is covered later by NixOS VM tests against a real instance, such as Gitea or
-  Forgejo.
+A real private GitHub self-release is the final end-to-end test. A Forgejo VM is not needed for
+the first milestone: it would exercise a different forge. Additional VM tests can be introduced
+when a real requirement justifies them.
 
-## Documentation
+## Future directions
 
-User documentation is written alongside the first working workflow: installation, adoption,
-and especially recovery, which is part of this product's correctness. Branding (logo, color
-scheme, tagline, see [open decisions](open-decisions.md#product)) only affects how the
-documentation looks, not when it is written. Already planned for it:
+Potential later issues include:
 
-- a [NuschtOS search](https://github.com/NuschtOS/search) page for the options of the
-  flake-parts module;
-- an adoption guide: which state an existing repository has to be in before its first release
-  with Presswerk. Most users add Presswerk to an existing flake, so this guide, the
-  flake-parts module, and its options search are the main onboarding path.
+- multi-architecture CI, release binaries, and artifact transfer or publication from multiple
+  sources;
+- local release preparation, richer recovery, and manual republishing from tags;
+- private Nix inputs, artifact string contexts, substitution-only publication, and
+  import-from-derivation behavior;
+- a flake-parts consumer module, a public extension mechanism, and additional publishers;
+- preparation branches, protected-branch workflows, maintenance lines, and pre-releases;
+- configurable release conditions such as weekends only or at most once a day, combined with a
+  scheduled CI workflow instead of an on-push workflow;
+- observability, adoption documentation, a flake template, and an agent skill;
+- option documentation and a [NuschtOS search](https://github.com/NuschtOS/search) page for the
+  future flake-parts module.
 
-## Agent skill
+The first working workflow should also be documented, including its recovery steps.
 
-The repository ships a skill that teaches coding agents how to use the CLI. The CLI may also
-print it, through `presswerk --skill` or a `presswerk skill` subcommand, so an agent always
-gets the version that matches the installed CLI.
+The design should also be driven by real consumers after Presswerk itself:
 
-## Flake template
+- `nitpick.nvim` uses flake-parts, keeps its version in `flake.nix`, and mirrors it in a plugin
+  manifest. It would exercise synchronized version sources without necessarily shipping assets.
+- `ferret-ingest-agents` is a Rust project with its version in `Cargo.toml`. It would exercise
+  Cargo metadata, crates.io, and release binaries.
+- Private and proprietary consumers must remain supported, including private forges and
+  registries. They are not named here.
 
-New projects start from a flake template (`nix flake init -t github:jkuball/presswerk`)
-instead of a `presswerk init` command. A project created from it releases `0.1.0` from its
-very first commit, without any manual tagging.
+Future consumers and their requirements should determine which abstractions are worth making
+public. See [open decisions](open-decisions.md) and the other conception documents for ideas
+that have not yet been scheduled.

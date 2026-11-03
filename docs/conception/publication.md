@@ -89,11 +89,15 @@ must match the version. Which release is marked as latest belongs to the alias p
 
 ### Preflight
 
-Still, `publish` always runs a read-only preflight before its first write, the tag, and it
-cannot be turned off. The preflight checks:
+The intended full design runs a read-only preflight before its first write, the tag. The
+asset-free first milestone does not need all future artifact and publisher checks. It still
+must validate the candidate and relevant remote state, avoid silent overwrites, and permit a
+safe retry after a partial publication.
+
+The full preflight checks:
 
 1. the candidate's classification, and for a new release, the policy validation of its
-   [release commit](glossary.md#release-commit) (see
+   [release commit](glossary.md#release-commit) and completion of its previous release (see
    [release flow](release-model.md#release-flow));
 1. that every publisher's credentials are present and valid, using the strongest
    non-mutating check each destination offers. Not every destination can prove write
@@ -121,9 +125,10 @@ The extension shape remains open. Plausible options are:
 - built-in Rust adapters plus a generic executable escape hatch;
 - a Rust library API for in-tree adapters and a process protocol for external adapters.
 
-The first implementation should avoid stabilizing a large plugin SDK. Build the smallest
-boundary that supports the self-release path, then test it with a materially different second
-publisher.
+The first implementation defines extensible Rust trait boundaries for publishers and
+version-file generators, with implementations kept in the main crate. It does not create separate
+trait crates or stabilize an external plugin SDK. The publisher boundary supports a test double;
+a materially different real publisher can inform the public extension design later.
 
 Consumers must be able to add their own publishers without upstreaming them, since some
 destinations will be internal to an organization.

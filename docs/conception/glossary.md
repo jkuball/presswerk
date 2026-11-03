@@ -38,15 +38,16 @@ is a structural property, independent of whether the version has been tagged or 
 yet. It is the only commit from which that version can ever be published; later commits never
 inherit it. Before its first publication, a release commit must also be valid: it has a
 changelog section for its version, the version is a valid successor, and it is at least what
-commit analysis requires. Who made it does not matter. A commit without a release declaration
-counts as version `0.0.0`, so the commit that introduces the declaration can be the first
-release commit.
+commit analysis requires. Who made it does not matter. A fresh repository starts from an
+implicit `0.0.0` baseline, without requiring a tag or a manual first release; how it is
+distinguished from an existing untagged version is an open adoption question.
 
 ### Pending release
 
 A release commit whose version has no tag yet: it is still on its way through CI, or it failed.
-Presswerk cannot tell which, so it reports the pending release and leaves the decision to the
-developer. See [release model](release-model.md#pending-releases).
+Presswerk cannot tell which, so a later release attempt reports the pending release and fails.
+A tagged but incompletely published release also blocks the release chain. See
+[release model](release-model.md#pending-releases).
 
 ### Release context
 

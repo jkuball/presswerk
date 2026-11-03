@@ -17,7 +17,8 @@ provide:
 - credentials for the configured forge and publishers;
 - a way to start the CLI.
 
-A local shell is a runtime like any other. The same command must work there.
+A local shell is a runtime like any other. Supporting the same release flow there is a goal,
+but it is not required for the first, CI-driven milestone.
 
 ## What the consumer wires
 
@@ -41,8 +42,9 @@ them with `actions/upload-artifact`; the release job downloads them and imports 
 local store before running `publish`.
 
 Presswerk cannot prove that an arbitrary workflow included every required job. The runtime owns
-that gate. Presswerk can still validate the candidate identity and reject a stale or unexpected
-ref.
+that gate. Presswerk needs the artifacts being released, not every unrelated output of a flake;
+consumers decide which extra builds and checks must pass. Presswerk can still validate the
+candidate identity and reject a stale or unexpected ref.
 
 ## Secrets
 
@@ -67,45 +69,36 @@ secretspec.
 
 ## GitHub Actions
 
-GitHub Actions is the first CI system Presswerk is exercised against, because the first
-consumers use it. A release job depends on all required build and test jobs and then runs the
-CLI.
+GitHub Actions is the first CI system exercised. A push to `main` can lead to automatic
+preparation of a release commit; that exact commit must pass the required build and test jobs
+before it is published. A run for one commit never silently advances to a later `main` commit.
+A configurable stale-run check may stop preparation instead; the later commit has its own CI
+run. Presswerk's own CI builds and checks its relevant buildable `x86_64-linux` flake outputs,
+including packages, checks, dev shells, and the formatter. The workflow is tested in a separate
+private repository before it is enabled for Presswerk itself.
 
-Illustrative only:
+GitHub documents that pushes made with `GITHUB_TOKEN` do not trigger a new push workflow, but
+[`workflow_dispatch` and `repository_dispatch` are exceptions](https://docs.github.com/en/actions/concepts/security/github_token#when-github_token-triggers-workflow-runs).
+An explicit dispatch using `GITHUB_TOKEN` is therefore a candidate for starting CI on the
+release commit without a separate GitHub App or personal token. The dispatch ref, exact
+candidate checkout, permissions, and behavior when `main` advances must be tested. A
+`workflow_dispatch` workflow must exist on the default branch.
 
-```yaml
-jobs:
-  build:
-    # Project-specific build and test matrix.
+GitHub Actions [concurrency groups](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
+can serialize runs, but default queueing retains only one pending run, replacing the previous
+pending run. The optional `queue: max` permits up to 100 pending runs, and queue order is based
+on when jobs or workflows began waiting. Neither setting by itself proves that every candidate
+is checked or that later commits are eventually analyzed. The integration must handle those
+cases without switching a run to a newer commit or deadlocking a workflow that waits on another
+workflow in the same group. GitHub Actions owns that serialization for the self-release;
+other CI runtimes or a developer invoking the CLI must coordinate their own release runs.
+Presswerk does not introduce a separate locking feature. A failed run releases its concurrency
+slot, so later runs may stop on the broken chain. After recovery, an operator may need to rerun
+or dispatch the appropriate CI run; M1 does not schedule that automatically.
 
-  release:
-    needs: [build]
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')
-    concurrency:
-      group: presswerk-${{ github.sha }}
-      cancel-in-progress: false
-    permissions:
-      contents: write
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: DeterminateSystems/determinate-nix-action@v3
-      - run: nix develop --command presswerk publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-Permissions alone do not expose a token to the CLI; every secret a publisher names must be
-passed explicitly, here through `env`.
-
-The `concurrency` group is recommended: it keeps two `publish` runs for the same commit from
-running at the same time, for example a retry while the first run is still going. Presswerk
-has no lock of its own (see [publication](publication.md#concurrent-runs)).
-
-A consumer's setup still has to settle permissions, environment approvals, OpenID Connect use,
-and organization setups such as GitHub App tokens and organization secrets.
+Permissions alone do not expose a token to the CLI: it must be passed at runtime. The workflow
+should request only the permissions it needs. Branch protection, environment approvals, and
+organization credential policies may require different wiring.
 
 Presswerk may ship a reusable GitHub Action that installs and invokes the CLI. It would be a
 thin convenience outside the core.
