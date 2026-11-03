@@ -119,13 +119,35 @@ pub struct Tag {
 
 impl Tag {
     fn validate(&self) -> Result<(), DeclarationError> {
-        if self.format.matches("{{ version }}").count() != 1 {
+        if version_expression_count(&self.format) != 1 {
             return Err(DeclarationError::Invalid(
                 "tag.format must contain {{ version }} exactly once".into(),
             ));
         }
         Ok(())
     }
+}
+
+fn version_expression_count(format: &str) -> usize {
+    let mut count = 0;
+    let mut search_from = 0;
+
+    while let Some(relative_start) = format[search_from..].find("{{") {
+        let start = search_from + relative_start;
+        let body_start = start + 2;
+        if let Some(relative_end) = format[body_start..].find("}}") {
+            let body_end = body_start + relative_end;
+            if format[body_start..body_end]
+                .trim_matches(|character: char| character.is_ascii_whitespace())
+                == "version"
+            {
+                count += 1;
+            }
+        }
+        search_from = body_start;
+    }
+
+    count
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -318,14 +340,21 @@ mod tests {
     }
 
     #[test]
-    fn validates_the_tag_version_placeholder() {
-        let invalid = DECLARATION.replace("v{{ version }}", "release");
-        assert!(
-            ReleaseDeclaration::from_json(&invalid)
-                .unwrap_err()
-                .to_string()
-                .contains("exactly once")
-        );
+    fn validates_the_tag_version_expression() {
+        for format in ["v{{version}}", "v{{ version }}", r"v{{\t  version  \t}}"] {
+            let declaration = DECLARATION.replace("v{{ version }}", format);
+            ReleaseDeclaration::from_json(&declaration).unwrap();
+        }
+
+        for format in ["release", r"{{version}}-{{  version\t}}"] {
+            let declaration = DECLARATION.replace("v{{ version }}", format);
+            assert!(
+                ReleaseDeclaration::from_json(&declaration)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("exactly once")
+            );
+        }
     }
 
     #[test]

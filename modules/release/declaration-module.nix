@@ -13,7 +13,13 @@
       );
 
       tagFormat = types.addCheck types.nonEmptyStr (
-        format: builtins.length (lib.splitString "{{ version }}" format) == 2
+        format:
+        builtins.length
+          (
+            builtins.filter builtins.isList (
+              builtins.split "\\{\\{[[:space:]]*version[[:space:]]*\\}\\}" format
+            )
+          ) == 1
       );
 
       cargoModule = { name, ... }: {

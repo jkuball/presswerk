@@ -77,10 +77,10 @@ outside and evaluates `presswerk.default`.
   evaluates `version` again and fails unless it equals the new version, whichever writers were
   used.
 - `tag.format` is a [minijinja](https://github.com/mitsuhiko/minijinja) template, rendered by
-  the CLI like the changelog templates. It must contain `{{ version }}` exactly once, so the
-  CLI can also read tags back: the text around the placeholder must match literally, and what
-  is in between is the version. Tags that do not match are not releases. There is no logic in
-  Nix and no parse function to get wrong.
+  the CLI like the changelog templates. It must contain the `{{ version }}` expression exactly
+  once; whitespace inside the braces is optional. The CLI can then read tags back: the text
+  around the expression must match literally, and what is in between is the version. Tags that
+  do not match are not releases.
 - Interpolating `self.packages...` only computes the store path. Nothing is built during
   evaluation (import from derivation is only satisfied by substitution); the CLI realises the
   paths only when it publishes.

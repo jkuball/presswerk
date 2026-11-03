@@ -53,6 +53,18 @@ let
     }).schemaVersion
   );
 
+  compactTagPlaceholder = mkRelease {
+    inherit sourceRoot;
+    version = "1.2.3";
+    tag.format = "v{{version}}";
+  };
+
+  wideTagPlaceholder = mkRelease {
+    inherit sourceRoot;
+    version = "1.2.3";
+    tag.format = "v{{\t  version  \t}}";
+  };
+
   missingTagPlaceholder = builtins.tryEval (
     (mkRelease {
       inherit sourceRoot;
@@ -65,7 +77,7 @@ let
     (mkRelease {
       inherit sourceRoot;
       version = "1.2.3";
-      tag.format = "{{ version }}-{{ version }}";
+      tag.format = "{{version}}-{{  version\t}}";
     }).tag.format
   );
 
@@ -141,6 +153,8 @@ assert matchingVersions.version == "1.2.3";
 assert !conflictingVersions.success;
 assert !consumerSchemaVersion.success;
 assert !missingSourceRoot.success;
+assert compactTagPlaceholder.tag.format == "v{{version}}";
+assert wideTagPlaceholder.tag.format == "v{{\t  version  \t}}";
 assert !missingTagPlaceholder.success;
 assert !repeatedTagPlaceholder.success;
 assert !backslashPath.success;

@@ -1,6 +1,6 @@
-{ config, lib, ... }:
+{ config, lib, self, ... }:
 let
-  version = (builtins.fromTOML (builtins.readFile ../../Cargo.toml)).package.version;
+  version = (builtins.fromTOML (builtins.readFile (self.outPath + "/Cargo.toml"))).package.version;
 in
 {
   flake.lib.mkRelease =
