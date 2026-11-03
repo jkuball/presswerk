@@ -105,7 +105,6 @@ in
         };
       });
       default = [ ];
-      internal = true;
       description = "Assertions checked while evaluating the release module.";
     };
   };
