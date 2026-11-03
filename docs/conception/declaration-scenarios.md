@@ -2,7 +2,8 @@
 
 The [scenarios](scenarios.md) show the developer experience of the CLI. This document shows
 the other side: the person who writes the [release declaration](glossary.md#release-declaration)
-in the flake. Everything here is illustrative and meant to compare shapes before one is chosen
+in the flake. The CLI always reads standardized plain data. Consumers may write that data
+directly, but the primary authoring interface is the Nix module evaluated by `lib.mkRelease`
 (see [product shape](product-shape.md#shape-of-the-declaration)).
 
 ## The example: Presswerk's own release
@@ -33,6 +34,7 @@ outside and evaluates `presswerk.default`.
     packages = { /* presswerk-static for x86_64-linux, presswerk for aarch64-darwin */ };
 
     presswerk.default = {
+      schemaVersion = 1;
       version = (nixpkgs.lib.importTOML ./Cargo.toml).package.version;
 
       versionFiles = [
@@ -134,69 +136,75 @@ commit.
   the mismatch and reports the created release commit and the incomplete checkout update,
   instead of claiming completion.
 
-## B. Validating library function
+## B. Release module evaluated by `mkRelease`
 
-The same data, passed through a function from Presswerk's flake. The function checks the
-declaration and fills in defaults, and returns plain data.
+`mkRelease` evaluates a Nix module with Presswerk's standard options and returns the normalized
+plain declaration. The consumer can compose defaults, local policy, and modules exposed by
+other flakes.
 
 ```nix
 {
   inputs.presswerk.url = "github:jkuball/presswerk";
 
-  outputs = { self, nixpkgs, presswerk, ... }: {
+  outputs = { self, presswerk, ... }: {
     presswerk.default = presswerk.lib.mkRelease {
-      version = (nixpkgs.lib.importTOML ./Cargo.toml).package.version;
-      versionFiles = [ (presswerk.lib.cargo { crate = "presswerk"; }) ];
+      sourceRoot = ./.;
 
-      publishers.github-release.default = {
-        repository = "jkuball/presswerk";
-        assets = {
-          "presswerk-x86_64-linux" = "${self.packages.x86_64-linux.presswerk-static}/bin/presswerk";
-          "presswerk-aarch64-darwin" = "${self.packages.aarch64-darwin.presswerk}/bin/presswerk";
-        };
-      };
+      imports = [
+        ({ lib, ... }: {
+          changelog.path = lib.mkDefault "CHANGELOG.md";
+        })
+        {
+          changelog.enable = true;
+          versionFiles.cargo.presswerk = {};
+
+          publishers.github-release.default = {
+            repository = "jkuball/presswerk";
+            assets = {
+              "presswerk-x86_64-linux" = "${self.packages.x86_64-linux.presswerk-static}/bin/presswerk";
+              "presswerk-aarch64-darwin" = "${self.packages.aarch64-darwin.presswerk}/bin/presswerk";
+            };
+          };
+        }
+      ];
     };
   };
 }
 ```
 
-- Errors appear at evaluation time, with messages written for this purpose.
-- Helpers such as `lib.cargo` bundle common setups: here both `Cargo.toml` and `Cargo.lock`.
-- Defaults (tag format, analyzer preset, token name) disappear from the declaration.
-- Presswerk becomes a flake input. The library version is pinned in the master record, but the
-  [press is not](product-shape.md#the-press-is-not-part-of-the-master): only validation and
-  helpers are frozen with the commit, not publishing.
+- `mkRelease` includes `presswerk.presswerkModules.default` automatically and emits the current
+  renderer-owned `schemaVersion`; consumers cannot override it.
+- Errors appear during evaluation with messages written for the declaration author.
+- Standard module features provide imports, typed options, defaults, priorities, `mkIf`, and
+  `mkMerge`. Version sources contribute to one typed effective-version option, so conflicting
+  versions fail during module evaluation and matching definitions merge.
+- Other flakes can expose reusable modules under `presswerkModules`; consumers import them
+  explicitly. Modules receive `presswerk.version` and can use standard assertions for version
+  requirements, while option-presence checks remain preferable for simple capabilities.
+- `sourceRoot` is the immutable consumer source used only during module evaluation. It is not
+  emitted into the declaration; normalized file paths remain repository-relative strings.
+- Authoring conveniences can normalize into a smaller standardized declaration. The Cargo
+  instance name defaults its crate name, so `versionFiles.cargo.presswerk = {}` reads
+  `Cargo.toml` below `sourceRoot` and emits both Cargo writers shown in the plain-data example.
+  Relative `cargoToml` and `cargoLock` options select other files, and an explicit `crate`
+  option overrides the instance name when needed.
+- The standard defaults are `v{{ version }}` tags, Gitmoji analysis for the first milestone,
+  `GITHUB_TOKEN` as the logical GitHub Release secret name, conventional root Cargo filenames,
+  and a changelog declared with `mkEnableOption` whose default path is `CHANGELOG.md`.
+- Disabled features are omitted from the normalized declaration. In particular, a disabled
+  changelog produces no `changelog` field; an enabled changelog produces its path without the
+  authoring-only `enabled` flag.
+- Only the normalized plain result is exposed at `presswerk.default` and read by the CLI.
+- Presswerk becomes a flake input. The module version is pinned in the master record, but the
+  [press is not](product-shape.md#the-press-is-not-part-of-the-master): only declaration
+  authoring and normalization are frozen with the commit, not publishing.
 
-## C. flake-parts module
+## C. Possible flake-parts adapter
 
-Typed options through the module system. Artifacts are declared per system, next to the
-packages they come from.
-
-```nix
-{
-  inputs.presswerk.url = "github:jkuball/presswerk";
-
-  outputs = inputs: inputs.flake-parts.lib.mkFlake { inherit inputs; } {
-    imports = [ inputs.presswerk.flakeModules.default ];
-    systems = [ "x86_64-linux" "aarch64-darwin" ];
-
-    presswerk.default = {
-      versionFiles.cargo.crate = "presswerk";
-      publishers.github-release.default.repository = "jkuball/presswerk";
-    };
-
-    perSystem = { self', system, ... }: {
-      presswerk.default.publishers.github-release.default.assets."presswerk-${system}" =
-        "${self'.packages.static}/bin/presswerk";
-    };
-  };
-}
-```
-
-- Shortest to write, with documented and type-checked options.
-- Per-system artifacts fit naturally into `perSystem`.
-- Produces the same plain data as A and B. It must not be able to do anything they cannot.
-- Only for flake-parts users.
+A future flake-parts integration may provide a thin adapter for composing flake-level and
+per-system values. It reuses the same release modules and produces the same standardized plain
+data as `lib.mkRelease`; it does not define a separate option schema. Whether that adapter is
+useful remains open and it is not part of the first milestone.
 
 ## Publishers: implementation, then name
 

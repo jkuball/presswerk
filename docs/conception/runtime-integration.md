@@ -52,10 +52,16 @@ candidate identity and reject a stale or unexpected ref.
 The release declaration may name the secrets a publisher needs, but never contains them.
 Values arrive at runtime.
 
-The baseline is environment variables and files, which every runtime supports. Beyond that,
-[secretspec](https://secretspec.dev/) is the preferred candidate for an integration. It
-declares a project's secrets once, in `secretspec.toml`, and resolves them from interchangeable
-providers such as the OS keyring, dotenv files, environment variables, or password managers,
+The baseline is environment variables and files, which every runtime supports. Declaration
+fields such as `token.secret = "GITHUB_TOKEN"` name a logical secret; for the first milestone
+the runtime resolves that name from an environment variable of the same name. The declaration
+does not encode the provider as `secret.env`, so another resolver can supply the same logical
+name later.
+
+Beyond that, [secretspec](https://secretspec.dev/) is the preferred candidate for an
+integration. It declares a project's secrets once, in `secretspec.toml`, and resolves them from
+interchangeable providers such as the OS keyring, dotenv files, environment variables, or
+password managers,
 with profiles per environment. That matches Presswerk's need for one release that works locally
 and in CI with different credential sources.
 

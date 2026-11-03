@@ -25,8 +25,9 @@ relevant document and remove it from this list.
 
 ## Release declaration
 
-- shape: plain data output, validating library function, or runnable package (see
-  [product shape](product-shape.md#shape-of-the-declaration));
+- exact internal contract by which a release module contributes normalized plain declaration
+  data;
+- whether a thin flake-parts adapter remains useful for composing per-system values;
 - per-system handling (the output is `presswerk.default`; other names are not supported yet);
 - exact analyzer options for conventions and backends;
 - which Nix daemon versions the embedded Nix libraries must support, and whether the CLI is
@@ -69,8 +70,9 @@ relevant document and remove it from this list.
 
 ## Extensions and publication
 
-- final adapter protocol for publishers and analyzers;
-- how consumers ship private, organization-internal publishers;
+- final runtime adapter protocol for publishers and analyzers; reusable Nix modules only author
+  and normalize declaration data;
+- how consumers ship private, organization-internal runtime publishers;
 - ordering of publishers after the tag;
 - initial GitHub, Forgejo, crates.io, OCI, PyPI, and npm adapter order;
 - OCI image input formats: `dockerTools` produces compressed archives that must be unpacked or

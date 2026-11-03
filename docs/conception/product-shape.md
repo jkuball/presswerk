@@ -134,34 +134,66 @@ error: working tree is dirty; commit or stash your changes first
 
 ### Shape of the declaration
 
-The shape is undecided. In particular, Presswerk is not committed to a `lib.mkRelease`
-function or to a runnable `packages.<system>.release` output. Options include:
+The CLI contract is plain data at `presswerk.<name>`. Consumers may write that data directly,
+but the primary authoring interface is `lib.mkRelease`, which evaluates a Nix module with the
+standard module system and returns the normalized plain declaration.
 
-1. a plain data output, such as `presswerk.<name>`, that the CLI evaluates. The CLI itself is
-   installed separately, for example through a dev shell or `nix run`;
-1. a library function that validates the declaration and returns it, still as data;
-1. a library function that additionally wraps the CLI into a runnable package bound to the
-   declaration.
-
-Options 1 and 2 keep the flake purely declarative. Option 3 helps runtimes that can only run a
-flake package, and could be added later on top of either of the others without changing the
-CLI.
-
-Illustrative only, using option 1:
+A release module can use ordinary module features such as `imports`, typed options, defaults,
+priorities, `mkIf`, and `mkMerge`:
 
 ```nix
 {
-  outputs = { self, ... }: {
-    presswerk.default = {
-      version = "1.2.3";
-      publishers.github-release.default = {
-        repository = "owner/project";
-        assets."project-x86_64-linux" = "${self.packages.x86_64-linux.default}/bin/project";
-      };
+  outputs = { presswerk, ... }: {
+    presswerk.default = presswerk.lib.mkRelease {
+      sourceRoot = ./.;
+
+      imports = [
+        ({ lib, ... }: {
+          changelog.path = lib.mkDefault "CHANGELOG.md";
+        })
+        {
+          publishers.github-release.default.repository = "owner/project";
+        }
+      ];
     };
   };
 }
 ```
+
+`mkRelease` automatically includes Presswerk's standard option module. Its required
+`sourceRoot` points at the consumer's immutable flake source, so release modules can compute the
+effective version and other values from committed files. It is authoring-only and is not part of
+the normalized declaration. Paths in the declaration remain repository-relative strings that
+the CLI resolves against the exact Git commit it is operating on.
+
+`mkRelease` is an authoring interface only: authoring options may normalize into a different,
+standardized declaration shape, and the result contains no module-system values. The CLI
+receives the same plain data whether the consumer used `mkRelease` or wrote the final
+declaration directly. `mkRelease` does not wrap the CLI in a runnable package.
+
+Presswerk exposes its standard module as `presswerkModules.default`. Presswerk and third-party
+flakes can expose further reusable modules under their own `presswerkModules` flake output.
+Consumers import extension modules explicitly into `mkRelease`; Presswerk does not discover or
+load modules merely because their flakes are inputs.
+
+Release modules can add or compose publishers, analyzers, changelog handling, and other
+authoring features. Their normalized result must still be plain declaration data understood by
+the CLI. Runtime extensions are a separate, open design problem. Built-in features are compiled
+into the CLI, so a runtime extension mechanism is not required for the first milestone.
+
+The standardized declaration contains a required integer `schemaVersion`. It is owned by the
+renderer and is not an authoring option. The module that changes the normalized declaration
+incompatibly bumps this value in the same commit, independent of Presswerk's Cargo version. The
+CLI checks `schemaVersion` before interpreting the rest of the declaration and may retain
+decoders for older versions. This also avoids a self-release transition problem: release
+preparation can change the Cargo version without changing which declaration schema the running
+CLI and generated candidate use.
+
+Release modules receive a `presswerk` module argument whose `version` is the version of the
+Presswerk Nix module implementation. Extensions can use standard module assertions when they
+require a particular version. That producer version is separate from `schemaVersion`;
+capability checks through the module `options` remain preferable when an extension only needs
+to know whether a particular option exists.
 
 See [declaration scenarios](declaration-scenarios.md) for complete examples.
 
@@ -170,24 +202,11 @@ presswerk plan
 presswerk publish
 ```
 
-## flake-parts module
+## flake-parts integration
 
-The optional flake-parts module provides typed options and produces the same release
-declaration as a hand-written flake.
+Because `mkRelease` already uses the Nix module system, a future flake-parts integration does
+not need a separate release option schema. If one is useful, it is a thin adapter around the
+same release modules, primarily for composing flake-level and per-system values.
 
-Illustrative only:
-
-```nix
-{
-  imports = [ inputs.presswerk.flakeModules.default ];
-
-  presswerk.default.publishers.github-release.default.repository = "owner/project";
-
-  perSystem = { self', system, ... }: {
-    presswerk.default.publishers.github-release.default.assets."project-${system}" =
-      "${self'.packages.default}/bin/project";
-  };
-}
-```
-
-The module must not contain behavior unavailable to ordinary flakes.
+The adapter must produce the same plain declaration as `lib.mkRelease` and must not contain
+behavior unavailable to ordinary flakes.
