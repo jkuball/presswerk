@@ -26,7 +26,7 @@
   };
 
   outputs = inputs@{ flake-parts, import-tree, ... }:
-    flake-parts.lib.mkFlake { inherit inputs; } {
+    flake-parts.lib.mkFlake { inherit inputs; } ({ config, ... }: {
       imports = [
         inputs.flake-parts.flakeModules.modules
         inputs.nix-unit.modules.flake.default
@@ -38,9 +38,11 @@
         (import-tree ./modules)
       ];
 
+      flake.presswerkModules = config.flake.modules.presswerk;
+
       systems = [
         "aarch64-darwin"
         "x86_64-linux"
       ];
-    };
+    });
 }

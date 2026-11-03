@@ -252,6 +252,8 @@ in
   };
 
   perSystem = {
+    # nix-unit re-evaluates the full root flake in a network-disabled build sandbox,
+    # so every direct input is overridden to make its source available without fetching.
     nix-unit.inputs = {
       inherit (inputs)
         devshell
