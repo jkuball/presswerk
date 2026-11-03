@@ -9,6 +9,9 @@
 
     import-tree.url = "github:denful/import-tree";
 
+    nix-unit.url = "github:nix-community/nix-unit";
+    nix-unit.inputs.nixpkgs.follows = "nixpkgs";
+
     rust-flake.url = "github:juspay/rust-flake";
     rust-flake.inputs.nixpkgs.follows = "nixpkgs";
 
@@ -26,6 +29,7 @@
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         inputs.flake-parts.flakeModules.modules
+        inputs.nix-unit.modules.flake.default
         inputs.devshell.flakeModule
         inputs.git-hooks.flakeModule
         inputs.rust-flake.flakeModules.default
