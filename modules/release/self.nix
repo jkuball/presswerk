@@ -1,19 +1,13 @@
 { config, lib, self, ... }:
 let
-  version = (builtins.fromTOML (builtins.readFile ../Cargo.toml)).package.version;
-  standardModule = config.flake.modules.presswerk.default;
-  mkRelease = import ../nix/mk-release.nix {
-    inherit lib standardModule version;
-  };
+  version = (builtins.fromTOML (builtins.readFile ../../Cargo.toml)).package.version;
 in
 {
   flake = {
-    modules.presswerk.default = ../nix/release-module.nix;
     presswerkModules = config.flake.modules.presswerk;
-    lib.mkRelease = mkRelease;
 
-    presswerk.default = mkRelease {
-      sourceRoot = ../.;
+    presswerk.default = config.flake.lib.mkRelease {
+      sourceRoot = ../..;
       versionFiles.cargo.presswerk = { };
       publishers.github-release.default.repository = "jkuball/presswerk";
     };
@@ -22,11 +16,12 @@ in
   perSystem =
     { pkgs, self', ... }:
     let
-      declaration = import ../tests/nix/release-declaration.nix {
-        inherit mkRelease;
+      declaration = import ../../tests/nix/release-declaration.nix {
+        inherit (lib) evalModules;
+        mkRelease = config.flake.lib.mkRelease;
         presswerkModule = self.presswerkModules.default;
         presswerkVersion = version;
-        sourceRoot = ../.;
+        sourceRoot = ../..;
       };
       checkedDeclarations = builtins.deepSeq declaration (builtins.deepSeq self.presswerk.default {
         fixture = declaration;

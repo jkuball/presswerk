@@ -1,4 +1,4 @@
-{ mkRelease, presswerkModule, presswerkVersion, sourceRoot }:
+{ evalModules, mkRelease, presswerkModule, presswerkVersion, sourceRoot }:
 let
   publisher = {
     publishers.github-release.default.repository = "owner/project";
@@ -89,14 +89,16 @@ let
     ];
   });
 
-  publishedStandardModule = mkRelease {
-    inherit sourceRoot;
-    imports = [
+  publishedStandardModule = (evalModules {
+    class = "presswerk";
+    modules = [
       presswerkModule
-      publisher
+      {
+        inherit sourceRoot;
+        version = "0.0.0";
+      }
     ];
-    version = "0.0.0";
-  };
+  }).config;
 
   wrongModuleClass = builtins.tryEval (
     (mkRelease {
@@ -144,6 +146,6 @@ assert !repeatedTagPlaceholder.success;
 assert !backslashPath.success;
 assert moduleArgument.version == presswerkVersion;
 assert publishedStandardModule.version == "0.0.0";
-assert publishedStandardModule.schemaVersion == 1;
+assert publishedStandardModule.changelog.path == "CHANGELOG.md";
 assert !wrongModuleClass.success;
 builtins.deepSeq (builtins.fromJSON (builtins.toJSON defaults)) defaults
