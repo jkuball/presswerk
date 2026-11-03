@@ -1,0 +1,9 @@
+[package]
+name = "presswerk"
+version = "0.0.0"
+edition = "2024"
+description = "Controlled releases for software built with Nix flakes"
+publish = false
+
+[dependencies]
+clap = { version = "4.5.53", features = ["derive"] }
