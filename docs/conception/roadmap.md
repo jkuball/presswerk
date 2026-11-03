@@ -46,9 +46,9 @@ relevant buildable flake outputs, including packages, checks, dev shells, and th
 Following the reference workflow, CI runs for pull requests and pushes to `main`; publishing is
 restricted to trusted `main` release candidates.
 
-An early Nix integration spike tests the CLI against an exact-commit flake declaration. Embedded
-Nix via [nix-bindings-rust](https://github.com/cachix/nix-bindings-rust) is a candidate, not a
-requirement: invoking Nix tools is an acceptable alternative. Artifact context extraction,
+An early Nix integration spike confirmed that the CLI can read an exact-commit flake
+declaration in-process with [nix-bindings-rust](https://github.com/nixops4/nix-bindings-rust),
+so the CLI embeds Nix instead of invoking Nix tools. Artifact context extraction,
 substitution-only artifact realization, private inputs, and import-from-derivation edge cases are
 not gates for this asset-free milestone.
 

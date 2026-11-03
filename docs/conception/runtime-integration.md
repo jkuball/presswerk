@@ -12,8 +12,9 @@ The core contains no code specific to one CI system. It relies only on what ever
 provide:
 
 - a checkout of the candidate commit with enough Git history for commit analysis;
-- a Nix installation that can evaluate the flake, and from which every artifact of the
-  candidate can be obtained without building: already in the local store, or substitutable;
+- a Nix store, usually reached through the Nix daemon, that the CLI's embedded evaluator can
+  use, and from which every artifact of the candidate can be obtained without building: already
+  in the local store, or substitutable;
 - credentials for the configured forge and publishers;
 - a way to start the CLI.
 

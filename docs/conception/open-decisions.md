@@ -29,8 +29,8 @@ relevant document and remove it from this list.
   [product shape](product-shape.md#shape-of-the-declaration));
 - per-system handling (the output is `presswerk.default`; other names are not supported yet);
 - exact analyzer options for conventions and backends;
-- whether to embed Nix through nix-bindings-rust or invoke a Nix CLI, the corresponding runtime
-  requirement, and whether the CLI is distributed outside Nix.
+- which Nix daemon versions the embedded Nix libraries must support, and whether the CLI is
+  distributed outside Nix.
 
 ## Developer experience
 

@@ -67,10 +67,9 @@ possible.
 The consumer declares what to release in its flake: artifacts, publishers, version source,
 branch policy, and commit analysis settings. The CLI reads that
 [release declaration](glossary.md#release-declaration) by evaluating the flake, instead of
-maintaining a separate configuration file. In-process evaluation with
-[nix-bindings-rust](https://github.com/cachix/nix-bindings-rust) is one option; invoking
-`nix eval --json` or another Nix tool is also acceptable. The implementation is decided by an
-early integration spike.
+maintaining a separate configuration file. The CLI evaluates in-process with
+[nix-bindings-rust](https://github.com/nixops4/nix-bindings-rust), which wraps the Nix C API.
+It does not invoke `nix eval` or another Nix command.
 
 Reasons:
 
@@ -85,8 +84,9 @@ that guesses the forge, the version files, or the publishers.
 
 Consequences:
 
-- Nix is the primary distribution channel. The CLI needs a compatible Nix installation or
-  runtime; the exact contract depends on the evaluation implementation;
+- Nix is the primary distribution channel. The CLI links against the Nix C libraries it was
+  built with and uses the local Nix store, usually through the Nix daemon. The daemon may run a
+  different Nix version, such as Determinate Nix;
 - the declaration never contains secrets. It may name them, but their values only reach the
   CLI at runtime. Fetching private flake inputs during evaluation may still need
   authentication, configured in Nix itself (such as `access-tokens`), never in the
@@ -107,6 +107,21 @@ tree. Uncommitted or staged changes therefore never leak into a release.
 - `publish` evaluates the candidate commit.
 
 The release declaration is therefore always read from the commit being worked on.
+
+Nix does not enforce this on its own: a `git+file://` reference without `rev` reads the
+working tree, including uncommitted changes to tracked files. The CLI therefore always builds
+the flake reference itself and pins `rev`.
+
+The lock file is part of the commit as well. The CLI locks the flake in check mode: it never
+updates or writes `flake.lock`, and a commit whose lock file is missing or out of date fails
+instead of resolving inputs to whatever is current. The `nix` command behaves differently
+here: without `--no-update-lock-file`, it locks missing inputs and writes the result into the
+working tree.
+
+The declaration is read by its exact output path, `presswerk.default`, starting from the flake
+outputs. Nix's installable search through `packages.<system>` and `legacyPackages.<system>`
+does not apply, so a package that happens to be named `presswerk` cannot shadow the
+declaration.
 
 ```console
 $ presswerk plan

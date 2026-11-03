@@ -30,7 +30,7 @@ Illustrative or open details may still change.
 - [rust-flake single-crate example](https://github.com/juspay/rust-flake/blob/main/examples/single-crate/flake.nix)
 - [minijinja](https://github.com/mitsuhiko/minijinja)
 - [changelog-merge](https://github.com/cachix/changelog-merge)
-- [nix-bindings-rust](https://github.com/cachix/nix-bindings-rust)
+- [nix-bindings-rust](https://github.com/nixops4/nix-bindings-rust)
 - [flake-parts](https://flake.parts/)
 - [secretspec](https://secretspec.dev/)
 - [OpenTelemetry](https://opentelemetry.io/)
