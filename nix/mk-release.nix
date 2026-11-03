@@ -2,6 +2,7 @@
 releaseModule:
 let
   evaluated = lib.evalModules {
+    class = "presswerk";
     modules = [
       standardModule
       releaseModule

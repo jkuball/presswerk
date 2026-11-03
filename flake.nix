@@ -25,6 +25,7 @@
   outputs = inputs@{ flake-parts, import-tree, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
+        inputs.flake-parts.flakeModules.modules
         inputs.devshell.flakeModule
         inputs.git-hooks.flakeModule
         inputs.rust-flake.flakeModules.default

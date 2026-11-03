@@ -1,15 +1,16 @@
-{ lib, self, ... }:
+{ config, lib, self, ... }:
 let
   version = (builtins.fromTOML (builtins.readFile ../Cargo.toml)).package.version;
-  standardModule = import ../nix/release-module.nix;
+  standardModule = config.flake.modules.presswerk.default;
   mkRelease = import ../nix/mk-release.nix {
     inherit lib standardModule version;
   };
 in
 {
   flake = {
+    modules.presswerk.default = ../nix/release-module.nix;
+    presswerkModules = config.flake.modules.presswerk;
     lib.mkRelease = mkRelease;
-    presswerkModules.default = standardModule;
 
     presswerk.default = mkRelease {
       sourceRoot = ../.;
@@ -23,6 +24,7 @@ in
     let
       declaration = import ../tests/nix/release-declaration.nix {
         inherit mkRelease;
+        presswerkModule = self.presswerkModules.default;
         presswerkVersion = version;
         sourceRoot = ../.;
       };

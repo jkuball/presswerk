@@ -1,4 +1,4 @@
-{ mkRelease, presswerkVersion, sourceRoot }:
+{ mkRelease, presswerkModule, presswerkVersion, sourceRoot }:
 let
   publisher = {
     publishers.github-release.default.repository = "owner/project";
@@ -88,6 +88,23 @@ let
       }
     ];
   });
+
+  publishedStandardModule = mkRelease {
+    inherit sourceRoot;
+    imports = [
+      presswerkModule
+      publisher
+    ];
+    version = "0.0.0";
+  };
+
+  wrongModuleClass = builtins.tryEval (
+    (mkRelease {
+      inherit sourceRoot;
+      imports = [{ _class = "nixos"; }];
+      version = "0.0.0";
+    }).version
+  );
 in
 assert defaults.schemaVersion == 1;
 assert !(defaults ? sourceRoot);
@@ -126,4 +143,7 @@ assert !missingTagPlaceholder.success;
 assert !repeatedTagPlaceholder.success;
 assert !backslashPath.success;
 assert moduleArgument.version == presswerkVersion;
+assert publishedStandardModule.version == "0.0.0";
+assert publishedStandardModule.schemaVersion == 1;
+assert !wrongModuleClass.success;
 builtins.deepSeq (builtins.fromJSON (builtins.toJSON defaults)) defaults
