@@ -39,8 +39,10 @@ yet. It is the only commit from which that version can ever be published; later 
 inherit it. Before its first publication, a release commit must also be valid: it has a
 changelog section for its version, the version is a valid successor, and it is at least what
 commit analysis requires. Who made it does not matter. A fresh repository starts from an
-implicit `0.0.0` baseline, without requiring a tag or a manual first release; how it is
-distinguished from an existing untagged version is an open adoption question.
+implicit `0.0.0` baseline, without requiring a tag or a manual first release. For the first
+milestone that baseline is a committed `0.0.0` without a release tag; adoption of existing
+versioned repositories is open. Release commits use the `🔖` Gitmoji and are not grouped as
+ordinary entries in later notes.
 
 ### Pending release
 

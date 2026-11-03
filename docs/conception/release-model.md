@@ -198,7 +198,8 @@ milestone. Whether automatic recovery should ever be added is undecided.
 The previous release provides the base version and the tag that starts the commit range for
 analysis and notes. A new release must not proceed while that previous release is incomplete.
 Preparation and publication of a new candidate both need to enforce this release-chain
-invariant. A retry of an existing candidate completes that candidate rather than selecting a
+invariant. `prepare` therefore needs read access to the forge too, for example a GitHub token
+in CI, not only `publish`. A retry of an existing candidate completes that candidate rather than selecting a
 new one.
 
 For release selection, Presswerk identifies the latest applicable release tag and analyzes the
@@ -294,9 +295,11 @@ and publication flow then applies as for later releases.
 There is no release until the configured commit convention finds a release-worthy change. For
 example, a first Gitmoji feature commit bumps the implicit `0.0.0` baseline to `0.1.0`.
 
-How to distinguish this fresh baseline from an existing untagged version, and how to adopt a
-repository with releases made by other tools, remain open. See
-[scenario 13](scenarios.md#13-first-automatic-release).
+For the first milestone, the fresh baseline is recognized by a simple rule: the committed
+version is `0.0.0` and no release tag exists. Such a commit is neither a pending release nor a
+previous release whose completion must be checked. A release commit whose parent is at this
+baseline skips the previous-release check. Adopting a repository with releases made by other
+tools remains open. See [scenario 13](scenarios.md#13-first-automatic-release).
 
 ### Adoption
 
@@ -388,6 +391,11 @@ commits come first; equal-sized groups are ordered by Gitmoji shortcode. Each en
 least the commit subject; whether the default also includes the body is an implementation
 choice. Commits without a Gitmoji are not included in those notes.
 
+Release commits use `🔖`. A range contains at most one release commit, its previous release's,
+on its boundary; it is never grouped as an ordinary `🔖` entry. A release commit cannot list
+itself either: its notes are rendered before it exists. How the template refers to the
+previous release, if at all, is up to the template.
+
 Analysis uses the commits actually reachable in Git history, not forge pull-request metadata.
 After a squash merge the squash commit is analyzed, not the original commits that were not
 retained in the target branch's history.
@@ -419,11 +427,12 @@ publisher uses is open.
 for concurrent changelog additions and release cuts, which helps when several branches touch
 the same `CHANGELOG.md`. It does not select versions or publish releases.
 
-Developers must be able to add their own text, not only commit-derived notes. Every changelog
-therefore has a place where developers write notes for the next release while working, such
-as an `Unreleased` section at the top. `prepare` moves that text into the new version's
-section next to the generated notes and leaves the place empty for the next release. The
-exact layout, and how the text is handed to templates, is still open.
+Developers should be able to add their own text, not only commit-derived notes. A changelog
+can therefore have an optional place where developers write notes for the next release while
+working, such as an `Unreleased` section at the top. `prepare` moves that text into the new
+version's section next to the generated notes and leaves the place empty for the next release.
+A changelog without that place works with commit-derived notes alone. The exact layout, and how
+the text is handed to templates, is still open; the first milestone does not need this feature.
 
 ### Rendering notes
 

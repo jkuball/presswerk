@@ -45,8 +45,8 @@ relevant document and remove it from this list.
 - build metadata;
 - pre-release identifiers other than `rc` (`alpha`, `beta`) and switching between them;
 - default branch policy;
-- how an existing versioned repository without Presswerk tags is distinguished from a fresh
-  repository's implicit `0.0.0` baseline;
+- how an existing versioned repository without Presswerk tags is adopted (the first milestone
+  only recognizes a committed `0.0.0` without a release tag as the fresh baseline);
 - stable candidate integration.
 
 ## Commit analysis and changelog

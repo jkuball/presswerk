@@ -54,8 +54,8 @@ not gates for this asset-free milestone.
 
 The intended work breakdown is currently:
 
-1. Test exact-commit flake evaluation from Rust.
 1. Bootstrap the Rust CLI and Nix flake.
+1. Test exact-commit flake evaluation from Rust.
 1. Analyze Gitmoji commits and prepare release commits, with an internal version-file generator
    trait.
 1. Publish tags and GitHub Releases safely, behind an internal publisher trait. These boundaries

@@ -84,6 +84,10 @@ release commit without a separate GitHub App or personal token. The dispatch ref
 candidate checkout, permissions, and behavior when `main` advances must be tested. A
 `workflow_dispatch` workflow must exist on the default branch.
 
+A CI run on a release commit publishes it; it does not prepare again. How the workflow tells
+the two apart, for example from `presswerk plan --json` or from the dispatch that started it,
+is explored during the first milestone.
+
 GitHub Actions [concurrency groups](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
 can serialize runs, but default queueing retains only one pending run, replacing the previous
 pending run. The optional `queue: max` permits up to 100 pending runs, and queue order is based
