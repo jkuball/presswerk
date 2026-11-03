@@ -188,17 +188,10 @@ pub struct Token {
 
 impl Token {
     fn validate(&self) -> Result<(), DeclarationError> {
-        let mut characters = self.secret.chars();
-        let valid_first = characters
-            .next()
-            .is_some_and(|character| character == '_' || character.is_ascii_alphabetic());
-        if !valid_first
-            || !characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
-        {
-            return Err(DeclarationError::Invalid(format!(
-                "secret name {:?} must be an environment-variable name",
-                self.secret
-            )));
+        if self.secret.is_empty() {
+            return Err(DeclarationError::Invalid(
+                "secret name must not be empty".into(),
+            ));
         }
         Ok(())
     }
@@ -331,6 +324,20 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("exactly once")
+        );
+    }
+
+    #[test]
+    fn accepts_logical_secret_names_and_rejects_empty_names() {
+        let logical_name = DECLARATION.replace("GITHUB_TOKEN", "github-token");
+        ReleaseDeclaration::from_json(&logical_name).unwrap();
+
+        let empty_name = DECLARATION.replace("GITHUB_TOKEN", "");
+        assert!(
+            ReleaseDeclaration::from_json(&empty_name)
+                .unwrap_err()
+                .to_string()
+                .contains("must not be empty")
         );
     }
 

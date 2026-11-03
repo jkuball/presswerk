@@ -6,7 +6,12 @@ let
     path:
     path != ""
     && !(lib.hasPrefix "/" path)
+    && !(lib.hasInfix "\\" path)
     && lib.all (part: part != "" && part != "." && part != "..") (lib.splitString "/" path)
+  );
+
+  tagFormat = types.addCheck types.nonEmptyStr (
+    format: builtins.length (lib.splitString "{{ version }}" format) == 2
   );
 
   cargoModule = { name, ... }: {
@@ -65,9 +70,9 @@ in
     };
 
     tag.format = mkOption {
-      type = types.nonEmptyStr;
+      type = tagFormat;
       default = "v{{ version }}";
-      description = "Template used to render release tags.";
+      description = "Template used to render release tags; must contain {{ version }} exactly once.";
     };
 
     analyzer.convention = mkOption {

@@ -56,6 +56,33 @@ let
     }).schemaVersion
   );
 
+  missingTagPlaceholder = builtins.tryEval (
+    (mkRelease {
+      inherit sourceRoot;
+      version = "1.2.3";
+      tag.format = "release";
+    }).tag.format
+  );
+
+  repeatedTagPlaceholder = builtins.tryEval (
+    (mkRelease {
+      inherit sourceRoot;
+      version = "1.2.3";
+      tag.format = "{{ version }}-{{ version }}";
+    }).tag.format
+  );
+
+  backslashPath = builtins.tryEval (
+    (mkRelease {
+      inherit sourceRoot;
+      version = "1.2.3";
+      changelog = {
+        enable = true;
+        path = "docs\\NEWS.md";
+      };
+    }).changelog.path
+  );
+
   moduleArgument = mkRelease ({ presswerk, ... }: {
     inherit sourceRoot;
     imports = [ publisher ];
@@ -101,5 +128,8 @@ assert matchingVersions.version == "1.2.3";
 assert !conflictingVersions.success;
 assert !consumerSchemaVersion.success;
 assert !missingSourceRoot.success;
+assert !missingTagPlaceholder.success;
+assert !repeatedTagPlaceholder.success;
+assert !backslashPath.success;
 assert moduleArgument.version == presswerkVersion;
 builtins.deepSeq (builtins.fromJSON (builtins.toJSON defaults)) defaults
