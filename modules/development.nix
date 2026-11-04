@@ -44,7 +44,7 @@
             known_filter='any(.gitmojis[]; .code == $intention)'
           elif [[ "$intention" == :* ]]; then
             fail "malformed Gitmoji shortcode; expected :shortcode:"
-          elif printf '%s\n' "$intention" | grep -Pq '(*UTF)(*UCP)^\p{Extended_Pictographic}(?:\p{Grapheme_Extend}|\x{200D}\p{Extended_Pictographic})*$'; then
+          elif printf '%s\n' "$intention" | grep -Pq '(*UTF)(*UCP)^(?:\p{Extended_Pictographic}(?:\p{Grapheme_Extend}|\x{200D}\p{Extended_Pictographic})*|\p{Regional_Indicator}{2}|[#*0-9]\x{FE0F}?\x{20E3})$'; then
             intention_kind='Unicode intention'
             # shellcheck disable=SC2016 # jq expands $intention.
             known_filter='any(.gitmojis[]; (.emoji | gsub("\uFE0F"; "")) == ($intention | gsub("\uFE0F"; "")))'
@@ -88,6 +88,8 @@
         check_case silent '🧑‍💻 Improve developer experience'
         check_case silent ':bug: (hooks): Fix commit validation'
         check_case warning '🦄 Preserve custom intentions'
+        check_case warning '🇦🇶 Accept unknown flags'
+        check_case warning '7️⃣ Accept unknown keycaps'
         check_case warning ':party_parrot: Celebrate custom intentions'
         check_case failure 'Fix commit validation'
         check_case failure ':bug Fix commit validation'
