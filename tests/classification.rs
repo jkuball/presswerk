@@ -126,6 +126,22 @@ fn treats_an_untagged_zero_version_as_the_fresh_baseline() {
 }
 
 #[test]
+fn ignores_non_utf8_tags_when_recognizing_the_fresh_baseline() {
+    let repository = GitRepo::new();
+    let baseline = repository.commit_version("0.0.0", "🎉 Begin project");
+    let mut packed_refs =
+        format!("# pack-refs with: peeled fully-peeled sorted\n{baseline} refs/tags/snapshot-")
+            .into_bytes();
+    packed_refs.extend_from_slice(b"\xff\n");
+    repository.write(".git/packed-refs", packed_refs);
+
+    assert_eq!(
+        classify(&repository, &baseline),
+        CommitClassification::OrdinaryCommit
+    );
+}
+
+#[test]
 fn accepts_a_revert_to_the_previous_tagged_version() {
     let repository = GitRepo::new();
     repository.commit_version("0.1.0", "🔖 Prepare release");

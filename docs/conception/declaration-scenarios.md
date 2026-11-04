@@ -76,8 +76,9 @@ outside and evaluates `presswerk.default`.
   for everything else (see [version generators](#version-generators)). Afterward, the CLI
   evaluates `version` again and fails unless it equals the new version, whichever writers were
   used.
-- `tag.format` contains the exact `{version}` placeholder once. Everything around it is literal.
-  The CLI renders a tag by replacing the placeholder and reads tags back by matching the literal
+- `tag.format` contains the exact `{version}` placeholder once, not adjacent to another brace.
+  Everything around it is literal. The CLI renders a tag by replacing the placeholder and reads
+  tags back by matching the literal
   prefix and suffix; what is in between is the version. Tags that do not match are not releases.
   This deliberately is not a Minijinja template because tag formats must be reversible.
 - Interpolating `self.packages...` only computes the store path. Nothing is built during

@@ -147,7 +147,10 @@ impl Tag {
     fn expression(&self) -> Result<(usize, usize), TagError> {
         let start = self.format.find(VERSION_PLACEHOLDER).ok_or(TagError)?;
         let end = start + VERSION_PLACEHOLDER.len();
-        if self.format[end..].contains(VERSION_PLACEHOLDER) {
+        if self.format[end..].contains(VERSION_PLACEHOLDER)
+            || self.format[..start].ends_with('{')
+            || self.format[end..].starts_with('}')
+        {
             return Err(TagError);
         }
         Ok((start, end))
@@ -159,7 +162,9 @@ pub struct TagError;
 
 impl fmt::Display for TagError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("tag.format must contain {version} exactly once")
+        formatter.write_str(
+            "tag.format must contain {version} exactly once, not adjacent to another brace",
+        )
     }
 }
 
@@ -370,7 +375,11 @@ mod tests {
 
     #[test]
     fn validates_the_tag_version_placeholder() {
-        for format in ["v{version}", "release/{version}/source"] {
+        for format in [
+            "v{version}",
+            "release/{version}/source",
+            "{release}-{version}-{source}",
+        ] {
             let declaration = DECLARATION.replace("v{version}", format);
             ReleaseDeclaration::from_json(&declaration).unwrap();
         }
@@ -379,7 +388,10 @@ mod tests {
             "release",
             "{version}-{version}",
             "v{{ version }}",
-            "v{% raw %}{{ version }}{% endraw %}",
+            "v{{version}}",
+            "v{%raw%}{{version}}{%endraw%}",
+            "v{{version}",
+            "v{version}}",
         ] {
             let declaration = DECLARATION.replace("v{version}", format);
             assert!(
@@ -394,7 +406,11 @@ mod tests {
     #[test]
     fn renders_and_parses_release_tags() {
         let version = Version::new(1, 2, 3);
-        for format in ["v{version}", "release/{version}/source"] {
+        for format in [
+            "v{version}",
+            "release/{version}/source",
+            "{release}-{version}-{source}",
+        ] {
             let tag = Tag {
                 format: format.into(),
             };

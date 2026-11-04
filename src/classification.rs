@@ -4,6 +4,7 @@ use semver::Version;
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
+use std::str;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommitClassification {
@@ -233,11 +234,10 @@ fn has_release_tags(repository: &Repository, tag: &Tag) -> Result<bool, Classifi
     let tags = repository
         .tag_names(None)
         .map_err(|source| ClassificationError::git("could not list Git tags", source))?;
-    for name in tags.iter() {
-        let name = name.map_err(|source| {
-            ClassificationError::git("could not decode a Git tag name", source)
-        })?;
-        let Some(name) = name else { continue };
+    for name in tags.iter_bytes() {
+        let Ok(name) = str::from_utf8(name) else {
+            continue;
+        };
         if tag.parse(name)?.is_some() {
             return Ok(true);
         }

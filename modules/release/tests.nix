@@ -125,16 +125,27 @@ in
       expected = false;
     };
 
-    "test tag version placeholder is accepted" = {
-      expr = (mkRelease {
-        inherit sourceRoot;
-        version = "1.2.3";
-        tag.format = "release/{version}/source";
-      }).tag.format;
-      expected = "release/{version}/source";
+    "test tag version placeholder with literal surroundings is accepted" = {
+      expr = map
+        (
+          format:
+          (mkRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            tag.format = format;
+          }).tag.format
+        )
+        [
+          "release/{version}/source"
+          "{release}-{version}-{source}"
+        ];
+      expected = [
+        "release/{version}/source"
+        "{release}-{version}-{source}"
+      ];
     };
 
-    "test missing tag version expression fails" = {
+    "test missing tag version placeholder fails" = {
       expr = succeeds (mkRelease {
         inherit sourceRoot;
         version = "1.2.3";
@@ -143,7 +154,7 @@ in
       expected = false;
     };
 
-    "test repeated mixed tag version expressions fail" = {
+    "test repeated tag version placeholders fail" = {
       expr = succeeds (mkRelease {
         inherit sourceRoot;
         version = "1.2.3";
@@ -152,22 +163,28 @@ in
       expected = false;
     };
 
-    "test Minijinja tag expression fails" = {
-      expr = succeeds (mkRelease {
-        inherit sourceRoot;
-        version = "1.2.3";
-        tag.format = "v{{ version }}{{ \"\" }}";
-      });
-      expected = false;
-    };
-
-    "test Minijinja raw tag block fails" = {
-      expr = succeeds (mkRelease {
-        inherit sourceRoot;
-        version = "1.2.3";
-        tag.format = "v{% raw %}{{ version }}{% endraw %}";
-      });
-      expected = false;
+    "test delimiter-adjacent tag version placeholders fail" = {
+      expr = map
+        (
+          format:
+          succeeds (mkRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            tag.format = format;
+          })
+        )
+        [
+          "v{{version}}"
+          "v{%raw%}{{version}}{%endraw%}"
+          "v{{version}"
+          "v{version}}"
+        ];
+      expected = [
+        false
+        false
+        false
+        false
+      ];
     };
 
     "test invalid repository-relative paths fail" = {
