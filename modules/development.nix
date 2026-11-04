@@ -12,97 +12,53 @@
         hash = "sha256-LL9wc+PodtzbpkMVMH6u2O2E698FFt6gnAnc4m9x7s4=";
       };
 
-      gitmojiCommitCheck = pkgs.writers.writePython3Bin "check-gitmoji-commit"
-        {
-          libraries = [ pkgs.python3Packages.regex ];
-        } ''
-        import json
-        import sys
-        import unicodedata
-        from pathlib import Path
+      gitmojiCommitCheck = pkgs.writeShellApplication {
+        name = "check-gitmoji-commit";
+        runtimeInputs = [
+          pkgs.gnugrep
+          pkgs.jq
+        ];
+        text = ''
+          fail() {
+            echo "error: $1" >&2
+            exit 1
+          }
 
-        import regex
+          [ "$#" -eq 1 ] || fail "expected the commit message file as the only argument"
+          [ -r "$1" ] || fail "cannot read commit message file: $1"
 
+          title=
+          IFS= read -r title < "$1" || true
+          [ -n "$title" ] || fail "commit title is empty"
 
-        GITMOJIS = Path("${gitmojis}")
-        SHORTCODE = regex.compile(r":[A-Za-z0-9_+-]+:")
-        EXTENDED_PICTOGRAPHIC = regex.compile(r"\p{Extended_Pictographic}")
-        REGIONAL_FLAG = regex.compile(r"\p{Regional_Indicator}{2}")
-        KEYCAP = regex.compile(r"[#*0-9]\ufe0f?\u20e3")
+          intention="''${title%%[[:space:]]*}"
+          remainder="''${title#"$intention"}"
+          [ -n "$remainder" ] || fail "Gitmoji intention must be followed by whitespace"
 
+          message="''${remainder#"''${remainder%%[![:space:]]*}"}"
+          [ -n "$message" ] || fail "commit title message must not be empty"
 
-        def fail(message):
-            print("error: " + message, file=sys.stderr)
-            raise SystemExit(1)
+          if printf '%s\n' "$intention" | grep -Pq '^:[A-Za-z0-9_+-]+:$'; then
+            intention_kind=shortcode
+            # shellcheck disable=SC2016 # jq expands $intention.
+            known_filter='any(.gitmojis[]; .code == $intention)'
+          elif [[ "$intention" == :* ]]; then
+            fail "malformed Gitmoji shortcode; expected :shortcode:"
+          elif printf '%s\n' "$intention" | grep -Pq '(*UTF)(*UCP)^\p{Extended_Pictographic}(?:\p{Grapheme_Extend}|\x{200D}\p{Extended_Pictographic})*$'; then
+            intention_kind='Unicode intention'
+            # shellcheck disable=SC2016 # jq expands $intention.
+            known_filter='any(.gitmojis[]; (.emoji | gsub("\uFE0F"; "")) == ($intention | gsub("\uFE0F"; "")))'
+          elif printf '%s\n' "$intention" | grep -Pq '(*UTF)(*UCP)^\p{Extended_Pictographic}'; then
+            fail "Gitmoji intention must be followed by whitespace"
+          else
+            fail "commit title must start with a Unicode emoji or :shortcode: intention"
+          fi
 
-
-        def normalize_emoji(value):
-            without_variation_selectors = value.translate(
-                {ord("\ufe0e"): None, ord("\ufe0f"): None}
-            )
-            return unicodedata.normalize("NFC", without_variation_selectors)
-
-
-        def is_unicode_emoji(grapheme):
-            return bool(
-                EXTENDED_PICTOGRAPHIC.search(grapheme)
-                or REGIONAL_FLAG.fullmatch(grapheme)
-                or KEYCAP.fullmatch(grapheme)
-            )
-
-
-        if len(sys.argv) != 2:
-            fail("expected the commit message file as the only argument")
-
-        message_file = Path(sys.argv[1])
-        try:
-            lines = message_file.read_text(encoding="utf-8").splitlines()
-        except OSError as error:
-            fail("cannot read commit message file: " + str(error))
-
-        title = lines[0] if lines else ""
-        if not title:
-            fail("commit title is empty")
-
-        with GITMOJIS.open(encoding="utf-8") as gitmojis_file:
-            known = json.load(gitmojis_file)["gitmojis"]
-
-        known_shortcodes = {entry["code"] for entry in known}
-        known_unicode = {normalize_emoji(entry["emoji"]) for entry in known}
-
-        if title.startswith(":"):
-            match = SHORTCODE.match(title)
-            if match is None:
-                fail("malformed Gitmoji shortcode; expected :shortcode:")
-            intention = match.group()
-            known_intention = intention in known_shortcodes
-            intention_kind = "shortcode"
-        else:
-            match = regex.match(r"\X", title)
-            intention = match.group() if match else ""
-            if not is_unicode_emoji(intention):
-                fail(
-                    "commit title must start with a Unicode emoji "
-                    "or :shortcode: intention"
-                )
-            known_intention = normalize_emoji(intention) in known_unicode
-            intention_kind = "Unicode intention"
-
-        remainder = title[len(intention):]
-        if not remainder:
-            fail("commit title message must not be empty")
-        if not remainder[0].isspace():
-            fail("Gitmoji intention must be followed by whitespace")
-        if not remainder.strip():
-            fail("commit title message must not be empty")
-
-        if not known_intention:
-            print(
-                "warning: unknown Gitmoji " + intention_kind + " " + repr(intention)
-                + "; accepting structurally valid intention",
-                file=sys.stderr,
-            )
-      '';
+          if ! jq -e --arg intention "$intention" "$known_filter" "${gitmojis}" >/dev/null; then
+            echo "warning: unknown Gitmoji $intention_kind '$intention'; accepting structurally valid intention" >&2
+          fi
+        '';
+      };
 
       gitmojiCommitCheckTests = pkgs.runCommand "gitmoji-commit-check-tests"
         {
@@ -110,62 +66,33 @@
         } ''
         message_file="$TMPDIR/commit-message"
 
-        expect_silent() {
-          description="$1"
+        check_case() {
+          expected="$1"
           message="$2"
           printf '%s\n' "$message" > "$message_file"
-          if ! output="$(check-gitmoji-commit "$message_file" 2>&1)"; then
-            echo "FAIL: $description should pass" >&2
+          status=0
+          output="$(check-gitmoji-commit "$message_file" 2>&1)" || status=$?
+
+          case "$expected" in
+            silent) [ "$status" -eq 0 ] && [ -z "$output" ] ;;
+            warning) [ "$status" -eq 0 ] && printf '%s\n' "$output" | grep -Fq 'warning: unknown Gitmoji' ;;
+            failure) [ "$status" -ne 0 ] && printf '%s\n' "$output" | grep -Fq 'error:' ;;
+          esac || {
+            echo "FAIL: $expected case: $message" >&2
             echo "$output" >&2
             exit 1
-          fi
-          if [ -n "$output" ]; then
-            echo "FAIL: $description should be silent" >&2
-            echo "$output" >&2
-            exit 1
-          fi
+          }
         }
 
-        expect_warning() {
-          description="$1"
-          message="$2"
-          printf '%s\n' "$message" > "$message_file"
-          if ! output="$(check-gitmoji-commit "$message_file" 2>&1)"; then
-            echo "FAIL: $description should pass with a warning" >&2
-            echo "$output" >&2
-            exit 1
-          fi
-          if ! printf '%s\n' "$output" | grep -F 'warning: unknown Gitmoji' >/dev/null; then
-            echo "FAIL: $description should warn about an unknown Gitmoji" >&2
-            echo "$output" >&2
-            exit 1
-          fi
-        }
-
-        expect_failure() {
-          description="$1"
-          message="$2"
-          printf '%s\n' "$message" > "$message_file"
-          if output="$(check-gitmoji-commit "$message_file" 2>&1)"; then
-            echo "FAIL: $description should fail" >&2
-            exit 1
-          fi
-          if ! printf '%s\n' "$output" | grep -F 'error:' >/dev/null; then
-            echo "FAIL: $description should explain the failure" >&2
-            echo "$output" >&2
-            exit 1
-          fi
-        }
-
-        expect_silent 'known Unicode without variation selector' '⚡ Improve hook performance'
-        expect_silent 'known canonical ZWJ grapheme' '🧑‍💻 Improve developer experience'
-        expect_silent 'known shortcode with optional scope' ':bug: (hooks): Fix commit validation'
-        expect_warning 'unknown Unicode emoji' '🦄 Preserve custom intentions'
-        expect_warning 'unknown shortcode' ':party_parrot: Celebrate custom intentions'
-        expect_failure 'ordinary title' 'Fix commit validation'
-        expect_failure 'malformed shortcode' ':bug Fix commit validation'
-        expect_failure 'missing separator' '🐛Fix commit validation'
-        expect_failure 'empty message' '🐛   '
+        check_case silent '⚡ Improve hook performance'
+        check_case silent '🧑‍💻 Improve developer experience'
+        check_case silent ':bug: (hooks): Fix commit validation'
+        check_case warning '🦄 Preserve custom intentions'
+        check_case warning ':party_parrot: Celebrate custom intentions'
+        check_case failure 'Fix commit validation'
+        check_case failure ':bug Fix commit validation'
+        check_case failure '🐛Fix commit validation'
+        check_case failure '🐛   '
 
         touch "$out"
       '';
@@ -188,6 +115,7 @@
             entry = lib.getExe gitmojiCommitCheck;
             stages = [ "commit-msg" ];
             always_run = true;
+            verbose = true;
           };
           treefmt = {
             enable = true;
