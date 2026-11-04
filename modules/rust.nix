@@ -16,7 +16,7 @@
         };
 
         crates.presswerk.crane.args.meta.mainProgram = "presswerk";
-        crates.presswerk.crane.args.nativeBuildInputs = [ pkgs.gitMinimal ];
+        crates.presswerk.crane.args.nativeBuildInputs = with pkgs; [ pkg-config makeWrapper gitMinimal ];
       };
 
       packages.default = self'.packages.presswerk;
