@@ -15,7 +15,7 @@
       tagFormat = types.addCheck types.nonEmptyStr (
         format:
         let
-          parts = builtins.split "\\{\\{[[:space:]]*version[[:space:]]*\\}\\}" format;
+          parts = builtins.split "[{][{][[:space:]]*version[[:space:]]*[}][}]" format;
           expressions = builtins.filter builtins.isList parts;
           literals = builtins.filter builtins.isString parts;
           containsSyntax = literal: lib.any (syntax: lib.hasInfix syntax literal) [ "{{" "{%" "{#" ];
