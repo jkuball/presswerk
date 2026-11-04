@@ -48,7 +48,7 @@ outside and evaluates `presswerk.default`.
         #     ''; }
       ];
 
-      tag.format = "v{{ version }}";  # the default
+      tag.format = "v{version}";  # the default
 
       analyzer = {
         convention = "conventional-commits";
@@ -76,11 +76,11 @@ outside and evaluates `presswerk.default`.
   for everything else (see [version generators](#version-generators)). Afterward, the CLI
   evaluates `version` again and fails unless it equals the new version, whichever writers were
   used.
-- `tag.format` is a [minijinja](https://github.com/mitsuhiko/minijinja) template, rendered by
-  the CLI like the changelog templates. It must contain the `{{ version }}` expression exactly
-  once; whitespace inside the braces is optional. The CLI can then read tags back: the text
-  around the expression must match literally, and what is in between is the version. Tags that
-  do not match are not releases.
+- `tag.format` contains the exact `{version}` placeholder once, not adjacent to another brace.
+  Everything around it is literal. The CLI renders a tag by replacing the placeholder and reads
+  tags back by matching the literal
+  prefix and suffix; what is in between is the version. Tags that do not match are not releases.
+  This deliberately is not a Minijinja template because tag formats must be reversible.
 - Interpolating `self.packages...` only computes the store path. Nothing is built during
   evaluation (import from derivation is only satisfied by substitution); the CLI realises the
   paths only when it publishes.
@@ -189,7 +189,7 @@ other flakes.
   `Cargo.toml` below `sourceRoot` and emits both Cargo writers shown in the plain-data example.
   Relative `cargoToml` and `cargoLock` options select other files, and an explicit `crate`
   option overrides the instance name when needed.
-- The standard defaults are `v{{ version }}` tags, Gitmoji analysis for the first milestone,
+- The standard defaults are `v{version}` tags, Gitmoji analysis for the first milestone,
   `GITHUB_TOKEN` as the logical GitHub Release secret name, conventional root Cargo filenames,
   and `CHANGELOG.md` as the changelog path.
 - M1 always emits the changelog path. Generated notes are committed there as part of the master

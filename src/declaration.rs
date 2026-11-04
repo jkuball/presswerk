@@ -116,38 +116,59 @@ pub struct Tag {
     pub format: String,
 }
 
+const VERSION_PLACEHOLDER: &str = "{version}";
+
 impl Tag {
     fn validate(&self) -> Result<(), DeclarationError> {
-        if version_expression_count(&self.format) != 1 {
-            return Err(DeclarationError::Invalid(
-                "tag.format must contain {{ version }} exactly once".into(),
-            ));
+        self.expression()
+            .map(|_| ())
+            .map_err(|error| DeclarationError::Invalid(error.to_string()))
+    }
+
+    pub fn render(&self, version: &Version) -> Result<String, TagError> {
+        self.expression()?;
+        Ok(self
+            .format
+            .replacen(VERSION_PLACEHOLDER, &version.to_string(), 1))
+    }
+
+    pub fn parse(&self, tag: &str) -> Result<Option<Version>, TagError> {
+        let (start, end) = self.expression()?;
+        let Some(version) = tag
+            .strip_prefix(&self.format[..start])
+            .and_then(|tag| tag.strip_suffix(&self.format[end..]))
+        else {
+            return Ok(None);
+        };
+
+        Ok(Version::parse(version).ok())
+    }
+
+    fn expression(&self) -> Result<(usize, usize), TagError> {
+        let start = self.format.find(VERSION_PLACEHOLDER).ok_or(TagError)?;
+        let end = start + VERSION_PLACEHOLDER.len();
+        if self.format[end..].contains(VERSION_PLACEHOLDER)
+            || self.format[..start].ends_with('{')
+            || self.format[end..].starts_with('}')
+        {
+            return Err(TagError);
         }
-        Ok(())
+        Ok((start, end))
     }
 }
 
-fn version_expression_count(format: &str) -> usize {
-    let mut count = 0;
-    let mut search_from = 0;
+#[derive(Debug)]
+pub struct TagError;
 
-    while let Some(relative_start) = format[search_from..].find("{{") {
-        let start = search_from + relative_start;
-        let body_start = start + 2;
-        if let Some(relative_end) = format[body_start..].find("}}") {
-            let body_end = body_start + relative_end;
-            if format[body_start..body_end]
-                .trim_matches(|character: char| character.is_ascii_whitespace())
-                == "version"
-            {
-                count += 1;
-            }
-        }
-        search_from = body_start;
+impl fmt::Display for TagError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(
+            "tag.format must contain {version} exactly once, not adjacent to another brace",
+        )
     }
-
-    count
 }
+
+impl Error for TagError {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -276,7 +297,7 @@ mod tests {
             { "path": "Cargo.toml", "toml": "package.version" },
             { "path": "Cargo.lock", "cargoLock": "presswerk" }
         ],
-        "tag": { "format": "v{{ version }}" },
+        "tag": { "format": "v{version}" },
         "analyzer": { "convention": "gitmoji" },
         "changelog": { "path": "CHANGELOG.md" },
         "publishers": {
@@ -353,14 +374,26 @@ mod tests {
     }
 
     #[test]
-    fn validates_the_tag_version_expression() {
-        for format in ["v{{version}}", "v{{ version }}", r"v{{\t  version  \t}}"] {
-            let declaration = DECLARATION.replace("v{{ version }}", format);
+    fn validates_the_tag_version_placeholder() {
+        for format in [
+            "v{version}",
+            "release/{version}/source",
+            "{release}-{version}-{source}",
+        ] {
+            let declaration = DECLARATION.replace("v{version}", format);
             ReleaseDeclaration::from_json(&declaration).unwrap();
         }
 
-        for format in ["release", r"{{version}}-{{  version\t}}"] {
-            let declaration = DECLARATION.replace("v{{ version }}", format);
+        for format in [
+            "release",
+            "{version}-{version}",
+            "v{{ version }}",
+            "v{{version}}",
+            "v{%raw%}{{version}}{%endraw%}",
+            "v{{version}",
+            "v{version}}",
+        ] {
+            let declaration = DECLARATION.replace("v{version}", format);
             assert!(
                 ReleaseDeclaration::from_json(&declaration)
                     .unwrap_err()
@@ -368,6 +401,29 @@ mod tests {
                     .contains("exactly once")
             );
         }
+    }
+
+    #[test]
+    fn renders_and_parses_release_tags() {
+        let version = Version::new(1, 2, 3);
+        for format in [
+            "v{version}",
+            "release/{version}/source",
+            "{release}-{version}-{source}",
+        ] {
+            let tag = Tag {
+                format: format.into(),
+            };
+            let rendered = tag.render(&version).unwrap();
+            assert_eq!(tag.parse(&rendered).unwrap(), Some(version.clone()));
+        }
+
+        let tag = Tag {
+            format: "release/{version}/source".into(),
+        };
+        assert_eq!(tag.render(&version).unwrap(), "release/1.2.3/source");
+        assert_eq!(tag.parse("release/next/source").unwrap(), None);
+        assert_eq!(tag.parse("v1.2.3").unwrap(), None);
     }
 
     #[test]

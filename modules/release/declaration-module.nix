@@ -14,12 +14,14 @@
 
       tagFormat = types.addCheck types.nonEmptyStr (
         format:
-        builtins.length
-          (
-            builtins.filter builtins.isList (
-              builtins.split "\\{\\{[[:space:]]*version[[:space:]]*\\}\\}" format
-            )
-          ) == 1
+        let
+          parts = builtins.split "[{]version[}]" format;
+          expressions = builtins.filter builtins.isList parts;
+          literals = builtins.filter builtins.isString parts;
+        in
+        builtins.length expressions == 1
+        && !(lib.hasSuffix "{" (builtins.elemAt literals 0))
+        && !(lib.hasPrefix "}" (builtins.elemAt literals 1))
       );
 
       cargoModule = { name, ... }: {
@@ -79,8 +81,8 @@
 
         tag.format = mkOption {
           type = tagFormat;
-          default = "v{{ version }}";
-          description = "Template used to render release tags; must contain {{ version }} exactly once.";
+          default = "v{version}";
+          description = "Release tag format; must contain {version} exactly once, not adjacent to another brace.";
         };
 
         analyzer.convention = mkOption {
