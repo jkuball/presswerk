@@ -2,7 +2,7 @@ use crate::declaration::{CargoLockVersionFile, TomlVersionFile, VersionFile};
 use semver::Version;
 use std::error::Error;
 use std::fmt;
-use toml_edit::{DocumentMut, Item, Table, Value};
+use toml_edit::{Document, Item, Table, Value};
 
 pub trait VersionFileWriter {
     fn path(&self) -> &str;
@@ -60,8 +60,8 @@ impl VersionFileWriter for TomlVersionFile {
     }
 
     fn write_version(&self, contents: &str, version: &Version) -> Result<String, VersionFileError> {
-        let mut document = parse_toml(&self.path, contents)?;
-        let item = find_item_mut(document.as_item_mut(), &self.toml).ok_or_else(|| {
+        let document = parse_toml(&self.path, contents)?;
+        let item = find_item(document.as_item(), &self.toml).ok_or_else(|| {
             VersionFileError::Invalid(format!(
                 "{} does not contain TOML key {}",
                 self.path, self.toml
@@ -73,8 +73,7 @@ impl VersionFileWriter for TomlVersionFile {
                 self.toml, self.path
             )));
         }
-        replace_string(item, version.to_string());
-        Ok(document.to_string())
+        replace_string(&self.path, contents, item, version)
     }
 }
 
@@ -99,9 +98,9 @@ impl VersionFileWriter for CargoLockVersionFile {
     }
 
     fn write_version(&self, contents: &str, version: &Version) -> Result<String, VersionFileError> {
-        let mut document = parse_toml(&self.path, contents)?;
-        let package = cargo_package_mut(document.as_item_mut(), &self.path, &self.cargo_lock)?;
-        let item = package.get_mut("version").ok_or_else(|| {
+        let document = parse_toml(&self.path, contents)?;
+        let package = cargo_package(document.as_item(), &self.path, &self.cargo_lock)?;
+        let item = package.get("version").ok_or_else(|| {
             VersionFileError::Invalid(format!(
                 "package {} in {} has no version",
                 self.cargo_lock, self.path
@@ -113,8 +112,7 @@ impl VersionFileWriter for CargoLockVersionFile {
                 self.cargo_lock, self.path
             )));
         }
-        replace_string(item, version.to_string());
-        Ok(document.to_string())
+        replace_string(&self.path, contents, item, version)
     }
 }
 
@@ -142,19 +140,24 @@ pub fn check_consistent_versions(
     Ok(expected)
 }
 
-fn replace_string(item: &mut Item, contents: String) {
-    let decor = item
+fn replace_string(
+    path: &str,
+    contents: &str,
+    item: &Item,
+    version: &Version,
+) -> Result<String, VersionFileError> {
+    let span = item
         .as_value()
-        .expect("string item is a value")
-        .decor()
-        .clone();
-    let mut value = Value::from(contents);
-    *value.decor_mut() = decor;
-    *item = Item::Value(value);
+        .and_then(Value::span)
+        .ok_or_else(|| VersionFileError::Invalid(format!("could not locate version in {path}")))?;
+    let replacement = Value::from(version.to_string()).to_string();
+    let mut written = contents.to_owned();
+    written.replace_range(span, &replacement);
+    Ok(written)
 }
 
-fn parse_toml(path: &str, contents: &str) -> Result<DocumentMut, VersionFileError> {
-    contents.parse().map_err(|source| VersionFileError::Toml {
+fn parse_toml<'a>(path: &str, contents: &'a str) -> Result<Document<&'a str>, VersionFileError> {
+    Document::parse(contents).map_err(|source| VersionFileError::Toml {
         path: path.into(),
         source,
     })
@@ -171,13 +174,6 @@ fn parse_version(path: &str, version: &str) -> Result<Version, VersionFileError>
 fn find_item<'a>(mut item: &'a Item, selector: &str) -> Option<&'a Item> {
     for key in selector.split('.') {
         item = item.as_table_like()?.get(key)?;
-    }
-    Some(item)
-}
-
-fn find_item_mut<'a>(mut item: &'a mut Item, selector: &str) -> Option<&'a mut Item> {
-    for key in selector.split('.') {
-        item = item.as_table_like_mut()?.get_mut(key)?;
     }
     Some(item)
 }
@@ -207,34 +203,6 @@ fn cargo_package<'a>(
         )));
     }
     Ok(package)
-}
-
-fn cargo_package_mut<'a>(
-    document: &'a mut Item,
-    path: &str,
-    name: &str,
-) -> Result<&'a mut Table, VersionFileError> {
-    let packages = document
-        .as_table_like_mut()
-        .and_then(|document| document.get_mut("package"))
-        .and_then(Item::as_array_of_tables_mut)
-        .ok_or_else(|| VersionFileError::Invalid(format!("{path} has no package entries")))?;
-    let mut found = None;
-    for (index, package) in packages.iter().enumerate() {
-        if package
-            .get("name")
-            .and_then(Item::as_str)
-            .is_some_and(|package_name| package_name == name)
-            && found.replace(index).is_some()
-        {
-            return Err(VersionFileError::Invalid(format!(
-                "{path} has more than one package named {name}"
-            )));
-        }
-    }
-    let index = found
-        .ok_or_else(|| VersionFileError::Invalid(format!("{path} has no package named {name}")))?;
-    Ok(packages.get_mut(index).expect("matching package exists"))
 }
 
 #[derive(Debug)]

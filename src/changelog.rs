@@ -13,13 +13,14 @@ pub fn insert_version_section(
     }
 
     let contents = contents.unwrap_or("");
-    if find_version_heading(contents, version).is_some() {
+    if find_version_heading(contents, version)?.is_some() {
         return Err(ChangelogError::DuplicateVersion(version.clone()));
     }
 
-    let section = format!("## [{version}] - {date}\n\n{notes}\n");
+    let line_ending = line_ending(contents, notes);
+    let section = format!("## [{version}] - {date}{line_ending}{line_ending}{notes}{line_ending}");
     if contents.is_empty() {
-        return Ok(format!("# Changelog\n\n{section}"));
+        return Ok(format!("# Changelog{line_ending}{line_ending}{section}"));
     }
 
     let insertion = version_headings(contents)
@@ -27,12 +28,13 @@ pub fn insert_version_section(
         .map_or(contents.len(), |(start, _, _)| start);
     let before = &contents[..insertion];
     let after = &contents[insertion..];
-    let separator = if before.ends_with("\n\n") {
+    let blank_line = format!("{line_ending}{line_ending}");
+    let separator = if before.ends_with(&blank_line) {
         ""
-    } else if before.ends_with('\n') {
-        "\n"
+    } else if before.ends_with(line_ending) {
+        line_ending
     } else {
-        "\n\n"
+        &blank_line
     };
 
     Ok(format!("{before}{separator}{section}{after}"))
@@ -42,24 +44,55 @@ pub fn read_version_section<'a>(
     contents: &'a str,
     version: &Version,
 ) -> Result<&'a str, ChangelogError> {
-    let (_, heading_end) = find_version_heading(contents, version)
+    let (_, heading_end) = find_version_heading(contents, version)?
         .ok_or_else(|| ChangelogError::MissingVersion(version.clone()))?;
-    let body_start = contents[heading_end..]
-        .strip_prefix('\n')
-        .map_or(heading_end, |_| heading_end + 1);
+    let body_start = heading_end + line_ending_prefix_len(&contents[heading_end..]);
     let body_end = lines_with_offsets(contents)
         .find(|(start, _, line)| *start >= body_start && line.starts_with("## "))
         .map_or(contents.len(), |(start, _, _)| start);
 
-    Ok(contents[body_start..body_end]
-        .strip_suffix('\n')
-        .unwrap_or(&contents[body_start..body_end]))
+    let body = &contents[body_start..body_end];
+    Ok(body
+        .strip_suffix("\r\n")
+        .or_else(|| body.strip_suffix('\n'))
+        .unwrap_or(body))
 }
 
-fn find_version_heading(contents: &str, version: &Version) -> Option<(usize, usize)> {
-    version_headings(contents)
-        .find(|(_, _, heading_version)| heading_version == version)
-        .map(|(start, end, _)| (start, end))
+fn find_version_heading(
+    contents: &str,
+    version: &Version,
+) -> Result<Option<(usize, usize)>, ChangelogError> {
+    let mut matches = version_headings(contents)
+        .filter(|(_, _, heading_version)| heading_version == version)
+        .map(|(start, end, _)| (start, end));
+    let heading = matches.next();
+    if matches.next().is_some() {
+        return Err(ChangelogError::DuplicateVersion(version.clone()));
+    }
+    Ok(heading)
+}
+
+fn line_ending(contents: &str, notes: &str) -> &'static str {
+    for source in [contents, notes] {
+        if let Some(newline) = source.find('\n') {
+            return if source[..newline].ends_with('\r') {
+                "\r\n"
+            } else {
+                "\n"
+            };
+        }
+    }
+    "\n"
+}
+
+fn line_ending_prefix_len(contents: &str) -> usize {
+    if contents.starts_with("\r\n") {
+        2
+    } else if contents.starts_with('\n') {
+        1
+    } else {
+        0
+    }
 }
 
 fn version_headings(contents: &str) -> impl Iterator<Item = (usize, usize, Version)> + '_ {

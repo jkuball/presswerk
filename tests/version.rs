@@ -24,6 +24,21 @@ fn writes_and_reads_a_toml_version_without_reformatting_the_file() {
 }
 
 #[test]
+fn preserves_crlf_around_a_toml_version() {
+    let writer = TomlVersionFile {
+        path: "Cargo.toml".into(),
+        toml: "package.version".into(),
+    };
+    let contents = "[package]\r\nname = \"example\"\r\nversion = \"1.2.3\" # released\r\n\r\n[dependencies]\r\nserde = \"1\"\r\n";
+
+    let written = writer
+        .write_version(contents, &Version::new(1, 3, 0))
+        .unwrap();
+
+    assert_eq!(written, contents.replace("\"1.2.3\"", "\"1.3.0\""));
+}
+
+#[test]
 fn writes_only_the_named_cargo_lock_package() {
     let writer = CargoLockVersionFile {
         path: "Cargo.lock".into(),
@@ -53,6 +68,25 @@ dependencies = [
     );
     assert!(written.contains("name = \"dependency\"\nversion = \"9.9.9\""));
     assert!(written.contains("name = \"example\"\nversion = \"2.0.0\""));
+}
+
+#[test]
+fn preserves_crlf_around_a_cargo_lock_version() {
+    let writer = CargoLockVersionFile {
+        path: "Cargo.lock".into(),
+        cargo_lock: "example".into(),
+    };
+    let contents = "version = 4\r\n\r\n[[package]]\r\nname = \"dependency\"\r\nversion = \"9.9.9\"\r\n\r\n[[package]]\r\nname = \"example\"\r\nversion = \"1.2.3\"\r\n";
+    let expected = contents.replace(
+        "name = \"example\"\r\nversion = \"1.2.3\"",
+        "name = \"example\"\r\nversion = \"2.0.0\"",
+    );
+
+    let written = writer
+        .write_version(contents, &Version::new(2, 0, 0))
+        .unwrap();
+
+    assert_eq!(written, expected);
 }
 
 #[test]
