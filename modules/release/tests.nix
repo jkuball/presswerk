@@ -2,7 +2,19 @@
 let
   mkRelease = config.flake.lib.mkRelease;
   sourceRoot = self.outPath;
-  fixtureRoot = self.outPath + "/tests/fixtures/release";
+  cargoTomlFixture = builtins.toFile "Cargo.toml" ''
+    [package]
+    version = "1.2.3"
+  '';
+  otherTomlFixture = builtins.toFile "Other.toml" ''
+    [package]
+    version = "2.0.0"
+  '';
+  cargoLockFixture = builtins.toFile "Cargo.lock" "";
+  fixtureRoot = builtins.dirOf cargoTomlFixture;
+  cargoToml = builtins.baseNameOf cargoTomlFixture;
+  otherToml = builtins.baseNameOf otherTomlFixture;
+  cargoLock = builtins.baseNameOf cargoLockFixture;
   presswerkVersion = (builtins.fromTOML (builtins.readFile (self.outPath + "/Cargo.toml"))).package.version;
   succeeds = value: (builtins.tryEval (builtins.deepSeq value true)).success;
 
@@ -21,8 +33,8 @@ let
     imports = [ publisher ];
     versionFiles.cargo.example = {
       crate = "actual-crate";
-      cargoToml = "nested/Cargo.toml";
-      cargoLock = "nested/Cargo.lock";
+      inherit cargoToml;
+      inherit cargoLock;
     };
     changelog.path = "docs/NEWS.md";
   };
@@ -67,11 +79,11 @@ in
         version = "1.2.3";
         versionFiles = [
           {
-            path = "nested/Cargo.toml";
+            path = cargoToml;
             toml = "package.version";
           }
           {
-            path = "nested/Cargo.lock";
+            path = cargoLock;
             cargoLock = "actual-crate";
           }
         ];
@@ -83,7 +95,7 @@ in
       expr = (mkRelease {
         sourceRoot = fixtureRoot;
         version = "1.2.3";
-        versionFiles.cargo.example.cargoToml = "nested/Cargo.toml";
+        versionFiles.cargo.example.cargoToml = cargoToml;
       }).version;
       expected = "1.2.3";
     };
@@ -91,8 +103,8 @@ in
     "test conflicting version sources fail" = {
       expr = succeeds (mkRelease {
         sourceRoot = fixtureRoot;
-        versionFiles.cargo.first.cargoToml = "nested/Cargo.toml";
-        versionFiles.cargo.second.cargoToml = "nested/Other.toml";
+        versionFiles.cargo.first.cargoToml = cargoToml;
+        versionFiles.cargo.second.cargoToml = otherToml;
       });
       expected = false;
     };

@@ -77,11 +77,10 @@ impl VersionFile {
         match self {
             Self::Toml(file) => {
                 validate_relative_path(&file.path)?;
-                if file.toml != "package.version" {
-                    return Err(DeclarationError::Invalid(format!(
-                        "unsupported Cargo.toml key {:?}; expected package.version",
-                        file.toml
-                    )));
+                if file.toml.is_empty() {
+                    return Err(DeclarationError::Invalid(
+                        "TOML key selector must not be empty".into(),
+                    ));
                 }
             }
             Self::CargoLock(file) => {
@@ -336,6 +335,20 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("repository-relative")
+        );
+    }
+
+    #[test]
+    fn validates_generic_toml_selectors() {
+        let generic = DECLARATION.replace("package.version", "project.version");
+        ReleaseDeclaration::from_json(&generic).unwrap();
+
+        let empty = DECLARATION.replace("package.version", "");
+        assert!(
+            ReleaseDeclaration::from_json(&empty)
+                .unwrap_err()
+                .to_string()
+                .contains("must not be empty")
         );
     }
 
