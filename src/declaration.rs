@@ -118,17 +118,48 @@ pub struct Tag {
 
 impl Tag {
     fn validate(&self) -> Result<(), DeclarationError> {
-        if version_expression_count(&self.format) != 1 {
+        if version_expression(&self.format).is_none() {
             return Err(DeclarationError::Invalid(
                 "tag.format must contain {{ version }} exactly once".into(),
             ));
         }
-        Ok(())
+        self.render(&Version::new(0, 0, 0))
+            .map(|_| ())
+            .map_err(|error| DeclarationError::Invalid(error.to_string()))
+    }
+
+    pub fn render(&self, version: &Version) -> Result<String, TagError> {
+        self.expression()?;
+
+        let mut environment = minijinja::Environment::new();
+        environment.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
+        environment
+            .render_str(
+                &self.format,
+                minijinja::context! { version => version.to_string() },
+            )
+            .map_err(TagError::Render)
+    }
+
+    pub fn parse(&self, tag: &str) -> Result<Option<Version>, TagError> {
+        let (start, end) = self.expression()?;
+        let Some(version) = tag
+            .strip_prefix(&self.format[..start])
+            .and_then(|tag| tag.strip_suffix(&self.format[end..]))
+        else {
+            return Ok(None);
+        };
+
+        Ok(Version::parse(version).ok())
+    }
+
+    fn expression(&self) -> Result<(usize, usize), TagError> {
+        version_expression(&self.format).ok_or(TagError::InvalidFormat)
     }
 }
 
-fn version_expression_count(format: &str) -> usize {
-    let mut count = 0;
+fn version_expression(format: &str) -> Option<(usize, usize)> {
+    let mut expression = None;
     let mut search_from = 0;
 
     while let Some(relative_start) = format[search_from..].find("{{") {
@@ -139,14 +170,41 @@ fn version_expression_count(format: &str) -> usize {
             if format[body_start..body_end]
                 .trim_matches(|character: char| character.is_ascii_whitespace())
                 == "version"
+                && expression.replace((start, body_end + 2)).is_some()
             {
-                count += 1;
+                return None;
             }
         }
         search_from = body_start;
     }
 
-    count
+    expression
+}
+
+#[derive(Debug)]
+pub enum TagError {
+    InvalidFormat,
+    Render(minijinja::Error),
+}
+
+impl fmt::Display for TagError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidFormat => {
+                formatter.write_str("tag.format must contain {{ version }} exactly once")
+            }
+            Self::Render(error) => write!(formatter, "could not render tag.format: {error}"),
+        }
+    }
+}
+
+impl Error for TagError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Render(error) => Some(error),
+            Self::InvalidFormat => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -368,6 +426,27 @@ mod tests {
                     .contains("exactly once")
             );
         }
+
+        let invalid_template = DECLARATION.replace("v{{ version }}", "v{{ version }}{% ");
+        assert!(
+            ReleaseDeclaration::from_json(&invalid_template)
+                .unwrap_err()
+                .to_string()
+                .contains("could not render")
+        );
+    }
+
+    #[test]
+    fn renders_and_parses_release_tags() {
+        let tag = Tag {
+            format: "release/{{ version }}/source".into(),
+        };
+        let version = Version::new(1, 2, 3);
+
+        assert_eq!(tag.render(&version).unwrap(), "release/1.2.3/source");
+        assert_eq!(tag.parse("release/1.2.3/source").unwrap(), Some(version));
+        assert_eq!(tag.parse("release/next/source").unwrap(), None);
+        assert_eq!(tag.parse("v1.2.3").unwrap(), None);
     }
 
     #[test]
