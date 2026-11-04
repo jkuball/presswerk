@@ -14,13 +14,7 @@
 
       tagFormat = types.addCheck types.nonEmptyStr (
         format:
-        let
-          parts = builtins.split "[{][{][[:space:]]*version[[:space:]]*[}][}]" format;
-          expressions = builtins.filter builtins.isList parts;
-          literals = builtins.filter builtins.isString parts;
-          containsSyntax = literal: lib.any (syntax: lib.hasInfix syntax literal) [ "{{" "{%" "{#" ];
-        in
-        builtins.length expressions == 1 && lib.all (literal: !containsSyntax literal) literals
+        builtins.length (builtins.filter builtins.isList (builtins.split "[{]version[}]" format)) == 1
       );
 
       cargoModule = { name, ... }: {
@@ -80,8 +74,8 @@
 
         tag.format = mkOption {
           type = tagFormat;
-          default = "v{{ version }}";
-          description = "Template used to render release tags; must contain only literal text and {{ version }} exactly once.";
+          default = "v{version}";
+          description = "Release tag format; must contain {version} exactly once.";
         };
 
         analyzer.convention = mkOption {

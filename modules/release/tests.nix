@@ -56,7 +56,7 @@ in
             cargoLock = "presswerk";
           }
         ];
-        tag.format = "v{{ version }}";
+        tag.format = "v{version}";
         analyzer.convention = "gitmoji";
         changelog.path = "CHANGELOG.md";
         publishers.github-release.default = {
@@ -125,22 +125,13 @@ in
       expected = false;
     };
 
-    "test compact tag version expression is accepted" = {
+    "test tag version placeholder is accepted" = {
       expr = (mkRelease {
         inherit sourceRoot;
         version = "1.2.3";
-        tag.format = "v{{version}}";
+        tag.format = "release/{version}/source";
       }).tag.format;
-      expected = "v{{version}}";
-    };
-
-    "test wide tag version expression is accepted" = {
-      expr = (mkRelease {
-        inherit sourceRoot;
-        version = "1.2.3";
-        tag.format = "v{{\t  version  \t}}";
-      }).tag.format;
-      expected = "v{{\t  version  \t}}";
+      expected = "release/{version}/source";
     };
 
     "test missing tag version expression fails" = {
@@ -156,12 +147,12 @@ in
       expr = succeeds (mkRelease {
         inherit sourceRoot;
         version = "1.2.3";
-        tag.format = "{{version}}-{{  version\t}}";
+        tag.format = "{version}-{version}";
       });
       expected = false;
     };
 
-    "test extra tag expression fails" = {
+    "test Minijinja tag expression fails" = {
       expr = succeeds (mkRelease {
         inherit sourceRoot;
         version = "1.2.3";
@@ -170,7 +161,7 @@ in
       expected = false;
     };
 
-    "test raw tag block fails" = {
+    "test Minijinja raw tag block fails" = {
       expr = succeeds (mkRelease {
         inherit sourceRoot;
         version = "1.2.3";

@@ -10,7 +10,7 @@ fn classify(repository: &GitRepo, target: &str) -> CommitClassification {
         repository.path(),
         target,
         &Tag {
-            format: "v{{ version }}".into(),
+            format: "v{version}".into(),
         },
         |commit| Version::parse(&repository.version_at(commit)),
     )

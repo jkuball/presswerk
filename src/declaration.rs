@@ -116,29 +116,20 @@ pub struct Tag {
     pub format: String,
 }
 
+const VERSION_PLACEHOLDER: &str = "{version}";
+
 impl Tag {
     fn validate(&self) -> Result<(), DeclarationError> {
-        if version_expression(&self.format).is_none() {
-            return Err(DeclarationError::Invalid(
-                "tag.format must contain only literal text and {{ version }} exactly once".into(),
-            ));
-        }
-        self.render(&Version::new(0, 0, 0))
+        self.expression()
             .map(|_| ())
             .map_err(|error| DeclarationError::Invalid(error.to_string()))
     }
 
     pub fn render(&self, version: &Version) -> Result<String, TagError> {
         self.expression()?;
-
-        let mut environment = minijinja::Environment::new();
-        environment.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
-        environment
-            .render_str(
-                &self.format,
-                minijinja::context! { version => version.to_string() },
-            )
-            .map_err(TagError::Render)
+        Ok(self
+            .format
+            .replacen(VERSION_PLACEHOLDER, &version.to_string(), 1))
     }
 
     pub fn parse(&self, tag: &str) -> Result<Option<Version>, TagError> {
@@ -154,68 +145,25 @@ impl Tag {
     }
 
     fn expression(&self) -> Result<(usize, usize), TagError> {
-        version_expression(&self.format).ok_or(TagError::InvalidFormat)
-    }
-}
-
-fn version_expression(format: &str) -> Option<(usize, usize)> {
-    let mut expression = None;
-    let mut search_from = 0;
-
-    while let Some(relative_start) = format[search_from..].find("{{") {
-        let start = search_from + relative_start;
-        let body_start = start + 2;
-        if let Some(relative_end) = format[body_start..].find("}}") {
-            let body_end = body_start + relative_end;
-            if format[body_start..body_end]
-                .trim_matches(|character: char| character.is_ascii_whitespace())
-                == "version"
-                && expression.replace((start, body_end + 2)).is_some()
-            {
-                return None;
-            }
+        let start = self.format.find(VERSION_PLACEHOLDER).ok_or(TagError)?;
+        let end = start + VERSION_PLACEHOLDER.len();
+        if self.format[end..].contains(VERSION_PLACEHOLDER) {
+            return Err(TagError);
         }
-        search_from = body_start;
+        Ok((start, end))
     }
-
-    let (start, end) = expression?;
-    let literal_contains_syntax = |literal: &str| {
-        ["{{", "{%", "{#"]
-            .iter()
-            .any(|opening| literal.contains(opening))
-    };
-    if literal_contains_syntax(&format[..start]) || literal_contains_syntax(&format[end..]) {
-        return None;
-    }
-
-    Some((start, end))
 }
 
 #[derive(Debug)]
-pub enum TagError {
-    InvalidFormat,
-    Render(minijinja::Error),
-}
+pub struct TagError;
 
 impl fmt::Display for TagError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidFormat => formatter.write_str(
-                "tag.format must contain only literal text and {{ version }} exactly once",
-            ),
-            Self::Render(error) => write!(formatter, "could not render tag.format: {error}"),
-        }
+        formatter.write_str("tag.format must contain {version} exactly once")
     }
 }
 
-impl Error for TagError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Render(error) => Some(error),
-            Self::InvalidFormat => None,
-        }
-    }
-}
+impl Error for TagError {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -344,7 +292,7 @@ mod tests {
             { "path": "Cargo.toml", "toml": "package.version" },
             { "path": "Cargo.lock", "cargoLock": "presswerk" }
         ],
-        "tag": { "format": "v{{ version }}" },
+        "tag": { "format": "v{version}" },
         "analyzer": { "convention": "gitmoji" },
         "changelog": { "path": "CHANGELOG.md" },
         "publishers": {
@@ -421,14 +369,19 @@ mod tests {
     }
 
     #[test]
-    fn validates_the_tag_version_expression() {
-        for format in ["v{{version}}", "v{{ version }}", r"v{{\t  version  \t}}"] {
-            let declaration = DECLARATION.replace("v{{ version }}", format);
+    fn validates_the_tag_version_placeholder() {
+        for format in ["v{version}", "release/{version}/source"] {
+            let declaration = DECLARATION.replace("v{version}", format);
             ReleaseDeclaration::from_json(&declaration).unwrap();
         }
 
-        for format in ["release", r"{{version}}-{{  version\t}}"] {
-            let declaration = DECLARATION.replace("v{{ version }}", format);
+        for format in [
+            "release",
+            "{version}-{version}",
+            "v{{ version }}",
+            "v{% raw %}{{ version }}{% endraw %}",
+        ] {
+            let declaration = DECLARATION.replace("v{version}", format);
             assert!(
                 ReleaseDeclaration::from_json(&declaration)
                     .unwrap_err()
@@ -436,30 +389,12 @@ mod tests {
                     .contains("exactly once")
             );
         }
-
-        for format in [
-            r#"v{{ version }}{{ \"\" }}"#,
-            "v{% raw %}{{ version }}{% endraw %}",
-        ] {
-            let declaration = DECLARATION.replace("v{{ version }}", format);
-            assert!(
-                ReleaseDeclaration::from_json(&declaration)
-                    .unwrap_err()
-                    .to_string()
-                    .contains("only literal text")
-            );
-        }
     }
 
     #[test]
     fn renders_and_parses_release_tags() {
         let version = Version::new(1, 2, 3);
-        for format in [
-            "v{{version}}",
-            "v{{ version }}",
-            "v{{\t version \t}}",
-            "release/{{ version }}/source",
-        ] {
+        for format in ["v{version}", "release/{version}/source"] {
             let tag = Tag {
                 format: format.into(),
             };
@@ -468,7 +403,7 @@ mod tests {
         }
 
         let tag = Tag {
-            format: "release/{{ version }}/source".into(),
+            format: "release/{version}/source".into(),
         };
         assert_eq!(tag.render(&version).unwrap(), "release/1.2.3/source");
         assert_eq!(tag.parse("release/next/source").unwrap(), None);
