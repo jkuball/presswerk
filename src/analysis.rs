@@ -217,7 +217,7 @@ struct CatalogGitmoji {
 fn catalog() -> &'static Catalog {
     static CATALOG: OnceLock<Catalog> = OnceLock::new();
     CATALOG.get_or_init(|| {
-        serde_json::from_str(include_str!("../vendor/gitmoji/gitmojis.json"))
+        serde_json::from_str(include_str!("gitmoji/gitmojis.json"))
             .expect("vendored Gitmoji catalog must be valid")
     })
 }
