@@ -120,7 +120,7 @@ impl Tag {
     fn validate(&self) -> Result<(), DeclarationError> {
         if version_expression(&self.format).is_none() {
             return Err(DeclarationError::Invalid(
-                "tag.format must contain {{ version }} exactly once".into(),
+                "tag.format must contain only literal text and {{ version }} exactly once".into(),
             ));
         }
         self.render(&Version::new(0, 0, 0))
@@ -178,7 +178,17 @@ fn version_expression(format: &str) -> Option<(usize, usize)> {
         search_from = body_start;
     }
 
-    expression
+    let (start, end) = expression?;
+    let literal_contains_syntax = |literal: &str| {
+        ["{{", "{%", "{#"]
+            .iter()
+            .any(|opening| literal.contains(opening))
+    };
+    if literal_contains_syntax(&format[..start]) || literal_contains_syntax(&format[end..]) {
+        return None;
+    }
+
+    Some((start, end))
 }
 
 #[derive(Debug)]
@@ -190,9 +200,9 @@ pub enum TagError {
 impl fmt::Display for TagError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidFormat => {
-                formatter.write_str("tag.format must contain {{ version }} exactly once")
-            }
+            Self::InvalidFormat => formatter.write_str(
+                "tag.format must contain only literal text and {{ version }} exactly once",
+            ),
             Self::Render(error) => write!(formatter, "could not render tag.format: {error}"),
         }
     }
@@ -427,24 +437,40 @@ mod tests {
             );
         }
 
-        let invalid_template = DECLARATION.replace("v{{ version }}", "v{{ version }}{% ");
-        assert!(
-            ReleaseDeclaration::from_json(&invalid_template)
-                .unwrap_err()
-                .to_string()
-                .contains("could not render")
-        );
+        for format in [
+            r#"v{{ version }}{{ \"\" }}"#,
+            "v{% raw %}{{ version }}{% endraw %}",
+        ] {
+            let declaration = DECLARATION.replace("v{{ version }}", format);
+            assert!(
+                ReleaseDeclaration::from_json(&declaration)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("only literal text")
+            );
+        }
     }
 
     #[test]
     fn renders_and_parses_release_tags() {
+        let version = Version::new(1, 2, 3);
+        for format in [
+            "v{{version}}",
+            "v{{ version }}",
+            "v{{\t version \t}}",
+            "release/{{ version }}/source",
+        ] {
+            let tag = Tag {
+                format: format.into(),
+            };
+            let rendered = tag.render(&version).unwrap();
+            assert_eq!(tag.parse(&rendered).unwrap(), Some(version.clone()));
+        }
+
         let tag = Tag {
             format: "release/{{ version }}/source".into(),
         };
-        let version = Version::new(1, 2, 3);
-
         assert_eq!(tag.render(&version).unwrap(), "release/1.2.3/source");
-        assert_eq!(tag.parse("release/1.2.3/source").unwrap(), Some(version));
         assert_eq!(tag.parse("release/next/source").unwrap(), None);
         assert_eq!(tag.parse("v1.2.3").unwrap(), None);
     }

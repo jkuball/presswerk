@@ -18,6 +18,11 @@ impl GitRepo {
         repository.git(["init", "--quiet"]);
         repository.git(["config", "user.name", "Presswerk Tests"]);
         repository.git(["config", "user.email", "presswerk@example.invalid"]);
+        repository.git(["config", "commit.gpgSign", "false"]);
+        repository.git(["config", "tag.gpgSign", "false"]);
+        fs::create_dir_all(repository.path().join(".git/disabled-hooks"))
+            .expect("create empty Git hooks directory");
+        repository.git(["config", "core.hooksPath", ".git/disabled-hooks"]);
         repository
     }
 
