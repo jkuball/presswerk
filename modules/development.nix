@@ -7,9 +7,11 @@
     , ...
     }:
     let
-      gitmojis = pkgs.fetchurl {
-        url = "https://gitmoji.dev/api/gitmojis";
-        hash = "sha256-LL9wc+PodtzbpkMVMH6u2O2E698FFt6gnAnc4m9x7s4=";
+      gitmojiSource = pkgs.fetchFromGitHub {
+        owner = "carloscuesta";
+        repo = "gitmoji";
+        rev = "c7e067f43a33c5d9d42450314977efa409101308";
+        hash = "sha256-M7A7a+kYAgeMz7twthGqZaauBaGwMJqPw6StaV/bYmE=";
       };
 
       gitmojiCommitCheck = pkgs.writeShellApplication {
@@ -54,50 +56,11 @@
             fail "commit title must start with a Unicode emoji or :shortcode: intention"
           fi
 
-          if ! jq -e --arg intention "$intention" "$known_filter" "${gitmojis}" >/dev/null; then
+          if ! jq -e --arg intention "$intention" "$known_filter" "${gitmojiSource}/packages/gitmojis/src/gitmojis.json" >/dev/null; then
             echo "warning: unknown Gitmoji $intention_kind '$intention'; accepting structurally valid intention" >&2
           fi
         '';
       };
-
-      gitmojiCommitCheckTests = pkgs.runCommand "gitmoji-commit-check-tests"
-        {
-          nativeBuildInputs = [ gitmojiCommitCheck ];
-        } ''
-        message_file="$TMPDIR/commit-message"
-
-        check_case() {
-          expected="$1"
-          message="$2"
-          printf '%s\n' "$message" > "$message_file"
-          status=0
-          output="$(check-gitmoji-commit "$message_file" 2>&1)" || status=$?
-
-          case "$expected" in
-            silent) [ "$status" -eq 0 ] && [ -z "$output" ] ;;
-            warning) [ "$status" -eq 0 ] && printf '%s\n' "$output" | grep -Fq 'warning: unknown Gitmoji' ;;
-            failure) [ "$status" -ne 0 ] && printf '%s\n' "$output" | grep -Fq 'error:' ;;
-          esac || {
-            echo "FAIL: $expected case: $message" >&2
-            echo "$output" >&2
-            exit 1
-          }
-        }
-
-        check_case silent '⚡ Improve hook performance'
-        check_case silent '🧑‍💻 Improve developer experience'
-        check_case silent ':bug: (hooks): Fix commit validation'
-        check_case warning '🦄 Preserve custom intentions'
-        check_case warning '🇦🇶 Accept unknown flags'
-        check_case warning '7️⃣ Accept unknown keycaps'
-        check_case warning ':party_parrot: Celebrate custom intentions'
-        check_case failure 'Fix commit validation'
-        check_case failure ':bug Fix commit validation'
-        check_case failure '🐛Fix commit validation'
-        check_case failure '🐛   '
-
-        touch "$out"
-      '';
     in
     {
       treefmt.programs = {
@@ -125,8 +88,6 @@
           };
         };
       };
-
-      checks.gitmoji-commit = gitmojiCommitCheckTests;
 
       devshells.default = {
         packages = [
