@@ -1,0 +1,6 @@
+{% if groups %}{% for group in groups %}### {{ group.emoji }} {{ group.shortcode }}
+
+{% for commit in group.commits %}- {{ commit.subject }}
+{% endfor %}{% if not loop.last %}
+{% endif %}{% endfor %}{% else %}No recorded changes.
+{% endif %}

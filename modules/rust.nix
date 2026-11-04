@@ -1,8 +1,22 @@
 {
   perSystem =
-    { config, pkgs, self', ... }:
+    { config
+    , lib
+    , pkgs
+    , self'
+    , ...
+    }:
     {
-      rust-project.crates.presswerk.crane.args.meta.mainProgram = "presswerk";
+      rust-project = {
+        src = lib.cleanSourceWith {
+          src = ../.;
+          filter = path: type:
+            lib.hasSuffix "/src/release-notes.md.j2" path
+            || config.rust-project.crane-lib.filterCargoSources path type;
+        };
+
+        crates.presswerk.crane.args.meta.mainProgram = "presswerk";
+      };
 
       packages.default = self'.packages.presswerk;
 
