@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 
 const DEFAULT_NOTES_TEMPLATE: &str = "{% if groups %}{% for group in groups %}### {{ group.emoji }} {{ group.shortcode }}\n\n{% for commit in group.commits %}- {{ commit.subject }}\n{% endfor %}{% if not loop.last %}\n{% endif %}{% endfor %}{% else %}No recorded changes.\n{% endif %}";
 const BOOKMARK_SHORTCODE: &str = ":bookmark:";
@@ -201,26 +200,15 @@ impl fmt::Display for RenderError {
 
 impl Error for RenderError {}
 
-#[derive(Debug, Deserialize)]
-struct Catalog {
-    gitmojis: Vec<CatalogGitmoji>,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 struct CatalogGitmoji {
-    emoji: String,
-    code: String,
-    description: String,
+    emoji: &'static str,
+    code: &'static str,
+    description: &'static str,
     semver: Option<Bump>,
 }
 
-fn catalog() -> &'static Catalog {
-    static CATALOG: OnceLock<Catalog> = OnceLock::new();
-    CATALOG.get_or_init(|| {
-        serde_json::from_str(include_str!("gitmoji/gitmojis.json"))
-            .expect("vendored Gitmoji catalog must be valid")
-    })
-}
+include!("gitmoji/catalog.rs");
 
 #[must_use]
 pub fn parse_gitmoji_subject(subject: &str) -> Option<ParsedGitmojiSubject> {
@@ -232,20 +220,20 @@ pub fn parse_gitmoji_subject(subject: &str) -> Option<ParsedGitmojiSubject> {
         return None;
     }
 
-    let entry = catalog().gitmojis.iter().find(|entry| {
+    let entry = GITMOJIS.iter().find(|entry| {
         if intention.starts_with(':') {
             intention == entry.code
         } else {
-            strip_variation_selectors(intention) == strip_variation_selectors(&entry.emoji)
+            strip_variation_selectors(intention) == strip_variation_selectors(entry.emoji)
         }
     })?;
     let (scope, message) = parse_scope_and_message(remainder)?;
 
     Some(ParsedGitmojiSubject {
         gitmoji: Gitmoji {
-            emoji: entry.emoji.clone(),
-            shortcode: entry.code.clone(),
-            description: entry.description.clone(),
+            emoji: entry.emoji.to_owned(),
+            shortcode: entry.code.to_owned(),
+            description: entry.description.to_owned(),
             bump: entry.semver,
         },
         scope,
