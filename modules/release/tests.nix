@@ -161,6 +161,24 @@ in
       expected = false;
     };
 
+    "test extra tag expression fails" = {
+      expr = succeeds (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        tag.format = "v{{ version }}{{ \"\" }}";
+      });
+      expected = false;
+    };
+
+    "test raw tag block fails" = {
+      expr = succeeds (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        tag.format = "v{% raw %}{{ version }}{% endraw %}";
+      });
+      expected = false;
+    };
+
     "test invalid repository-relative paths fail" = {
       expr = map
         (
