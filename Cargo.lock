@@ -1409,6 +1409,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "git-cliff-core",
+ "git2",
  "minijinja",
  "semver",
  "serde",

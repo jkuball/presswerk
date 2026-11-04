@@ -1,11 +1,12 @@
-use git_cliff_core::repo::Repository;
+use git_cliff_core::repo::Repository as GitCliffRepository;
+use git2::Repository as GitRepository;
 use minijinja::{Environment, context, value::Serde};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const DEFAULT_NOTES_TEMPLATE: &str = "{% if groups %}{% for group in groups %}### {{ group.emoji }} {{ group.shortcode }}\n\n{% for commit in group.commits %}- {{ commit.subject }}\n{% endfor %}{% if not loop.last %}\n{% endif %}{% endfor %}{% else %}No recorded changes.\n{% endif %}";
 const BOOKMARK_SHORTCODE: &str = ":bookmark:";
@@ -67,32 +68,53 @@ impl Analysis {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitRange {
-    pub repository: PathBuf,
-    pub base: Option<String>,
-    pub target: String,
+    repository: PathBuf,
+    base: Option<String>,
+    target: String,
 }
 
 impl CommitRange {
-    #[must_use]
-    pub fn initial(repository: impl Into<PathBuf>, target: impl Into<String>) -> Self {
-        Self {
-            repository: repository.into(),
+    pub fn initial(
+        repository: impl Into<PathBuf>,
+        target: impl Into<String>,
+    ) -> Result<Self, AnalysisError> {
+        let repository = repository.into();
+        let target = resolve_commit(&repository, &target.into())?;
+        Ok(Self {
+            repository,
             base: None,
-            target: target.into(),
-        }
+            target,
+        })
     }
 
-    #[must_use]
     pub fn between(
         repository: impl Into<PathBuf>,
         base: impl Into<String>,
         target: impl Into<String>,
-    ) -> Self {
-        Self {
-            repository: repository.into(),
-            base: Some(base.into()),
-            target: target.into(),
-        }
+    ) -> Result<Self, AnalysisError> {
+        let repository = repository.into();
+        let base = resolve_commit(&repository, &base.into())?;
+        let target = resolve_commit(&repository, &target.into())?;
+        Ok(Self {
+            repository,
+            base: Some(base),
+            target,
+        })
+    }
+
+    #[must_use]
+    pub fn repository(&self) -> &Path {
+        &self.repository
+    }
+
+    #[must_use]
+    pub fn base(&self) -> Option<&str> {
+        self.base.as_deref()
+    }
+
+    #[must_use]
+    pub fn target(&self) -> &str {
+        &self.target
     }
 
     fn revision(&self) -> String {
@@ -101,6 +123,26 @@ impl CommitRange {
             |base| format!("{base}..{}", self.target),
         )
     }
+}
+
+fn resolve_commit(repository: &Path, revision: &str) -> Result<String, AnalysisError> {
+    let repository = GitRepository::open(repository).map_err(|error| {
+        AnalysisError::new(format!(
+            "failed to open Git repository {}: {error}",
+            repository.display()
+        ))
+    })?;
+    let object = repository.revparse_single(revision).map_err(|error| {
+        AnalysisError::new(format!(
+            "failed to resolve Git revision {revision:?}: {error}"
+        ))
+    })?;
+    let commit = object.peel_to_commit().map_err(|error| {
+        AnalysisError::new(format!(
+            "Git revision {revision:?} does not resolve to a commit: {error}"
+        ))
+    })?;
+    Ok(commit.id().to_string())
 }
 
 pub trait Analyzer {
@@ -112,7 +154,7 @@ pub struct GitCliffAnalyzer;
 
 impl Analyzer for GitCliffAnalyzer {
     fn analyze(&self, range: &CommitRange) -> Result<Analysis, AnalysisError> {
-        let repository = Repository::init(range.repository.clone()).map_err(|error| {
+        let repository = GitCliffRepository::init(range.repository.clone()).map_err(|error| {
             AnalysisError::new(format!(
                 "failed to open Git repository {}: {error}",
                 range.repository.display()
@@ -129,7 +171,7 @@ impl Analyzer for GitCliffAnalyzer {
             .iter()
             .filter_map(|commit| {
                 let commit = git_cliff_core::commit::Commit::from(commit);
-                let subject = commit.message.lines().next()?.trim();
+                let subject = commit.message.lines().next()?.trim_end();
                 let parsed = parse_gitmoji_subject(subject)?;
                 if parsed.gitmoji.shortcode == BOOKMARK_SHORTCODE {
                     return None;
@@ -154,8 +196,10 @@ pub struct AnalysisError {
 }
 
 impl AnalysisError {
-    fn new(message: String) -> Self {
-        Self { message }
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
     }
 }
 
