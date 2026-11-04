@@ -16,6 +16,7 @@
         };
 
         crates.presswerk.crane.args.meta.mainProgram = "presswerk";
+        crates.presswerk.crane.args.nativeBuildInputs = [ pkgs.gitMinimal ];
       };
 
       packages.default = self'.packages.presswerk;
@@ -26,7 +27,6 @@
           inherit (config.rust-project) src;
           cargoArtifacts = self'.packages.presswerk.cargoArtifacts;
           cargoExtraArgs = "-p presswerk";
-          nativeBuildInputs = [ pkgs.gitMinimal ];
           pname = "presswerk";
           strictDeps = true;
         }
