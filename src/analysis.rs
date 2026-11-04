@@ -8,7 +8,7 @@ use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_NOTES_TEMPLATE: &str = "{% if groups %}{% for group in groups %}### {{ group.emoji }} {{ group.shortcode }}\n\n{% for commit in group.commits %}- {{ commit.subject }}\n{% endfor %}{% if not loop.last %}\n{% endif %}{% endfor %}{% else %}No recorded changes.\n{% endif %}";
+const DEFAULT_NOTES_TEMPLATE: &str = include_str!("release-notes.md.j2");
 const BOOKMARK_SHORTCODE: &str = ":bookmark:";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
