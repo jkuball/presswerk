@@ -1,9 +1,9 @@
 use crate::declaration::{Tag, TagError};
+use git2::{ErrorCode, Oid, Repository};
 use semver::Version;
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
-use std::process::{Command, Output};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommitClassification {
@@ -37,7 +37,7 @@ impl fmt::Display for CommitClassification {
 }
 
 pub fn classify_commit<F, E>(
-    repository: &Path,
+    repository_path: &Path,
     target: &str,
     tag: &Tag,
     mut version_at: F,
@@ -46,36 +46,42 @@ where
     F: FnMut(&str) -> Result<Version, E>,
     E: Error + Send + Sync + 'static,
 {
-    let commit = resolve_commit(repository, target)?;
-    let version = read_version(&commit, &mut version_at)?;
+    let repository = Repository::open(repository_path).map_err(|source| {
+        ClassificationError::git(
+            format!(
+                "could not open Git repository {}",
+                repository_path.display()
+            ),
+            source,
+        )
+    })?;
+    let commit = resolve_commit(&repository, target)?;
+    let commit_id = commit.to_string();
+    let version = read_version(&commit_id, &mut version_at)?;
     let tag_name = tag.render(&version)?;
-    let tagged_commit = tagged_commit(repository, &tag_name)?;
+    let tagged_commit = tagged_commit(&repository, &tag_name)?;
 
-    if let Some(tagged_commit) = tagged_commit
-        .as_ref()
-        .filter(|tagged| tagged.as_str() != commit)
-    {
-        return if is_ancestor(repository, tagged_commit, &commit)? {
+    if let Some(tagged_commit) = tagged_commit.filter(|tagged| *tagged != commit) {
+        return if is_ancestor(&repository, tagged_commit, commit)? {
             Ok(CommitClassification::OrdinaryCommit)
         } else {
             Ok(CommitClassification::Conflict {
                 tag: tag_name,
-                tagged_commit: tagged_commit.clone(),
+                tagged_commit: tagged_commit.to_string(),
             })
         };
     }
 
     if tagged_commit.is_none()
         && version == Version::new(0, 0, 0)
-        && !has_release_tags(repository, tag)?
+        && !has_release_tags(&repository, tag)?
     {
         return Ok(CommitClassification::OrdinaryCommit);
     }
 
-    let parent = first_parent(repository, &commit)?;
+    let parent = first_parent(&repository, commit)?;
     let parent_version = parent
-        .as_deref()
-        .map(|parent| read_version(parent, &mut version_at))
+        .map(|parent| read_version(&parent.to_string(), &mut version_at))
         .transpose()?;
     let version_changed = parent_version
         .as_ref()
@@ -94,30 +100,30 @@ where
     }
 
     let pending_commit = find_pending_commit(
-        repository,
-        &commit,
+        &repository,
+        commit,
         parent.zip(parent_version),
         &version,
         &mut version_at,
     )?;
     Ok(CommitClassification::PendingRelease {
         version,
-        commit: pending_commit,
+        commit: pending_commit.to_string(),
     })
 }
 
 fn find_pending_commit<F, E>(
-    repository: &Path,
-    commit: &str,
-    mut parent: Option<(String, Version)>,
+    repository: &Repository,
+    commit: Oid,
+    mut parent: Option<(Oid, Version)>,
     version: &Version,
     version_at: &mut F,
-) -> Result<String, ClassificationError>
+) -> Result<Oid, ClassificationError>
 where
     F: FnMut(&str) -> Result<Version, E>,
     E: Error + Send + Sync + 'static,
 {
-    let mut pending = commit.to_owned();
+    let mut pending = commit;
 
     while let Some((parent_commit, parent_version)) = parent {
         if parent_version != *version {
@@ -125,8 +131,8 @@ where
         }
 
         pending = parent_commit;
-        parent = if let Some(parent) = first_parent(repository, &pending)? {
-            let version = read_version(&parent, version_at)?;
+        parent = if let Some(parent) = first_parent(repository, pending)? {
+            let version = read_version(&parent.to_string(), version_at)?;
             Some((parent, version))
         } else {
             None
@@ -147,68 +153,91 @@ where
     })
 }
 
-fn resolve_commit(repository: &Path, revision: &str) -> Result<String, ClassificationError> {
-    git_stdout(
-        repository,
-        &[
-            "rev-parse",
-            "--verify",
-            "--end-of-options",
-            &format!("{revision}^{{commit}}"),
-        ],
-    )
-}
-
-fn first_parent(repository: &Path, commit: &str) -> Result<Option<String>, ClassificationError> {
-    let line = git_stdout(
-        repository,
-        &["rev-list", "--parents", "--max-count=1", commit],
-    )?;
-    Ok(line.split_whitespace().nth(1).map(str::to_owned))
-}
-
-fn tagged_commit(repository: &Path, tag_name: &str) -> Result<Option<String>, ClassificationError> {
-    let reference = format!("refs/tags/{tag_name}");
-    let exists = git(repository, &["show-ref", "--verify", "--quiet", &reference])?;
-    match exists.status.code() {
-        Some(0) => git_stdout(
-            repository,
-            &["rev-parse", "--verify", &format!("{reference}^{{commit}}")],
+fn resolve_commit(repository: &Repository, revision: &str) -> Result<Oid, ClassificationError> {
+    let object = repository.revparse_single(revision).map_err(|source| {
+        ClassificationError::git(
+            format!("could not resolve Git revision {revision:?}"),
+            source,
         )
-        .map(Some),
-        Some(1) => Ok(None),
-        _ => Err(git_failure(
-            &["show-ref", "--verify", "--quiet", &reference],
-            exists,
-        )),
+    })?;
+    object
+        .peel_to_commit()
+        .map(|commit| commit.id())
+        .map_err(|source| {
+            ClassificationError::git(
+                format!("Git revision {revision:?} does not resolve to a commit"),
+                source,
+            )
+        })
+}
+
+fn first_parent(repository: &Repository, commit: Oid) -> Result<Option<Oid>, ClassificationError> {
+    let commit = repository.find_commit(commit).map_err(|source| {
+        ClassificationError::git(format!("could not read Git commit {commit}"), source)
+    })?;
+    if commit.parent_count() == 0 {
+        Ok(None)
+    } else {
+        commit.parent_id(0).map(Some).map_err(|source| {
+            ClassificationError::git(
+                format!("could not read first parent of Git commit {}", commit.id()),
+                source,
+            )
+        })
     }
+}
+
+fn tagged_commit(
+    repository: &Repository,
+    tag_name: &str,
+) -> Result<Option<Oid>, ClassificationError> {
+    let reference_name = format!("refs/tags/{tag_name}");
+    let reference = match repository.find_reference(&reference_name) {
+        Ok(reference) => reference,
+        Err(error) if error.code() == ErrorCode::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(ClassificationError::git(
+                format!("could not read Git tag {tag_name:?}"),
+                source,
+            ));
+        }
+    };
+
+    reference
+        .peel_to_commit()
+        .map(|commit| Some(commit.id()))
+        .map_err(|source| {
+            ClassificationError::git(
+                format!("Git tag {tag_name:?} does not resolve to a commit"),
+                source,
+            )
+        })
 }
 
 fn is_ancestor(
-    repository: &Path,
-    ancestor: &str,
-    commit: &str,
+    repository: &Repository,
+    ancestor: Oid,
+    commit: Oid,
 ) -> Result<bool, ClassificationError> {
-    let output = git(
-        repository,
-        &["merge-base", "--is-ancestor", ancestor, commit],
-    )?;
-    match output.status.code() {
-        Some(0) => Ok(true),
-        Some(1) => Ok(false),
-        _ => Err(git_failure(
-            &["merge-base", "--is-ancestor", ancestor, commit],
-            output,
-        )),
-    }
+    repository
+        .graph_descendant_of(commit, ancestor)
+        .map_err(|source| {
+            ClassificationError::git(
+                format!("could not check whether {ancestor} is an ancestor of {commit}"),
+                source,
+            )
+        })
 }
 
-fn has_release_tags(repository: &Path, tag: &Tag) -> Result<bool, ClassificationError> {
-    let tags = git_stdout(
-        repository,
-        &["for-each-ref", "--format=%(refname:strip=2)", "refs/tags"],
-    )?;
-    for name in tags.lines() {
+fn has_release_tags(repository: &Repository, tag: &Tag) -> Result<bool, ClassificationError> {
+    let tags = repository
+        .tag_names(None)
+        .map_err(|source| ClassificationError::git("could not list Git tags", source))?;
+    for name in tags.iter() {
+        let name = name.map_err(|source| {
+            ClassificationError::git("could not decode a Git tag name", source)
+        })?;
+        let Some(name) = name else { continue };
         if tag.parse(name)?.is_some() {
             return Ok(true);
         }
@@ -216,45 +245,12 @@ fn has_release_tags(repository: &Path, tag: &Tag) -> Result<bool, Classification
     Ok(false)
 }
 
-fn git_stdout(repository: &Path, arguments: &[&str]) -> Result<String, ClassificationError> {
-    let output = git(repository, arguments)?;
-    if !output.status.success() {
-        return Err(git_failure(arguments, output));
-    }
-
-    String::from_utf8(output.stdout)
-        .map(|stdout| stdout.trim().to_owned())
-        .map_err(ClassificationError::GitOutput)
-}
-
-fn git(repository: &Path, arguments: &[&str]) -> Result<Output, ClassificationError> {
-    Command::new("git")
-        .args(arguments)
-        .current_dir(repository)
-        .output()
-        .map_err(ClassificationError::RunGit)
-}
-
-fn git_failure(arguments: &[&str], output: Output) -> ClassificationError {
-    ClassificationError::Git {
-        arguments: arguments
-            .iter()
-            .map(|argument| (*argument).to_owned())
-            .collect(),
-        status: output.status.code(),
-        stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-    }
-}
-
 #[derive(Debug)]
 pub enum ClassificationError {
-    RunGit(std::io::Error),
     Git {
-        arguments: Vec<String>,
-        status: Option<i32>,
-        stderr: String,
+        operation: String,
+        source: git2::Error,
     },
-    GitOutput(std::string::FromUtf8Error),
     Tag(TagError),
     Version {
         commit: String,
@@ -262,21 +258,19 @@ pub enum ClassificationError {
     },
 }
 
+impl ClassificationError {
+    fn git(operation: impl Into<String>, source: git2::Error) -> Self {
+        Self::Git {
+            operation: operation.into(),
+            source,
+        }
+    }
+}
+
 impl fmt::Display for ClassificationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::RunGit(error) => write!(formatter, "could not run Git: {error}"),
-            Self::Git {
-                arguments,
-                status,
-                stderr,
-            } => write!(
-                formatter,
-                "git {} failed with status {}: {stderr}",
-                arguments.join(" "),
-                status.map_or_else(|| "signal".into(), |status| status.to_string())
-            ),
-            Self::GitOutput(error) => write!(formatter, "Git returned non-UTF-8 output: {error}"),
+            Self::Git { operation, source } => write!(formatter, "{operation}: {source}"),
             Self::Tag(error) => error.fmt(formatter),
             Self::Version { commit, source } => {
                 write!(formatter, "could not read version at {commit}: {source}")
@@ -288,11 +282,9 @@ impl fmt::Display for ClassificationError {
 impl Error for ClassificationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::RunGit(error) => Some(error),
-            Self::GitOutput(error) => Some(error),
+            Self::Git { source, .. } => Some(source),
             Self::Tag(error) => Some(error),
             Self::Version { source, .. } => Some(source.as_ref()),
-            Self::Git { .. } => None,
         }
     }
 }
