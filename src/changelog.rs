@@ -17,10 +17,7 @@ pub fn insert_version_section(
         return Err(ChangelogError::DuplicateVersion(version.clone()));
     }
 
-    let section = format!(
-        "## [{version}] - {date}\n\n{}\n",
-        notes.trim_end_matches(['\r', '\n'])
-    );
+    let section = format!("## [{version}] - {date}\n\n{notes}\n");
     if contents.is_empty() {
         return Ok(format!("# Changelog\n\n{section}"));
     }
@@ -38,11 +35,7 @@ pub fn insert_version_section(
         "\n\n"
     };
 
-    if after.is_empty() {
-        Ok(format!("{before}{separator}{section}"))
-    } else {
-        Ok(format!("{before}{separator}{section}\n{after}"))
-    }
+    Ok(format!("{before}{separator}{section}{after}"))
 }
 
 pub fn read_version_section<'a>(
@@ -58,7 +51,9 @@ pub fn read_version_section<'a>(
         .find(|(start, _, line)| *start >= body_start && line.starts_with("## "))
         .map_or(contents.len(), |(start, _, _)| start);
 
-    Ok(contents[body_start..body_end].trim_end_matches(['\r', '\n']))
+    Ok(contents[body_start..body_end]
+        .strip_suffix('\n')
+        .unwrap_or(&contents[body_start..body_end]))
 }
 
 fn find_version_heading(contents: &str, version: &Version) -> Option<(usize, usize)> {

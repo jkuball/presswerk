@@ -4,13 +4,13 @@ use semver::Version;
 #[test]
 fn creates_a_keep_a_changelog_file_and_reads_the_frozen_notes() {
     let version = Version::new(1, 2, 0);
-    let notes = "### Features\n\n- add safe release commits";
+    let notes = "### Features\n\n- add safe release commits\n";
 
     let changelog = insert_version_section(None, &version, "2026-11-04", notes).unwrap();
 
     assert_eq!(
         changelog,
-        "# Changelog\n\n## [1.2.0] - 2026-11-04\n\n### Features\n\n- add safe release commits\n"
+        "# Changelog\n\n## [1.2.0] - 2026-11-04\n\n### Features\n\n- add safe release commits\n\n"
     );
     assert_eq!(read_version_section(&changelog, &version).unwrap(), notes);
 }
@@ -25,7 +25,7 @@ fn inserts_the_newest_version_without_changing_older_sections() {
         Some(old),
         &version,
         "2026-11-04",
-        "### Features\n\n- new feature",
+        "### Features\n\n- new feature\n",
     )
     .unwrap();
 
@@ -45,7 +45,7 @@ fn leaves_an_optional_unreleased_section_above_releases() {
         Some(contents),
         &Version::new(1, 1, 0),
         "2026-11-04",
-        "Next release.",
+        "Next release.\n",
     )
     .unwrap();
 
