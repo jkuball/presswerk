@@ -1,0 +1,1072 @@
+use crate::analysis::{Analysis, Analyzer, CommitRange, GitCliffAnalyzer};
+use crate::changelog::read_version_section;
+use crate::classification::{CommitClassification, classify_commit};
+use crate::declaration::{GithubReleasePublisher as GithubReleaseDeclaration, ReleaseDeclaration};
+use crate::evaluation::evaluate_release_declaration;
+use git2::{ErrorCode, ObjectType, Oid, Repository};
+use semver::Version;
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::error::Error;
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use url::Url;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicationError {
+    message: String,
+}
+
+impl PublicationError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for PublicationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for PublicationError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Release {
+    pub commit: String,
+    pub version: Version,
+    pub tag: String,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteState {
+    Missing,
+    Matching,
+    Conflicting(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PublisherState {
+    Missing,
+    Draft,
+    Published,
+    Conflicting(String),
+}
+
+pub trait TagPublisher {
+    fn state(&self, release: &Release) -> Result<RemoteState, PublicationError>;
+    fn publish(&self, release: &Release) -> Result<(), PublicationError>;
+}
+
+pub trait Publisher {
+    fn state(&self, release: &Release) -> Result<PublisherState, PublicationError>;
+    fn publish(&self, release: &Release) -> Result<(), PublicationError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GithubReleaseState {
+    Missing,
+    Draft { prerelease: bool },
+    Published { prerelease: bool },
+}
+
+pub trait GithubReleaseReader {
+    fn release_state(
+        &self,
+        repository: &str,
+        tag: &str,
+    ) -> Result<GithubReleaseState, PublicationError>;
+}
+
+#[derive(Clone)]
+pub struct GithubClient {
+    agent: ureq::Agent,
+    api_url: Url,
+    token: String,
+}
+
+impl fmt::Debug for GithubClient {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GithubClient")
+            .field("api_url", &self.api_url)
+            .field("token", &"[redacted]")
+            .finish_non_exhaustive()
+    }
+}
+
+impl GithubClient {
+    pub fn from_environment(secret: &str) -> Result<Self, PublicationError> {
+        let token = env::var(secret).map_err(|_| {
+            PublicationError::new(format!(
+                "GitHub credential environment variable {secret:?} is not set"
+            ))
+        })?;
+        if token.is_empty() {
+            return Err(PublicationError::new(format!(
+                "GitHub credential environment variable {secret:?} is empty"
+            )));
+        }
+        Self::new("https://api.github.com", token)
+    }
+
+    pub fn new(api_url: &str, token: impl Into<String>) -> Result<Self, PublicationError> {
+        let api_url = Url::parse(api_url).map_err(|error| {
+            PublicationError::new(format!("invalid GitHub API URL {api_url:?}: {error}"))
+        })?;
+        Ok(Self {
+            agent: ureq::AgentBuilder::new().build(),
+            api_url,
+            token: token.into(),
+        })
+    }
+
+    fn endpoint(&self, repository: &str, suffix: &[&str]) -> Result<Url, PublicationError> {
+        let (owner, name) = repository.split_once('/').ok_or_else(|| {
+            PublicationError::new(format!(
+                "GitHub repository {repository:?} must use owner/name form"
+            ))
+        })?;
+        if owner.is_empty() || name.is_empty() || name.contains('/') {
+            return Err(PublicationError::new(format!(
+                "GitHub repository {repository:?} must use owner/name form"
+            )));
+        }
+
+        let mut url = self.api_url.clone();
+        let mut segments = url.path_segments_mut().map_err(|()| {
+            PublicationError::new(format!(
+                "GitHub API URL {:?} cannot contain path segments",
+                self.api_url
+            ))
+        })?;
+        segments.pop_if_empty();
+        segments.push("repos").push(owner).push(name);
+        for segment in suffix {
+            segments.push(segment);
+        }
+        drop(segments);
+        Ok(url)
+    }
+
+    fn request(&self, method: &str, url: &Url) -> ureq::Request {
+        self.agent
+            .request(method, url.as_str())
+            .set("Accept", "application/vnd.github+json")
+            .set("Authorization", &format!("Bearer {}", self.token))
+            .set("X-GitHub-Api-Version", "2022-11-28")
+            .set("User-Agent", "presswerk")
+    }
+
+    fn validate_repository(&self, repository: &str) -> Result<(), PublicationError> {
+        let url = self.endpoint(repository, &[])?;
+        match self.request("GET", &url).call() {
+            Ok(_) => Ok(()),
+            Err(ureq::Error::Status(status, _)) => Err(PublicationError::new(format!(
+                "GitHub repository {repository:?} is inaccessible (HTTP {status})"
+            ))),
+            Err(ureq::Error::Transport(error)) => Err(PublicationError::new(format!(
+                "could not inspect GitHub repository {repository:?}: {error}"
+            ))),
+        }
+    }
+
+    fn release(
+        &self,
+        repository: &str,
+        tag: &str,
+    ) -> Result<Option<GithubRelease>, PublicationError> {
+        self.validate_repository(repository)?;
+        let url = self.endpoint(repository, &["releases", "tags", tag])?;
+        match self.request("GET", &url).call() {
+            Ok(response) => response
+                .into_json::<GithubRelease>()
+                .map(Some)
+                .map_err(|error| {
+                    PublicationError::new(format!(
+                        "could not decode GitHub Release {tag:?} in {repository}: {error}"
+                    ))
+                }),
+            Err(ureq::Error::Status(404, _)) => Ok(None),
+            Err(ureq::Error::Status(status, _)) => Err(PublicationError::new(format!(
+                "could not inspect GitHub Release {tag:?} in {repository} (HTTP {status})"
+            ))),
+            Err(ureq::Error::Transport(error)) => Err(PublicationError::new(format!(
+                "could not inspect GitHub Release {tag:?} in {repository}: {error}"
+            ))),
+        }
+    }
+
+    fn create_draft(
+        &self,
+        repository: &str,
+        release: &Release,
+    ) -> Result<GithubRelease, PublicationError> {
+        let url = self.endpoint(repository, &["releases"])?;
+        let request = GithubReleaseRequest {
+            tag_name: &release.tag,
+            target_commitish: &release.commit,
+            name: &release.tag,
+            body: &release.notes,
+            draft: true,
+            prerelease: !release.version.pre.is_empty(),
+        };
+        match self.request("POST", &url).send_json(&request) {
+            Ok(response) => {
+                let created: GithubRelease = response.into_json().map_err(|error| {
+                    PublicationError::new(format!(
+                        "could not decode created GitHub Release {:?} in {repository}: {error}",
+                        release.tag
+                    ))
+                })?;
+                if !created.draft {
+                    return Err(PublicationError::new(format!(
+                        "GitHub created Release {:?} in {repository} without a draft",
+                        release.tag
+                    )));
+                }
+                Ok(created)
+            }
+            Err(ureq::Error::Status(status, _)) => {
+                if let Some(existing) = self.release(repository, &release.tag)? {
+                    return Ok(existing);
+                }
+                Err(PublicationError::new(format!(
+                    "could not create draft GitHub Release {:?} in {repository} (HTTP {status})",
+                    release.tag
+                )))
+            }
+            Err(ureq::Error::Transport(error)) => {
+                if let Some(existing) = self.release(repository, &release.tag)? {
+                    return Ok(existing);
+                }
+                Err(PublicationError::new(format!(
+                    "could not create draft GitHub Release {:?} in {repository}: {error}",
+                    release.tag
+                )))
+            }
+        }
+    }
+
+    fn publish_draft(
+        &self,
+        repository: &str,
+        release: &Release,
+        id: u64,
+    ) -> Result<GithubRelease, PublicationError> {
+        let id = id.to_string();
+        let url = self.endpoint(repository, &["releases", &id])?;
+        match self
+            .request("PATCH", &url)
+            .send_json(serde_json::json!({ "draft": false }))
+        {
+            Ok(response) => response.into_json().map_err(|error| {
+                PublicationError::new(format!(
+                    "could not decode published GitHub Release {:?} in {repository}: {error}",
+                    release.tag
+                ))
+            }),
+            Err(ureq::Error::Status(status, _)) => {
+                if let Some(existing) = self.release(repository, &release.tag)?
+                    && !existing.draft
+                {
+                    return Ok(existing);
+                }
+                Err(PublicationError::new(format!(
+                    "could not publish draft GitHub Release {:?} in {repository} (HTTP {status})",
+                    release.tag
+                )))
+            }
+            Err(ureq::Error::Transport(error)) => {
+                if let Some(existing) = self.release(repository, &release.tag)?
+                    && !existing.draft
+                {
+                    return Ok(existing);
+                }
+                Err(PublicationError::new(format!(
+                    "could not publish draft GitHub Release {:?} in {repository}: {error}",
+                    release.tag
+                )))
+            }
+        }
+    }
+}
+
+impl GithubReleaseReader for GithubClient {
+    fn release_state(
+        &self,
+        repository: &str,
+        tag: &str,
+    ) -> Result<GithubReleaseState, PublicationError> {
+        Ok(match self.release(repository, tag)? {
+            None => GithubReleaseState::Missing,
+            Some(release) if release.draft => GithubReleaseState::Draft {
+                prerelease: release.prerelease,
+            },
+            Some(release) => GithubReleaseState::Published {
+                prerelease: release.prerelease,
+            },
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GithubPublisher {
+    client: GithubClient,
+    repository: String,
+}
+
+impl GithubPublisher {
+    pub fn from_declaration(
+        declaration: &GithubReleaseDeclaration,
+    ) -> Result<Self, PublicationError> {
+        Ok(Self {
+            client: GithubClient::from_environment(&declaration.token.secret)?,
+            repository: declaration.repository.clone(),
+        })
+    }
+
+    pub fn new(client: GithubClient, repository: impl Into<String>) -> Self {
+        Self {
+            client,
+            repository: repository.into(),
+        }
+    }
+
+    fn checked_state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
+        let expected_prerelease = !release.version.pre.is_empty();
+        Ok(
+            match self.client.release_state(&self.repository, &release.tag)? {
+                GithubReleaseState::Missing => PublisherState::Missing,
+                GithubReleaseState::Draft { prerelease } if prerelease == expected_prerelease => {
+                    PublisherState::Draft
+                }
+                GithubReleaseState::Published { prerelease }
+                    if prerelease == expected_prerelease =>
+                {
+                    PublisherState::Published
+                }
+                GithubReleaseState::Draft { prerelease }
+                | GithubReleaseState::Published { prerelease } => {
+                    PublisherState::Conflicting(format!(
+                        "GitHub Release {:?} in {} has prerelease={prerelease}, expected {expected_prerelease}",
+                        release.tag, self.repository
+                    ))
+                }
+            },
+        )
+    }
+}
+
+impl Publisher for GithubPublisher {
+    fn state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
+        self.checked_state(release)
+    }
+
+    fn publish(&self, release: &Release) -> Result<(), PublicationError> {
+        let github_release = match self.client.release(&self.repository, &release.tag)? {
+            None => self.client.create_draft(&self.repository, release)?,
+            Some(existing) => existing,
+        };
+        let expected_prerelease = !release.version.pre.is_empty();
+        if github_release.prerelease != expected_prerelease {
+            return Err(PublicationError::new(format!(
+                "GitHub Release {:?} in {} has prerelease={}, expected {expected_prerelease}",
+                release.tag, self.repository, github_release.prerelease
+            )));
+        }
+        if github_release.draft {
+            self.client
+                .publish_draft(&self.repository, release, github_release.id)?;
+        }
+
+        match self.checked_state(release)? {
+            PublisherState::Published => Ok(()),
+            state => Err(PublicationError::new(format!(
+                "GitHub Release {:?} in {} was not published: {state:?}",
+                release.tag, self.repository
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GithubRelease {
+    id: u64,
+    draft: bool,
+    prerelease: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct GithubReleaseRequest<'a> {
+    tag_name: &'a str,
+    target_commitish: &'a str,
+    name: &'a str,
+    body: &'a str,
+    draft: bool,
+    prerelease: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct GitTagPublisher {
+    repository: PathBuf,
+    remote: String,
+}
+
+impl GitTagPublisher {
+    pub fn new(repository: impl Into<PathBuf>, remote: impl Into<String>) -> Self {
+        Self {
+            repository: repository.into(),
+            remote: remote.into(),
+        }
+    }
+
+    fn remote_target(&self, tag: &str) -> Result<Option<Oid>, PublicationError> {
+        let reference = format!("refs/tags/{tag}");
+        let peeled = format!("{reference}^{{}}");
+        let output = Command::new("git")
+            .args(["ls-remote", "--tags", &self.remote, &reference, &peeled])
+            .current_dir(&self.repository)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|error| {
+                PublicationError::new(format!("could not run git ls-remote: {error}"))
+            })?;
+        if !output.status.success() {
+            return Err(PublicationError::new(format!(
+                "could not inspect Git tag {tag:?} on remote {:?} (git exited with {})",
+                self.remote, output.status
+            )));
+        }
+
+        let output = std::str::from_utf8(&output.stdout).map_err(|error| {
+            PublicationError::new(format!(
+                "remote {:?} returned non-UTF-8 tag state: {error}",
+                self.remote
+            ))
+        })?;
+        let mut direct = None;
+        let mut dereferenced = None;
+        for line in output.lines() {
+            let (oid, name) = line.split_once('\t').ok_or_else(|| {
+                PublicationError::new(format!(
+                    "remote {:?} returned malformed tag state for {tag:?}",
+                    self.remote
+                ))
+            })?;
+            let oid = Oid::from_str(oid).map_err(|error| {
+                PublicationError::new(format!(
+                    "remote {:?} returned an invalid object ID for {tag:?}: {error}",
+                    self.remote
+                ))
+            })?;
+            if name == reference {
+                direct = Some(oid);
+            } else if name == peeled {
+                dereferenced = Some(oid);
+            } else {
+                return Err(PublicationError::new(format!(
+                    "remote {:?} returned unexpected reference {name:?} for {tag:?}",
+                    self.remote
+                )));
+            }
+        }
+        if dereferenced.is_some() && direct.is_none() {
+            return Err(PublicationError::new(format!(
+                "remote {:?} returned a peeled tag without {reference}",
+                self.remote
+            )));
+        }
+        Ok(dereferenced.or(direct))
+    }
+
+    fn create_local_tag(&self, release: &Release) -> Result<(), PublicationError> {
+        let repository = Repository::open(&self.repository).map_err(|error| {
+            PublicationError::new(format!(
+                "could not open Git repository {}: {error}",
+                self.repository.display()
+            ))
+        })?;
+        let commit = Oid::from_str(&release.commit).map_err(|error| {
+            PublicationError::new(format!(
+                "invalid release commit {:?}: {error}",
+                release.commit
+            ))
+        })?;
+        let target = repository
+            .find_object(commit, Some(ObjectType::Commit))
+            .map_err(|error| {
+                PublicationError::new(format!("could not read release commit {commit}: {error}"))
+            })?;
+        let reference = format!("refs/tags/{}", release.tag);
+        match repository.find_reference(&reference) {
+            Ok(existing) => {
+                let tagged = existing.peel_to_commit().map_err(|error| {
+                    PublicationError::new(format!(
+                        "local Git tag {:?} does not point to a commit: {error}",
+                        release.tag
+                    ))
+                })?;
+                if tagged.id() == commit {
+                    existing.peel(ObjectType::Tag).map_err(|_| {
+                        PublicationError::new(format!(
+                            "local Git tag {:?} is not annotated",
+                            release.tag
+                        ))
+                    })?;
+                    return Ok(());
+                }
+                return Err(PublicationError::new(format!(
+                    "local Git tag {:?} points to {}, expected {commit}",
+                    release.tag,
+                    tagged.id()
+                )));
+            }
+            Err(error) if error.code() == ErrorCode::NotFound => {}
+            Err(error) => {
+                return Err(PublicationError::new(format!(
+                    "could not inspect local Git tag {:?}: {error}",
+                    release.tag
+                )));
+            }
+        }
+
+        let signature = repository.signature().map_err(|error| {
+            PublicationError::new(format!("could not read Git tagger configuration: {error}"))
+        })?;
+        repository
+            .tag(
+                &release.tag,
+                &target,
+                &signature,
+                &format!("Release {}", release.version),
+                false,
+            )
+            .map_err(|error| {
+                PublicationError::new(format!(
+                    "could not create annotated Git tag {:?}: {error}",
+                    release.tag
+                ))
+            })?;
+        Ok(())
+    }
+}
+
+impl TagPublisher for GitTagPublisher {
+    fn state(&self, release: &Release) -> Result<RemoteState, PublicationError> {
+        let expected = Oid::from_str(&release.commit).map_err(|error| {
+            PublicationError::new(format!(
+                "invalid release commit {:?}: {error}",
+                release.commit
+            ))
+        })?;
+        Ok(match self.remote_target(&release.tag)? {
+            None => RemoteState::Missing,
+            Some(actual) if actual == expected => RemoteState::Matching,
+            Some(actual) => RemoteState::Conflicting(format!(
+                "Git tag {:?} on remote {:?} points to {actual}, expected {expected}",
+                release.tag, self.remote
+            )),
+        })
+    }
+
+    fn publish(&self, release: &Release) -> Result<(), PublicationError> {
+        match self.state(release)? {
+            RemoteState::Matching => return Ok(()),
+            RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
+            RemoteState::Missing => {}
+        }
+        self.create_local_tag(release)?;
+
+        let reference = format!("refs/tags/{0}:refs/tags/{0}", release.tag);
+        let output = Command::new("git")
+            .args(["push", "--porcelain", &self.remote, &reference])
+            .current_dir(&self.repository)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|error| PublicationError::new(format!("could not run git push: {error}")))?;
+        if output.status.success() {
+            return match self.state(release)? {
+                RemoteState::Matching => Ok(()),
+                state => Err(PublicationError::new(format!(
+                    "Git tag {:?} was not published: {state:?}",
+                    release.tag
+                ))),
+            };
+        }
+
+        match self.state(release)? {
+            RemoteState::Matching => Ok(()),
+            RemoteState::Conflicting(message) => Err(PublicationError::new(message)),
+            RemoteState::Missing => Err(PublicationError::new(format!(
+                "could not push Git tag {:?} to remote {:?} (git exited with {})",
+                release.tag, self.remote, output.status
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishOutcome {
+    NothingToDo,
+    Published,
+}
+
+pub fn publish(
+    repository_path: impl AsRef<Path>,
+    revision: &str,
+) -> Result<PublishOutcome, PublicationError> {
+    publish_to_remote(
+        repository_path.as_ref(),
+        revision,
+        "origin",
+        &GitCliffAnalyzer,
+    )
+}
+
+pub fn publish_to_remote(
+    repository_path: &Path,
+    revision: &str,
+    remote: &str,
+    analyzer: &dyn Analyzer,
+) -> Result<PublishOutcome, PublicationError> {
+    let evaluated = evaluate_release_declaration(repository_path, revision)
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+    let commit = evaluated.commit;
+    let declaration = evaluated.declaration;
+    let commit_id = commit.to_string();
+    let candidate_version = declaration.version.clone();
+    let classification =
+        classify_commit(repository_path, &commit_id, &declaration.tag, |revision| {
+            if revision == commit_id {
+                Ok(candidate_version.clone())
+            } else {
+                evaluate_release_declaration(repository_path, revision)
+                    .map(|evaluated| evaluated.declaration.version)
+            }
+        })
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+
+    match classification {
+        CommitClassification::OrdinaryCommit => return Ok(PublishOutcome::NothingToDo),
+        CommitClassification::NewRelease | CommitClassification::RetryOrRepublish => {}
+        other => {
+            return Err(PublicationError::new(format!(
+                "cannot publish {commit}: {other}"
+            )));
+        }
+    }
+
+    let tag = declaration
+        .tag
+        .render(&declaration.version)
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+    let changelog = read_text_at(repository_path, commit, &declaration.changelog.path)?;
+    let notes = read_version_section(&changelog, &declaration.version)
+        .map_err(|error| PublicationError::new(error.to_string()))?
+        .to_owned();
+    let release = Release {
+        commit: commit.to_string(),
+        version: declaration.version.clone(),
+        tag,
+        notes,
+    };
+    let tag_publisher = GitTagPublisher::new(repository_path, remote);
+
+    match tag_publisher.state(&release)? {
+        RemoteState::Missing => validate_candidate(
+            repository_path,
+            commit,
+            &declaration,
+            &changelog,
+            &tag_publisher,
+            analyzer,
+        )?,
+        RemoteState::Matching => {}
+        RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
+    }
+
+    let publishers = declaration
+        .publishers
+        .github_release
+        .values()
+        .map(GithubPublisher::from_declaration)
+        .map(|publisher| publisher.map(|publisher| Box::new(publisher) as Box<dyn Publisher>))
+        .collect::<Result<Vec<_>, _>>()?;
+    publish_ordered(&tag_publisher, &release, &publishers)?;
+    Ok(PublishOutcome::Published)
+}
+
+pub fn publish_ordered(
+    tag_publisher: &dyn TagPublisher,
+    release: &Release,
+    publishers: &[Box<dyn Publisher>],
+) -> Result<(), PublicationError> {
+    match tag_publisher.state(release)? {
+        RemoteState::Missing | RemoteState::Matching => {}
+        RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
+    }
+    for publisher in publishers {
+        if let PublisherState::Conflicting(message) = publisher.state(release)? {
+            return Err(PublicationError::new(message));
+        }
+    }
+
+    tag_publisher.publish(release)?;
+    for publisher in publishers {
+        match publisher.state(release)? {
+            PublisherState::Published => {}
+            PublisherState::Missing | PublisherState::Draft => publisher.publish(release)?,
+            PublisherState::Conflicting(message) => return Err(PublicationError::new(message)),
+        }
+    }
+
+    match tag_publisher.state(release)? {
+        RemoteState::Matching => {}
+        state => {
+            return Err(PublicationError::new(format!(
+                "Git tag {:?} was not published: {state:?}",
+                release.tag
+            )));
+        }
+    }
+    for publisher in publishers {
+        match publisher.state(release)? {
+            PublisherState::Published => {}
+            state => {
+                return Err(PublicationError::new(format!(
+                    "publisher did not complete {:?}: {state:?}",
+                    release.tag
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_new_release(
+    version: &Version,
+    parent_version: &Version,
+    stable_base: Option<&Version>,
+    analysis: &Analysis,
+    changelog: &str,
+) -> Result<(), PublicationError> {
+    read_version_section(changelog, version)
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+    if !is_valid_successor(parent_version, version) {
+        return Err(PublicationError::new(format!(
+            "release version {version} is not a valid successor of {parent_version}"
+        )));
+    }
+    if let Some(minimum) = analysis
+        .next_version(stable_base)
+        .map_err(|error| PublicationError::new(error.to_string()))?
+        && version_core(version) < version_core(&minimum)
+    {
+        return Err(PublicationError::new(format!(
+            "release version {version} is lower than analyzed minimum {minimum}"
+        )));
+    }
+    Ok(())
+}
+
+pub fn is_valid_successor(parent: &Version, candidate: &Version) -> bool {
+    if candidate <= parent {
+        return false;
+    }
+
+    let parent_core = version_core(parent);
+    let candidate_core = version_core(candidate);
+    if !parent.pre.is_empty() && candidate_core == parent_core {
+        return true;
+    }
+
+    parent
+        .patch
+        .checked_add(1)
+        .is_some_and(|patch| candidate_core == [parent.major, parent.minor, patch])
+        || parent
+            .minor
+            .checked_add(1)
+            .is_some_and(|minor| candidate_core == [parent.major, minor, 0])
+        || parent
+            .major
+            .checked_add(1)
+            .is_some_and(|major| candidate_core == [major, 0, 0])
+}
+
+fn validate_candidate(
+    repository_path: &Path,
+    commit: Oid,
+    declaration: &ReleaseDeclaration,
+    changelog: &str,
+    tag_publisher: &GitTagPublisher,
+    analyzer: &dyn Analyzer,
+) -> Result<(), PublicationError> {
+    let repository = Repository::open(repository_path).map_err(|error| {
+        PublicationError::new(format!(
+            "could not open Git repository {}: {error}",
+            repository_path.display()
+        ))
+    })?;
+    let candidate = repository.find_commit(commit).map_err(|error| {
+        PublicationError::new(format!("could not read release commit {commit}: {error}"))
+    })?;
+    let parent = if candidate.parent_count() == 0 {
+        None
+    } else {
+        Some(candidate.parent_id(0).map_err(|error| {
+            PublicationError::new(format!("could not read first parent of {commit}: {error}"))
+        })?)
+    };
+    let parent_version = match parent {
+        Some(parent) => {
+            evaluate_release_declaration(repository_path, &parent.to_string())
+                .map_err(|error| PublicationError::new(error.to_string()))?
+                .declaration
+                .version
+        }
+        None => Version::new(0, 0, 0),
+    };
+
+    check_previous_release(
+        repository_path,
+        commit,
+        &parent_version,
+        declaration,
+        tag_publisher,
+    )?;
+    let stable_base = stable_base(&repository, commit, declaration)?;
+    let range = stable_base
+        .as_ref()
+        .map_or_else(
+            || CommitRange::initial(repository_path, commit.to_string()),
+            |(_, base)| CommitRange::between(repository_path, base.to_string(), commit.to_string()),
+        )
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+    let analysis = analyzer
+        .analyze(&range)
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+    validate_new_release(
+        &declaration.version,
+        &parent_version,
+        stable_base.as_ref().map(|(version, _)| version),
+        &analysis,
+        changelog,
+    )
+}
+
+fn check_previous_release(
+    repository_path: &Path,
+    candidate: Oid,
+    previous_version: &Version,
+    declaration: &ReleaseDeclaration,
+    tag_publisher: &GitTagPublisher,
+) -> Result<(), PublicationError> {
+    let repository = Repository::open(repository_path).map_err(|error| {
+        PublicationError::new(format!("could not open Git repository: {error}"))
+    })?;
+    let previous_tag = declaration
+        .tag
+        .render(previous_version)
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+    let Some(previous_commit) = local_tagged_commit(&repository, &previous_tag)? else {
+        if *previous_version == Version::new(0, 0, 0)
+            && !has_release_tags(&repository, &declaration.tag)?
+        {
+            return Ok(());
+        }
+        return Err(PublicationError::new(format!(
+            "previous release tag {previous_tag:?} is missing"
+        )));
+    };
+    if previous_commit != candidate
+        && !repository
+            .graph_descendant_of(candidate, previous_commit)
+            .map_err(|error| {
+                PublicationError::new(format!(
+                    "could not check previous release ancestry: {error}"
+                ))
+            })?
+    {
+        return Err(PublicationError::new(format!(
+            "previous release tag {previous_tag:?} at {previous_commit} is not an ancestor of {candidate}"
+        )));
+    }
+
+    let previous = Release {
+        commit: previous_commit.to_string(),
+        version: previous_version.clone(),
+        tag: previous_tag.clone(),
+        notes: String::new(),
+    };
+    match tag_publisher.state(&previous)? {
+        RemoteState::Matching => {}
+        RemoteState::Missing => {
+            return Err(PublicationError::new(format!(
+                "previous release tag {previous_tag:?} is missing from the remote"
+            )));
+        }
+        RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
+    }
+
+    let previous_declaration =
+        evaluate_release_declaration(repository_path, &previous_commit.to_string())
+            .map_err(|error| PublicationError::new(error.to_string()))?
+            .declaration;
+    let expected_prerelease = !previous_version.pre.is_empty();
+    for publisher in previous_declaration.publishers.github_release.values() {
+        let client = GithubClient::from_environment(&publisher.token.secret)?;
+        match client.release_state(&publisher.repository, &previous_tag)? {
+            GithubReleaseState::Published { prerelease } if prerelease == expected_prerelease => {}
+            state => {
+                return Err(PublicationError::new(format!(
+                    "previous GitHub Release {previous_tag:?} in {} is incomplete: {state:?}",
+                    publisher.repository
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn stable_base(
+    repository: &Repository,
+    candidate: Oid,
+    declaration: &ReleaseDeclaration,
+) -> Result<Option<(Version, Oid)>, PublicationError> {
+    let names = repository
+        .tag_names(None)
+        .map_err(|error| PublicationError::new(format!("could not list Git tags: {error}")))?;
+    let mut stable = None;
+    for name in names.iter_bytes() {
+        let Ok(name) = std::str::from_utf8(name) else {
+            continue;
+        };
+        let Some(version) = declaration
+            .tag
+            .parse(name)
+            .map_err(|error| PublicationError::new(error.to_string()))?
+        else {
+            continue;
+        };
+        let Some(commit) = local_tagged_commit(repository, name)? else {
+            continue;
+        };
+        if commit != candidate
+            && !repository
+                .graph_descendant_of(candidate, commit)
+                .map_err(|error| {
+                    PublicationError::new(format!("could not check Git tag ancestry: {error}"))
+                })?
+        {
+            continue;
+        }
+        if version > declaration.version {
+            return Err(PublicationError::new(format!(
+                "reachable release tag {name:?} has version {version}, higher than candidate {}",
+                declaration.version
+            )));
+        }
+        if !version.pre.is_empty() || version == declaration.version {
+            continue;
+        }
+        if stable
+            .as_ref()
+            .is_none_or(|(current, _): &(Version, Oid)| version > *current)
+        {
+            stable = Some((version, commit));
+        }
+    }
+    Ok(stable)
+}
+
+fn local_tagged_commit(
+    repository: &Repository,
+    tag: &str,
+) -> Result<Option<Oid>, PublicationError> {
+    let reference = format!("refs/tags/{tag}");
+    match repository.find_reference(&reference) {
+        Ok(reference) => reference
+            .peel_to_commit()
+            .map(|commit| Some(commit.id()))
+            .map_err(|error| {
+                PublicationError::new(format!(
+                    "Git tag {tag:?} does not resolve to a commit: {error}"
+                ))
+            }),
+        Err(error) if error.code() == ErrorCode::NotFound => Ok(None),
+        Err(error) => Err(PublicationError::new(format!(
+            "could not read Git tag {tag:?}: {error}"
+        ))),
+    }
+}
+
+fn has_release_tags(
+    repository: &Repository,
+    tag: &crate::declaration::Tag,
+) -> Result<bool, PublicationError> {
+    let names = repository
+        .tag_names(None)
+        .map_err(|error| PublicationError::new(format!("could not list Git tags: {error}")))?;
+    for name in names.iter_bytes() {
+        let Ok(name) = std::str::from_utf8(name) else {
+            continue;
+        };
+        if tag
+            .parse(name)
+            .map_err(|error| PublicationError::new(error.to_string()))?
+            .is_some()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn read_text_at(
+    repository_path: &Path,
+    commit: Oid,
+    path: &str,
+) -> Result<String, PublicationError> {
+    let repository = Repository::open(repository_path).map_err(|error| {
+        PublicationError::new(format!("could not open Git repository: {error}"))
+    })?;
+    let commit = repository
+        .find_commit(commit)
+        .map_err(|error| PublicationError::new(format!("could not read Git commit: {error}")))?;
+    let tree = commit
+        .tree()
+        .map_err(|error| PublicationError::new(format!("could not read Git tree: {error}")))?;
+    let entry = tree.get_path(Path::new(path)).map_err(|error| {
+        PublicationError::new(format!(
+            "could not read {path} from commit {}: {error}",
+            commit.id()
+        ))
+    })?;
+    let blob = entry
+        .to_object(&repository)
+        .and_then(|object| object.peel_to_blob())
+        .map_err(|error| {
+            PublicationError::new(format!(
+                "{path} in commit {} is not a file: {error}",
+                commit.id()
+            ))
+        })?;
+    std::str::from_utf8(blob.content())
+        .map(str::to_owned)
+        .map_err(|error| {
+            PublicationError::new(format!(
+                "{path} in commit {} is not UTF-8: {error}",
+                commit.id()
+            ))
+        })
+}
+
+fn version_core(version: &Version) -> [u64; 3] {
+    [version.major, version.minor, version.patch]
+}
