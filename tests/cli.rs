@@ -90,6 +90,7 @@ fn release_repository() -> GitRepo {
       analyzer.convention = "gitmoji";
       changelog.path = "CHANGELOG.md";
       publishers."github-release".default = {
+        apiUrl = "https://api.github.com";
         repository = "owner/project";
         token.secret = "GITHUB_TOKEN";
       };

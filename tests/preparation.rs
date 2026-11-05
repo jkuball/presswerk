@@ -39,6 +39,7 @@ fn declaration(version: &str) -> ReleaseDeclaration {
             github_release: BTreeMap::from([(
                 "default".into(),
                 GithubReleasePublisher {
+                    api_url: "https://api.github.com".into(),
                     repository: "owner/project".into(),
                     token: Token {
                         secret: "GITHUB_TOKEN".into(),
