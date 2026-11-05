@@ -376,7 +376,7 @@ pub fn render_release_notes(analysis: &Analysis) -> Result<String, RenderError> 
             .or_insert_with(|| NoteGroup {
                 emoji: &commit.gitmoji.emoji,
                 shortcode: &commit.gitmoji.shortcode,
-                description: &commit.gitmoji.description,
+                description: commit.gitmoji.description.trim_end_matches('.'),
                 commits: Vec::new(),
             })
             .commits
@@ -527,7 +527,7 @@ mod tests {
         let notes = render_release_notes(&analysis).unwrap();
         assert_eq!(
             notes,
-            "### 📝 Add or update documentation.\n\n- 📝 Document Unicode spelling\n- :memo: Document shortcode spelling\n\n### 🐛 Fix a bug.\n\n- :bug: Fix bug\n\n### ✨ Introduce new features.\n\n- ✨ Add feature\n"
+            "### 📝 Add or update documentation\n\n- 📝 Document Unicode spelling\n- :memo: Document shortcode spelling\n\n### 🐛 Fix a bug\n\n- :bug: Fix bug\n\n### ✨ Introduce new features\n\n- ✨ Add feature\n"
         );
     }
 
