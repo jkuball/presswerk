@@ -106,7 +106,7 @@ impl fmt::Debug for GithubClient {
 }
 
 impl GithubClient {
-    pub fn from_environment(secret: &str) -> Result<Self, PublicationError> {
+    pub fn from_environment(api_url: &str, secret: &str) -> Result<Self, PublicationError> {
         let token = env::var(secret).map_err(|_| {
             PublicationError::new(format!(
                 "GitHub credential environment variable {secret:?} is not set"
@@ -117,7 +117,7 @@ impl GithubClient {
                 "GitHub credential environment variable {secret:?} is empty"
             )));
         }
-        Self::new("https://api.github.com", token)
+        Self::new(api_url, token)
     }
 
     pub fn new(api_url: &str, token: impl Into<String>) -> Result<Self, PublicationError> {
@@ -331,7 +331,10 @@ impl GithubPublisher {
         declaration: &GithubReleaseDeclaration,
     ) -> Result<Self, PublicationError> {
         Ok(Self {
-            client: GithubClient::from_environment(&declaration.token.secret)?,
+            client: GithubClient::from_environment(
+                &declaration.api_url,
+                &declaration.token.secret,
+            )?,
             repository: declaration.repository.clone(),
         })
     }
@@ -904,7 +907,7 @@ pub fn verify_predecessor(
                 .map_err(|error| PublicationError::new(error.to_string()))
         },
         |publisher, tag, _version| {
-            GithubClient::from_environment(&publisher.token.secret)?
+            GithubClient::from_environment(&publisher.api_url, &publisher.token.secret)?
                 .release_state(&publisher.repository, tag)
         },
     )

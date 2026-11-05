@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use url::Url;
 
 pub const SCHEMA_VERSION: i64 = 1;
 
@@ -201,8 +202,9 @@ pub struct Publishers {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GithubReleasePublisher {
+    pub api_url: String,
     pub repository: String,
     pub token: Token,
 }
@@ -217,6 +219,22 @@ impl GithubReleasePublisher {
             return Err(DeclarationError::Invalid(format!(
                 "GitHub repository {:?} must use owner/name form",
                 self.repository
+            )));
+        }
+        let api_url = Url::parse(&self.api_url).map_err(|error| {
+            DeclarationError::Invalid(format!(
+                "invalid GitHub API URL {:?}: {error}",
+                self.api_url
+            ))
+        })?;
+        if !matches!(api_url.scheme(), "http" | "https")
+            || api_url.cannot_be_a_base()
+            || api_url.query().is_some()
+            || api_url.fragment().is_some()
+        {
+            return Err(DeclarationError::Invalid(format!(
+                "GitHub API URL {:?} must be an HTTP(S) base URL",
+                self.api_url
             )));
         }
         self.token.validate()
@@ -294,30 +312,36 @@ fn validate_relative_path(path: &str) -> Result<(), DeclarationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
-    const DECLARATION: &str = r#"{
-        "schemaVersion": 1,
-        "version": "1.2.3",
-        "versionFiles": [
-            { "path": "Cargo.toml", "toml": "package.version" },
-            { "path": "Cargo.lock", "cargoLock": "presswerk" }
-        ],
-        "tag": { "format": "v{version}" },
-        "analyzer": { "convention": "gitmoji" },
-        "changelog": { "path": "CHANGELOG.md" },
-        "publishers": {
-            "github-release": {
-                "default": {
-                    "repository": "jkuball/presswerk",
-                    "token": { "secret": "GITHUB_TOKEN" }
+    fn declaration(patch: impl FnOnce(&mut Value)) -> String {
+        let mut declaration = json!({
+            "schemaVersion": 1,
+            "version": "1.2.3",
+            "versionFiles": [
+                { "path": "Cargo.toml", "toml": "package.version" },
+                { "path": "Cargo.lock", "cargoLock": "presswerk" }
+            ],
+            "tag": { "format": "v{version}" },
+            "analyzer": { "convention": "gitmoji" },
+            "changelog": { "path": "CHANGELOG.md" },
+            "publishers": {
+                "github-release": {
+                    "default": {
+                        "apiUrl": "https://api.github.com",
+                        "repository": "jkuball/presswerk",
+                        "token": { "secret": "GITHUB_TOKEN" }
+                    }
                 }
             }
-        }
-    }"#;
+        });
+        patch(&mut declaration);
+        declaration.to_string()
+    }
 
     #[test]
     fn parses_the_m1_schema_with_a_required_changelog() {
-        let declaration = ReleaseDeclaration::from_json(DECLARATION).unwrap();
+        let declaration = ReleaseDeclaration::from_json(&declaration(|_| {})).unwrap();
         assert_eq!(declaration.schema_version, 1);
         assert_eq!(declaration.version, Version::new(1, 2, 3));
         assert_eq!(
@@ -326,14 +350,17 @@ mod tests {
                 path: "CHANGELOG.md".into()
             }
         );
+        assert_eq!(
+            declaration.publishers.github_release["default"].api_url,
+            "https://api.github.com"
+        );
     }
 
     #[test]
     fn rejects_a_missing_changelog() {
-        let missing = DECLARATION.replace(
-            "        \"changelog\": { \"path\": \"CHANGELOG.md\" },\n",
-            "",
-        );
+        let missing = declaration(|value| {
+            value.as_object_mut().unwrap().remove("changelog");
+        });
         assert!(matches!(
             ReleaseDeclaration::from_json(&missing).unwrap_err(),
             DeclarationError::InvalidDeclaration(_)
@@ -355,10 +382,7 @@ mod tests {
 
     #[test]
     fn requires_a_github_release_publisher() {
-        let empty = DECLARATION.replace(
-            "                \"default\": {\n                    \"repository\": \"jkuball/presswerk\",\n                    \"token\": { \"secret\": \"GITHUB_TOKEN\" }\n                }",
-            "",
-        );
+        let empty = declaration(|value| value["publishers"]["github-release"] = json!({}));
         assert!(
             ReleaseDeclaration::from_json(&empty)
                 .unwrap_err()
@@ -369,7 +393,9 @@ mod tests {
 
     #[test]
     fn validates_repository_relative_paths() {
-        let invalid = DECLARATION.replace("Cargo.toml", "../Cargo.toml");
+        let invalid = declaration(|value| {
+            value["versionFiles"][0]["path"] = json!("../Cargo.toml");
+        });
         assert!(
             ReleaseDeclaration::from_json(&invalid)
                 .unwrap_err()
@@ -380,10 +406,12 @@ mod tests {
 
     #[test]
     fn validates_generic_toml_selectors() {
-        let generic = DECLARATION.replace("package.version", "project.version");
+        let generic = declaration(|value| {
+            value["versionFiles"][0]["toml"] = json!("project.version");
+        });
         ReleaseDeclaration::from_json(&generic).unwrap();
 
-        let empty = DECLARATION.replace("package.version", "");
+        let empty = declaration(|value| value["versionFiles"][0]["toml"] = json!(""));
         assert!(
             ReleaseDeclaration::from_json(&empty)
                 .unwrap_err()
@@ -399,7 +427,7 @@ mod tests {
             "release/{version}/source",
             "{release}-{version}-{source}",
         ] {
-            let declaration = DECLARATION.replace("v{version}", format);
+            let declaration = declaration(|value| value["tag"]["format"] = json!(format));
             ReleaseDeclaration::from_json(&declaration).unwrap();
         }
 
@@ -412,7 +440,7 @@ mod tests {
             "v{{version}",
             "v{version}}",
         ] {
-            let declaration = DECLARATION.replace("v{version}", format);
+            let declaration = declaration(|value| value["tag"]["format"] = json!(format));
             assert!(
                 ReleaseDeclaration::from_json(&declaration)
                     .unwrap_err()
@@ -446,11 +474,42 @@ mod tests {
     }
 
     #[test]
+    fn validates_github_api_urls() {
+        let enterprise = declaration(|value| {
+            value["publishers"]["github-release"]["default"]["apiUrl"] =
+                json!("https://github.example/api/v3");
+        });
+        ReleaseDeclaration::from_json(&enterprise).unwrap();
+
+        for api_url in [
+            "github.example",
+            "file:///tmp/github",
+            "https://api.github.com?token=secret",
+            "https://api.github.com#fragment",
+        ] {
+            let invalid = declaration(|value| {
+                value["publishers"]["github-release"]["default"]["apiUrl"] = json!(api_url);
+            });
+            assert!(
+                ReleaseDeclaration::from_json(&invalid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("GitHub API URL")
+            );
+        }
+    }
+
+    #[test]
     fn accepts_logical_secret_names_and_rejects_empty_names() {
-        let logical_name = DECLARATION.replace("GITHUB_TOKEN", "github-token");
+        let logical_name = declaration(|value| {
+            value["publishers"]["github-release"]["default"]["token"]["secret"] =
+                json!("github-token");
+        });
         ReleaseDeclaration::from_json(&logical_name).unwrap();
 
-        let empty_name = DECLARATION.replace("GITHUB_TOKEN", "");
+        let empty_name = declaration(|value| {
+            value["publishers"]["github-release"]["default"]["token"]["secret"] = json!("");
+        });
         assert!(
             ReleaseDeclaration::from_json(&empty_name)
                 .unwrap_err()
@@ -461,7 +520,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_semantic_versions() {
-        let invalid = DECLARATION.replace("1.2.3", "next");
+        let invalid = declaration(|value| value["version"] = json!("next"));
         assert!(matches!(
             ReleaseDeclaration::from_json(&invalid).unwrap_err(),
             DeclarationError::InvalidDeclaration(_)

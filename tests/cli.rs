@@ -21,6 +21,7 @@ fn presswerk(args: &[&str]) -> Output {
 }
 
 fn presswerk_in(repository: &Path, args: &[&str]) -> Output {
+    // Give each CLI test a writable store without touching the host's global Nix state.
     let store = tempfile::tempdir().expect("create temporary Nix store");
     Command::new(env!("CARGO_BIN_EXE_presswerk"))
         .args(args)
@@ -50,6 +51,7 @@ fn ordinary_repository() -> GitRepo {
       analyzer.convention = "gitmoji";
       changelog.path = "CHANGELOG.md";
       publishers."github-release".default = {
+        apiUrl = "https://api.github.com";
         repository = "owner/project";
         token.secret = "GITHUB_TOKEN";
       };

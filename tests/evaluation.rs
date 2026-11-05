@@ -34,6 +34,7 @@ fn valid_flake(version: &str) -> String {
       analyzer.convention = "gitmoji";
       changelog.path = "CHANGELOG.md";
       publishers."github-release".default = {
+        apiUrl = "https://api.github.com";
         repository = "jkuball/presswerk";
         token.secret = "GITHUB_TOKEN";
       };

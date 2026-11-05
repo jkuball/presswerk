@@ -28,6 +28,7 @@ fn declaration(version: &str, repository: &str) -> ReleaseDeclaration {
           "publishers": {{
             "github-release": {{
               "default": {{
+                "apiUrl": "https://api.github.com",
                 "repository": "{repository}",
                 "token": {{ "secret": "GITHUB_TOKEN" }}
               }}
@@ -399,7 +400,7 @@ struct ExpectedRequest {
     body_contains: Option<&'static str>,
 }
 
-fn github_server(requests: Vec<ExpectedRequest>) -> (String, thread::JoinHandle<()>) {
+fn mock_github_api(requests: Vec<ExpectedRequest>) -> (String, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let handle = thread::spawn(move || {
@@ -473,7 +474,7 @@ fn read_request(stream: &mut std::net::TcpStream) -> String {
 
 #[test]
 fn github_missing_is_distinct_from_inaccessible_or_unknown_state() {
-    let (url, server) = github_server(vec![
+    let (url, server) = mock_github_api(vec![
         ExpectedRequest {
             method: "GET",
             path: "/repos/owner/project",
@@ -496,7 +497,7 @@ fn github_missing_is_distinct_from_inaccessible_or_unknown_state() {
     );
     server.join().unwrap();
 
-    let (url, server) = github_server(vec![ExpectedRequest {
+    let (url, server) = mock_github_api(vec![ExpectedRequest {
         method: "GET",
         path: "/repos/owner/project",
         status: 404,
@@ -513,7 +514,7 @@ fn github_missing_is_distinct_from_inaccessible_or_unknown_state() {
     );
     server.join().unwrap();
 
-    let (url, server) = github_server(vec![
+    let (url, server) = mock_github_api(vec![
         ExpectedRequest {
             method: "GET",
             path: "/repos/owner/project",
@@ -536,7 +537,7 @@ fn github_missing_is_distinct_from_inaccessible_or_unknown_state() {
 
 #[test]
 fn github_continues_an_existing_draft() {
-    let (url, server) = github_server(vec![
+    let (url, server) = mock_github_api(vec![
         ExpectedRequest {
             method: "GET",
             path: "/repos/owner/project",
@@ -587,7 +588,7 @@ fn github_continues_an_existing_draft() {
 
 #[test]
 fn github_reinspects_ambiguous_post_and_patch_failures() {
-    let (url, server) = github_server(vec![
+    let (url, server) = mock_github_api(vec![
         ExpectedRequest {
             method: "GET",
             path: "/repos/owner/project",
@@ -654,7 +655,7 @@ fn github_reinspects_ambiguous_post_and_patch_failures() {
         .unwrap();
     server.join().unwrap();
 
-    let (url, server) = github_server(vec![
+    let (url, server) = mock_github_api(vec![
         ExpectedRequest {
             method: "GET",
             path: "/repos/owner/project",
@@ -717,7 +718,7 @@ fn github_reinspects_ambiguous_post_and_patch_failures() {
 
 #[test]
 fn github_reinspection_rejects_a_still_draft_release() {
-    let (url, server) = github_server(vec![
+    let (url, server) = mock_github_api(vec![
         ExpectedRequest {
             method: "GET",
             path: "/repos/owner/project",
@@ -769,7 +770,7 @@ fn github_reinspection_rejects_a_still_draft_release() {
 
 #[test]
 fn github_creates_a_draft_then_publishes_and_verifies_it() {
-    let (url, server) = github_server(vec![
+    let (url, server) = mock_github_api(vec![
         ExpectedRequest {
             method: "GET",
             path: "/repos/owner/project",

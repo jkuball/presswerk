@@ -48,6 +48,12 @@
 
       githubReleaseModule = {
         options = {
+          apiUrl = mkOption {
+            type = types.nonEmptyStr;
+            default = "https://api.github.com";
+            description = "Base URL of the GitHub API.";
+          };
+
           repository = mkOption {
             type = types.strMatching "[^/]+/[^/]+";
             description = "GitHub repository in owner/name form.";
