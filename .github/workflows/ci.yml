@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Exact release commit to test and publish
+        required: false
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && github.ref || 'presswerk-release' }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.candidate || github.sha }}
+
+      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
+        with:
+          use-gha-cache: true
+          use-flakehub: false
+
+      - name: Check flake
+        run: nix flake check --build-all --print-build-logs
+
+      - name: Prepare release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git fetch origin main --tags
+          if test "$(git rev-parse origin/main)" != "$GITHUB_SHA"; then
+            echo "main advanced; leaving release work to the newer run"
+            exit 0
+          fi
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+
+          before=$(git rev-parse HEAD)
+          nix run .#presswerk -- prepare
+          candidate=$(git rev-parse HEAD)
+          if test "$candidate" = "$before"; then
+            exit 0
+          fi
+
+          git push origin HEAD:main
+          gh workflow run ci.yml --ref main -f candidate="$candidate"
+
+      - name: Publish release
+        if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ inputs.candidate }}"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          nix run .#presswerk -- publish HEAD
