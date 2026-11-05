@@ -60,7 +60,7 @@ fn run() -> Result<()> {
             let plan = build_head_release_plan(".", &GitCliffAnalyzer)?;
             match prepare_release(&plan)? {
                 Some(commit) => println!(
-                    "committed  {}  🔖 Prepare release {}",
+                    "committed  {}  🔖 Release v{}",
                     short_commit(&commit.to_string()),
                     plan.next_version.as_ref().expect("release version exists")
                 ),

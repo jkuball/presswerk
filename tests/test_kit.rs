@@ -7,7 +7,7 @@ fn builds_repositories_with_versions_and_tags() {
     let repository = GitRepo::new();
     let first = repository.commit_version("0.0.0", "🎉 Begin project");
     repository.annotated_tag("v0.0.0");
-    let second = repository.commit_version("0.1.0", "🔖 Prepare release");
+    let second = repository.commit_version("0.1.0", "🔖 Release v0.1.0");
 
     assert_eq!(
         repository.git(["config", "--get", "commit.gpgSign"]),

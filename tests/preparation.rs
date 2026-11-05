@@ -94,7 +94,7 @@ fn plans_and_prepares_the_full_range_after_a_completed_release() {
         "CHANGELOG.md",
         "# Changelog\n\n## [0.1.0] - 2026-10-01\n\nFirst release.\n",
     );
-    repository.commit("🔖 Prepare release 0.1.0");
+    repository.commit("🔖 Release v0.1.0");
     repository.annotated_tag("v0.1.0");
     repository.write("feature", "implemented\n");
     let feature = repository.commit("✨ Add full-range planning");
@@ -168,7 +168,7 @@ fn plans_the_first_release_from_the_implicit_zero_baseline() {
 fn exits_without_a_commit_when_the_full_range_is_not_release_worthy() {
     let repository = GitRepo::new();
     write_version(&repository, "0.1.0");
-    repository.commit("🔖 Prepare release 0.1.0");
+    repository.commit("🔖 Release v0.1.0");
     repository.annotated_tag("v0.1.0");
     repository.write("README.md", "documented\n");
     let before = repository.commit("📝 Document the release");
@@ -194,7 +194,7 @@ fn refuses_pending_and_incomplete_previous_releases() {
     write_version(&pending, "0.0.0");
     pending.commit("🎉 Begin project");
     write_version(&pending, "0.1.0");
-    let release = pending.commit("🔖 Prepare release 0.1.0");
+    let release = pending.commit("🔖 Release v0.1.0");
     pending.write("README.md", "later\n");
     pending.commit("📝 Later change");
 
@@ -211,7 +211,7 @@ fn refuses_pending_and_incomplete_previous_releases() {
 
     let incomplete = GitRepo::new();
     write_version(&incomplete, "0.1.0");
-    incomplete.commit("🔖 Prepare release 0.1.0");
+    incomplete.commit("🔖 Release v0.1.0");
     incomplete.annotated_tag("v0.1.0");
     incomplete.write("feature", "implemented\n");
     incomplete.commit("✨ Add a feature");
@@ -232,7 +232,7 @@ fn refuses_pending_and_incomplete_previous_releases() {
 fn uses_the_exact_predecessor_declaration_for_release_state_checks() {
     let repository = GitRepo::new();
     write_version(&repository, "0.1.0");
-    repository.commit("🔖 Prepare release 0.1.0");
+    repository.commit("🔖 Release v0.1.0");
     repository.annotated_tag("v0.1.0");
     repository.write("feature", "implemented\n");
     let candidate = repository.commit("✨ Add a feature");
@@ -294,7 +294,7 @@ fn uses_the_exact_predecessor_declaration_for_release_state_checks() {
 fn refuses_deleted_moved_and_lightweight_remote_predecessor_tags() {
     let repository = GitRepo::new();
     write_version(&repository, "0.1.0");
-    repository.commit("🔖 Prepare release 0.1.0");
+    repository.commit("🔖 Release v0.1.0");
     repository.annotated_tag("v0.1.0");
     repository.write("feature", "implemented\n");
     repository.commit("✨ Add a feature");

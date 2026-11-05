@@ -20,7 +20,7 @@ fn classify(repository: &GitRepo, target: &str) -> CommitClassification {
 #[test]
 fn classifies_an_ordinary_commit_after_a_release() {
     let repository = GitRepo::new();
-    repository.commit_version("0.1.0", "🔖 Prepare release");
+    repository.commit_version("0.1.0", "🔖 Release v0.1.0");
     repository.annotated_tag("v0.1.0");
     repository.write("README.md", "ordinary change\n");
     let ordinary = repository.commit("📝 Document release");
@@ -35,7 +35,7 @@ fn classifies_an_ordinary_commit_after_a_release() {
 fn classifies_a_changed_untagged_version_as_a_new_release() {
     let repository = GitRepo::new();
     repository.commit_version("0.0.0", "🎉 Begin project");
-    let release = repository.commit_version("0.1.0", "🔖 Prepare release");
+    let release = repository.commit_version("0.1.0", "🔖 Release v0.1.0");
 
     assert_eq!(
         classify(&repository, &release),
@@ -47,7 +47,7 @@ fn classifies_a_changed_untagged_version_as_a_new_release() {
 fn reports_the_release_commit_inherited_by_a_pending_fixup() {
     let repository = GitRepo::new();
     repository.commit_version("0.0.0", "🎉 Begin project");
-    let release = repository.commit_version("0.1.0", "🔖 Prepare release");
+    let release = repository.commit_version("0.1.0", "🔖 Release v0.1.0");
     repository.write("fix-one", "one\n");
     repository.commit("🐛 First fixup");
     repository.write("fix-two", "two\n");
@@ -68,7 +68,7 @@ fn reports_the_release_commit_inherited_by_a_pending_fixup() {
 fn peels_an_annotated_tag_for_a_retry_or_republish() {
     let repository = GitRepo::new();
     repository.commit_version("0.0.0", "🎉 Begin project");
-    let release = repository.commit_version("0.1.0", "🔖 Prepare release");
+    let release = repository.commit_version("0.1.0", "🔖 Release v0.1.0");
     repository.annotated_tag("v0.1.0");
 
     assert_eq!(
@@ -144,9 +144,9 @@ fn ignores_non_utf8_tags_when_recognizing_the_fresh_baseline() {
 #[test]
 fn accepts_a_revert_to_the_previous_tagged_version() {
     let repository = GitRepo::new();
-    repository.commit_version("0.1.0", "🔖 Prepare release");
+    repository.commit_version("0.1.0", "🔖 Release v0.1.0");
     repository.tag("v0.1.0");
-    repository.commit_version("0.2.0", "🔖 Prepare failed release");
+    repository.commit_version("0.2.0", "🔖 Release v0.2.0");
     let revert = repository.commit_version("0.1.0", "⏪️ Revert failed release");
 
     assert_eq!(
@@ -162,7 +162,7 @@ fn compares_a_merge_candidate_with_its_first_parent() {
     let main_branch = repository.git(["branch", "--show-current"]);
 
     repository.git(["switch", "--quiet", "--create", "release"]);
-    repository.commit_version("0.2.0", "🔖 Prepare release");
+    repository.commit_version("0.2.0", "🔖 Release v0.2.0");
 
     repository.git(["switch", "--quiet", &main_branch]);
     repository.write("README.md", "main change\n");

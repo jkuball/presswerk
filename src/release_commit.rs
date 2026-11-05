@@ -61,7 +61,7 @@ pub fn create_release_commit(
     let signature = repository.signature().map_err(|source| {
         ReleaseCommitError::git("could not read Git author configuration", source)
     })?;
-    let subject = format!("🔖 Prepare release {version}");
+    let subject = format!("🔖 Release v{version}");
     let commit = repository
         .commit(None, &signature, &signature, &subject, &tree, &[&parent])
         .map_err(|source| ReleaseCommitError::git("could not create release commit", source))?;

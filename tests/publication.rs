@@ -224,7 +224,7 @@ fn accepts_semver_prerelease_steps_and_stable_successors() {
 #[test]
 fn pushes_an_annotated_tag_without_force_and_reuses_it() {
     let repository = GitRepo::new();
-    let commit = repository.commit_version("0.1.0", "🔖 Prepare release");
+    let commit = repository.commit_version("0.1.0", "🔖 Release v0.1.0");
     let remote = tempfile::tempdir().unwrap();
     let remote_path = remote.path().to_string_lossy().into_owned();
     repository.git(["init", "--bare", "--quiet", &remote_path]);
@@ -265,7 +265,7 @@ fn pushes_an_annotated_tag_without_force_and_reuses_it() {
 #[test]
 fn refuses_to_push_a_new_lightweight_tag() {
     let repository = GitRepo::new();
-    let commit = repository.commit_version("0.1.0", "🔖 Prepare release");
+    let commit = repository.commit_version("0.1.0", "🔖 Release v0.1.0");
     repository.tag("v0.1.0");
     let remote = tempfile::tempdir().unwrap();
     let remote_path = remote.path().to_string_lossy().into_owned();
@@ -285,7 +285,7 @@ fn refuses_to_push_a_new_lightweight_tag() {
 #[test]
 fn treats_an_existing_remote_lightweight_tag_as_conflicting() {
     let repository = GitRepo::new();
-    let commit = repository.commit_version("0.1.0", "🔖 Prepare release");
+    let commit = repository.commit_version("0.1.0", "🔖 Release v0.1.0");
     repository.tag("v0.1.0");
     let remote = tempfile::tempdir().unwrap();
     let remote_path = remote.path().to_string_lossy().into_owned();

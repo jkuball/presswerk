@@ -527,7 +527,7 @@ mod tests {
         let notes = render_release_notes(&analysis).unwrap();
         assert_eq!(
             notes,
-            "### 📝 :memo:\n\n- 📝 Document Unicode spelling\n- :memo: Document shortcode spelling\n\n### 🐛 :bug:\n\n- :bug: Fix bug\n\n### ✨ :sparkles:\n\n- ✨ Add feature\n"
+            "### 📝 Add or update documentation.\n\n- 📝 Document Unicode spelling\n- :memo: Document shortcode spelling\n\n### 🐛 Fix a bug.\n\n- :bug: Fix bug\n\n### ✨ Introduce new features.\n\n- ✨ Add feature\n"
         );
     }
 
