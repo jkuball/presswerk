@@ -1,10 +1,11 @@
 mod support;
 
 use presswerk::analysis::{Analysis, Bump};
+use presswerk::declaration::ReleaseDeclaration;
 use presswerk::publication::{
     GitTagPublisher, GithubClient, GithubPublisher, GithubReleaseReader, GithubReleaseState,
     PublicationError, Publisher, PublisherState, Release, RemoteState, TagPublisher,
-    is_valid_successor, publish_ordered, validate_new_release,
+    is_valid_successor, publish_ordered, validate_new_release, verify_predecessor_with,
 };
 use semver::Version;
 use std::cell::RefCell;
@@ -14,6 +15,28 @@ use std::process::Command;
 use std::rc::Rc;
 use std::thread;
 use support::GitRepo;
+
+fn declaration(version: &str, repository: &str) -> ReleaseDeclaration {
+    ReleaseDeclaration::from_json(&format!(
+        r#"{{
+          "schemaVersion": 1,
+          "version": "{version}",
+          "versionFiles": [],
+          "tag": {{ "format": "v{{version}}" }},
+          "analyzer": {{ "convention": "gitmoji" }},
+          "changelog": {{ "path": "CHANGELOG.md" }},
+          "publishers": {{
+            "github-release": {{
+              "default": {{
+                "repository": "{repository}",
+                "token": {{ "secret": "GITHUB_TOKEN" }}
+              }}
+            }}
+          }}
+        }}"#
+    ))
+    .unwrap()
+}
 
 fn release(commit: String) -> Release {
     Release {
@@ -80,6 +103,25 @@ fn publishes_the_tag_before_completing_missing_publishers() {
     .unwrap();
 
     assert_eq!(*writes.borrow(), ["tag", "release"]);
+}
+
+#[test]
+fn refuses_an_empty_publisher_set_before_writing_the_tag() {
+    let writes = Rc::new(RefCell::new(Vec::new()));
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Missing)),
+        writes: writes.clone(),
+    };
+
+    let error = publish_ordered(
+        &tag,
+        &release("0123456789012345678901234567890123456789".into()),
+        &[],
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("at least one"));
+    assert!(writes.borrow().is_empty());
 }
 
 #[test]
@@ -240,6 +282,23 @@ fn refuses_to_push_a_new_lightweight_tag() {
 }
 
 #[test]
+fn treats_an_existing_remote_lightweight_tag_as_conflicting() {
+    let repository = GitRepo::new();
+    let commit = repository.commit_version("0.1.0", "🔖 Prepare release");
+    repository.tag("v0.1.0");
+    let remote = tempfile::tempdir().unwrap();
+    let remote_path = remote.path().to_string_lossy().into_owned();
+    repository.git(["init", "--bare", "--quiet", &remote_path]);
+    repository.git(["remote", "add", "origin", &remote_path]);
+    repository.git(["push", "origin", "refs/tags/v0.1.0"]);
+    let publisher = GitTagPublisher::new(repository.path(), "origin");
+
+    let state = publisher.state(&release(commit)).unwrap();
+
+    assert!(matches!(state, RemoteState::Conflicting(message) if message.contains("lightweight")));
+}
+
+#[test]
 fn refuses_to_overwrite_a_conflicting_remote_tag() {
     let repository = GitRepo::new();
     let first = repository.commit_version("0.1.0", "🔖 First release");
@@ -263,6 +322,72 @@ fn refuses_to_overwrite_a_conflicting_remote_tag() {
         publisher.state(&release(first)).unwrap(),
         RemoteState::Matching
     );
+}
+
+#[test]
+fn predecessor_verification_uses_the_tagged_commits_own_publishers() {
+    let repository = GitRepo::new();
+    let predecessor = repository.commit_version("0.1.0", "🔖 Prepare predecessor");
+    repository.annotated_tag("v0.1.0");
+    repository.write("publisher", "new/project\n");
+    let candidate = repository.commit("✨ Change publisher");
+    let current_declaration = declaration("0.1.0", "new/project");
+    let previous_declaration = declaration("0.1.0", "old/project");
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        writes: Rc::new(RefCell::new(Vec::new())),
+    };
+    let repositories = RefCell::new(Vec::new());
+
+    let verified = verify_predecessor_with(
+        repository.path(),
+        candidate.parse().unwrap(),
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &tag,
+        |commit| {
+            assert_eq!(commit.to_string(), predecessor);
+            Ok(previous_declaration.clone())
+        },
+        |publisher, _tag, _version| {
+            repositories.borrow_mut().push(publisher.repository.clone());
+            Ok(GithubReleaseState::Published { prerelease: false })
+        },
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(verified.commit.to_string(), predecessor);
+    assert_eq!(*repositories.borrow(), ["old/project"]);
+}
+
+#[test]
+fn predecessor_verification_rejects_an_empty_tagged_publisher_set() {
+    let repository = GitRepo::new();
+    repository.commit_version("0.1.0", "🔖 Prepare invalid predecessor");
+    repository.annotated_tag("v0.1.0");
+    repository.write("publisher", "new/project\n");
+    let candidate = repository.commit("✨ Change publisher");
+    let current_declaration = declaration("0.1.0", "new/project");
+    let mut previous_declaration = declaration("0.1.0", "old/project");
+    previous_declaration.publishers.github_release.clear();
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        writes: Rc::new(RefCell::new(Vec::new())),
+    };
+
+    let error = verify_predecessor_with(
+        repository.path(),
+        candidate.parse().unwrap(),
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &tag,
+        |_commit| Ok(previous_declaration.clone()),
+        |_publisher, _tag, _version| Ok(GithubReleaseState::Published { prerelease: false }),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("at least one"));
 }
 
 #[derive(Clone)]
@@ -406,6 +531,239 @@ fn github_missing_is_distinct_from_inaccessible_or_unknown_state() {
     ]);
     let client = GithubClient::new(&url, "test-token").unwrap();
     assert!(client.release_state("owner/project", "v1.2.3").is_err());
+    server.join().unwrap();
+}
+
+#[test]
+fn github_continues_an_existing_draft() {
+    let (url, server) = github_server(vec![
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project",
+            status: 200,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 200,
+            response: r#"{"id":7,"draft":true,"prerelease":false}"#,
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "PATCH",
+            path: "/repos/owner/project/releases/7",
+            status: 200,
+            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            body_contains: Some(r#""draft":false"#),
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project",
+            status: 200,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 200,
+            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            body_contains: None,
+        },
+    ]);
+    let publisher = GithubPublisher::new(
+        GithubClient::new(&url, "test-token").unwrap(),
+        "owner/project",
+    );
+
+    publisher
+        .publish(&release("0123456789012345678901234567890123456789".into()))
+        .unwrap();
+
+    server.join().unwrap();
+}
+
+#[test]
+fn github_reinspects_ambiguous_post_and_patch_failures() {
+    let (url, server) = github_server(vec![
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project",
+            status: 200,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 404,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "POST",
+            path: "/repos/owner/project/releases",
+            status: 500,
+            response: "{}",
+            body_contains: Some(r#""draft":true"#),
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project",
+            status: 200,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 200,
+            response: r#"{"id":7,"draft":true,"prerelease":false}"#,
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "PATCH",
+            path: "/repos/owner/project/releases/7",
+            status: 200,
+            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            body_contains: Some(r#""draft":false"#),
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project",
+            status: 200,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 200,
+            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            body_contains: None,
+        },
+    ]);
+    let publisher = GithubPublisher::new(
+        GithubClient::new(&url, "test-token").unwrap(),
+        "owner/project",
+    );
+    publisher
+        .publish(&release("0123456789012345678901234567890123456789".into()))
+        .unwrap();
+    server.join().unwrap();
+
+    let (url, server) = github_server(vec![
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project",
+            status: 200,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 200,
+            response: r#"{"id":7,"draft":true,"prerelease":false}"#,
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "PATCH",
+            path: "/repos/owner/project/releases/7",
+            status: 500,
+            response: "{}",
+            body_contains: Some(r#""draft":false"#),
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project",
+            status: 200,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 200,
+            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project",
+            status: 200,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 200,
+            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            body_contains: None,
+        },
+    ]);
+    let publisher = GithubPublisher::new(
+        GithubClient::new(&url, "test-token").unwrap(),
+        "owner/project",
+    );
+    publisher
+        .publish(&release("0123456789012345678901234567890123456789".into()))
+        .unwrap();
+    server.join().unwrap();
+}
+
+#[test]
+fn github_reinspection_rejects_a_still_draft_release() {
+    let (url, server) = github_server(vec![
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project",
+            status: 200,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 200,
+            response: r#"{"id":7,"draft":true,"prerelease":false}"#,
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "PATCH",
+            path: "/repos/owner/project/releases/7",
+            status: 500,
+            response: "{}",
+            body_contains: Some(r#""draft":false"#),
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project",
+            status: 200,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 200,
+            response: r#"{"id":7,"draft":true,"prerelease":false}"#,
+            body_contains: None,
+        },
+    ]);
+    let publisher = GithubPublisher::new(
+        GithubClient::new(&url, "test-token").unwrap(),
+        "owner/project",
+    );
+
+    let error = publisher
+        .publish(&release("0123456789012345678901234567890123456789".into()))
+        .unwrap_err();
+
+    assert!(error.to_string().contains("could not publish draft"));
     server.join().unwrap();
 }
 

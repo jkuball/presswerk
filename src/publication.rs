@@ -50,6 +50,12 @@ pub enum RemoteState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum RemoteTag {
+    Annotated(Oid),
+    Lightweight(Oid),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublisherState {
     Missing,
     Draft,
@@ -425,7 +431,7 @@ impl GitTagPublisher {
         }
     }
 
-    fn remote_target(&self, tag: &str) -> Result<Option<Oid>, PublicationError> {
+    fn remote_target(&self, tag: &str) -> Result<Option<RemoteTag>, PublicationError> {
         let reference = format!("refs/tags/{tag}");
         let peeled = format!("{reference}^{{}}");
         let output = Command::new("git")
@@ -475,13 +481,15 @@ impl GitTagPublisher {
                 )));
             }
         }
-        if dereferenced.is_some() && direct.is_none() {
-            return Err(PublicationError::new(format!(
+        match (direct, dereferenced) {
+            (None, None) => Ok(None),
+            (Some(direct), None) => Ok(Some(RemoteTag::Lightweight(direct))),
+            (Some(_), Some(commit)) => Ok(Some(RemoteTag::Annotated(commit))),
+            (None, Some(_)) => Err(PublicationError::new(format!(
                 "remote {:?} returned a peeled tag without {reference}",
                 self.remote
-            )));
+            ))),
         }
-        Ok(dereferenced.or(direct))
     }
 
     fn create_local_tag(&self, release: &Release) -> Result<(), PublicationError> {
@@ -566,9 +574,13 @@ impl TagPublisher for GitTagPublisher {
         })?;
         Ok(match self.remote_target(&release.tag)? {
             None => RemoteState::Missing,
-            Some(actual) if actual == expected => RemoteState::Matching,
-            Some(actual) => RemoteState::Conflicting(format!(
-                "Git tag {:?} on remote {:?} points to {actual}, expected {expected}",
+            Some(RemoteTag::Annotated(actual)) if actual == expected => RemoteState::Matching,
+            Some(RemoteTag::Annotated(actual)) => RemoteState::Conflicting(format!(
+                "annotated Git tag {:?} on remote {:?} points to {actual}, expected {expected}",
+                release.tag, self.remote
+            )),
+            Some(RemoteTag::Lightweight(actual)) => RemoteState::Conflicting(format!(
+                "Git tag {:?} on remote {:?} is lightweight and points to {actual}",
                 release.tag, self.remote
             )),
         })
@@ -683,7 +695,7 @@ pub fn publish_to_remote(
             commit,
             &declaration,
             &changelog,
-            &tag_publisher,
+            remote,
             analyzer,
         )?,
         RemoteState::Matching => {}
@@ -706,6 +718,11 @@ pub fn publish_ordered(
     release: &Release,
     publishers: &[Box<dyn Publisher>],
 ) -> Result<(), PublicationError> {
+    if publishers.is_empty() {
+        return Err(PublicationError::new(
+            "at least one GitHub Release publisher is required",
+        ));
+    }
     match tag_publisher.state(release)? {
         RemoteState::Missing | RemoteState::Matching => {}
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
@@ -804,7 +821,7 @@ fn validate_candidate(
     commit: Oid,
     declaration: &ReleaseDeclaration,
     changelog: &str,
-    tag_publisher: &GitTagPublisher,
+    remote: &str,
     analyzer: &dyn Analyzer,
 ) -> Result<(), PublicationError> {
     let repository = Repository::open(repository_path).map_err(|error| {
@@ -833,12 +850,12 @@ fn validate_candidate(
         None => Version::new(0, 0, 0),
     };
 
-    check_previous_release(
+    verify_predecessor(
         repository_path,
         commit,
         &parent_version,
         declaration,
-        tag_publisher,
+        remote,
     )?;
     let stable_base = stable_base(&repository, commit, declaration)?;
     let range = stable_base
@@ -860,25 +877,69 @@ fn validate_candidate(
     )
 }
 
-fn check_previous_release(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedPredecessor {
+    pub version: Version,
+    pub tag: String,
+    pub commit: Oid,
+}
+
+pub fn verify_predecessor(
     repository_path: &Path,
     candidate: Oid,
     previous_version: &Version,
-    declaration: &ReleaseDeclaration,
-    tag_publisher: &GitTagPublisher,
-) -> Result<(), PublicationError> {
+    current_declaration: &ReleaseDeclaration,
+    remote: &str,
+) -> Result<Option<VerifiedPredecessor>, PublicationError> {
+    let tag_publisher = GitTagPublisher::new(repository_path, remote);
+    verify_predecessor_with(
+        repository_path,
+        candidate,
+        previous_version,
+        current_declaration,
+        &tag_publisher,
+        |commit| {
+            evaluate_release_declaration(repository_path, &commit.to_string())
+                .map(|evaluated| evaluated.declaration)
+                .map_err(|error| PublicationError::new(error.to_string()))
+        },
+        |publisher, tag, _version| {
+            GithubClient::from_environment(&publisher.token.secret)?
+                .release_state(&publisher.repository, tag)
+        },
+    )
+}
+
+pub fn verify_predecessor_with<E, F>(
+    repository_path: &Path,
+    candidate: Oid,
+    previous_version: &Version,
+    current_declaration: &ReleaseDeclaration,
+    tag_publisher: &dyn TagPublisher,
+    mut evaluate_declaration: E,
+    mut release_state: F,
+) -> Result<Option<VerifiedPredecessor>, PublicationError>
+where
+    E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
+    F: FnMut(
+        &GithubReleaseDeclaration,
+        &str,
+        &Version,
+    ) -> Result<GithubReleaseState, PublicationError>,
+{
+    require_github_publishers(current_declaration)?;
     let repository = Repository::open(repository_path).map_err(|error| {
         PublicationError::new(format!("could not open Git repository: {error}"))
     })?;
-    let previous_tag = declaration
+    let previous_tag = current_declaration
         .tag
         .render(previous_version)
         .map_err(|error| PublicationError::new(error.to_string()))?;
     let Some(previous_commit) = local_tagged_commit(&repository, &previous_tag)? else {
         if *previous_version == Version::new(0, 0, 0)
-            && !has_release_tags(&repository, &declaration.tag)?
+            && !has_release_tags(&repository, &current_declaration.tag)?
         {
-            return Ok(());
+            return Ok(None);
         }
         return Err(PublicationError::new(format!(
             "previous release tag {previous_tag:?} is missing"
@@ -898,6 +959,24 @@ fn check_previous_release(
         )));
     }
 
+    let previous_declaration = evaluate_declaration(previous_commit)?;
+    require_github_publishers(&previous_declaration)?;
+    if previous_declaration.version != *previous_version {
+        return Err(PublicationError::new(format!(
+            "previous release tag {previous_tag:?} contains version {}, expected {previous_version}",
+            previous_declaration.version
+        )));
+    }
+    let declared_tag = previous_declaration
+        .tag
+        .render(previous_version)
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+    if declared_tag != previous_tag {
+        return Err(PublicationError::new(format!(
+            "previous release at {previous_commit} declares tag {declared_tag:?}, expected {previous_tag:?}"
+        )));
+    }
+
     let previous = Release {
         commit: previous_commit.to_string(),
         version: previous_version.clone(),
@@ -914,14 +993,9 @@ fn check_previous_release(
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     }
 
-    let previous_declaration =
-        evaluate_release_declaration(repository_path, &previous_commit.to_string())
-            .map_err(|error| PublicationError::new(error.to_string()))?
-            .declaration;
     let expected_prerelease = !previous_version.pre.is_empty();
     for publisher in previous_declaration.publishers.github_release.values() {
-        let client = GithubClient::from_environment(&publisher.token.secret)?;
-        match client.release_state(&publisher.repository, &previous_tag)? {
+        match release_state(publisher, &previous_tag, previous_version)? {
             GithubReleaseState::Published { prerelease } if prerelease == expected_prerelease => {}
             state => {
                 return Err(PublicationError::new(format!(
@@ -930,6 +1004,19 @@ fn check_previous_release(
                 )));
             }
         }
+    }
+    Ok(Some(VerifiedPredecessor {
+        version: previous_version.clone(),
+        tag: previous_tag,
+        commit: previous_commit,
+    }))
+}
+
+fn require_github_publishers(declaration: &ReleaseDeclaration) -> Result<(), PublicationError> {
+    if declaration.publishers.github_release.is_empty() {
+        return Err(PublicationError::new(
+            "at least one GitHub Release publisher is required",
+        ));
     }
     Ok(())
 }

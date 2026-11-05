@@ -52,6 +52,11 @@ impl ReleaseDeclaration {
         self.tag.validate()?;
         validate_relative_path(&self.changelog.path)?;
 
+        if self.publishers.github_release.is_empty() {
+            return Err(DeclarationError::Invalid(
+                "at least one GitHub Release publisher is required".into(),
+            ));
+        }
         for (name, publisher) in &self.publishers.github_release {
             if name.is_empty() {
                 return Err(DeclarationError::Invalid(
@@ -346,6 +351,20 @@ mod tests {
             error,
             DeclarationError::UnsupportedSchemaVersion(2)
         ));
+    }
+
+    #[test]
+    fn requires_a_github_release_publisher() {
+        let empty = DECLARATION.replace(
+            "                \"default\": {\n                    \"repository\": \"jkuball/presswerk\",\n                    \"token\": { \"secret\": \"GITHUB_TOKEN\" }\n                }",
+            "",
+        );
+        assert!(
+            ReleaseDeclaration::from_json(&empty)
+                .unwrap_err()
+                .to_string()
+                .contains("at least one")
+        );
     }
 
     #[test]
