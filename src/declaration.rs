@@ -53,6 +53,7 @@ impl ReleaseDeclaration {
         self.tag.validate()?;
         validate_relative_path(&self.changelog.path)?;
 
+        // M1 only supports GitHub Releases, so every release needs one.
         if self.publishers.github_release.is_empty() {
             return Err(DeclarationError::Invalid(
                 "at least one GitHub Release publisher is required".into(),
