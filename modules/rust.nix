@@ -20,11 +20,12 @@
         nix-flake-c.dev
       ];
       nixBindingsEnvironment = {
-        LIBCLANG_PATH = lib.makeLibraryPath [ pkgs.llvmPackages.clang-unwrapped ];
-        BINDGEN_EXTRA_CLANG_ARGS = "-x c++ -std=c++2a";
         PKG_CONFIG_PATH = lib.makeSearchPath "lib/pkgconfig" ([ pkgs.boehmgc.dev ] ++ nixLibraries);
         LIBRARY_PATH = lib.makeLibraryPath ([ pkgs.boehmgc ] ++ nixLibraries);
       };
+      configureBindgen = ''
+        export BINDGEN_EXTRA_CLANG_ARGS="''${BINDGEN_EXTRA_CLANG_ARGS:-}${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin " -isysroot ${pkgs.apple-sdk.sdkroot}"} -x c++ -std=c++2a"
+      '';
     in
     {
       rust-project = {
@@ -37,8 +38,9 @@
 
         crates.presswerk.crane.args = nixBindingsEnvironment // {
           meta.mainProgram = "presswerk";
-          nativeBuildInputs = with pkgs; [ pkg-config makeWrapper gitMinimal ];
+          nativeBuildInputs = with pkgs; [ rustPlatform.bindgenHook pkg-config makeWrapper gitMinimal ];
           buildInputs = [ pkgs.boehmgc ] ++ nixLibraries;
+          postConfigure = configureBindgen;
           preCheck = ''
             export XDG_CACHE_HOME="$TMPDIR/cache"
           '';
@@ -50,6 +52,11 @@
       devshells.default = {
         packages = [ pkgs.pkg-config pkgs.boehmgc ] ++ nixLibraries;
         env = lib.mapAttrsToList (name: value: { inherit name value; }) nixBindingsEnvironment;
+        devshell.startup.configure-bindgen.text = ''
+          source ${pkgs.rustPlatform.bindgenHook}/nix-support/setup-hook
+          populateBindgenEnv
+          ${configureBindgen}
+        '';
       };
 
       checks.presswerk-test = config.rust-project.crane-lib.cargoTest (
