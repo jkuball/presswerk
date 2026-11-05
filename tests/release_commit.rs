@@ -49,7 +49,7 @@ fn creates_a_bookmark_commit_from_the_parent_tree_without_using_the_index() {
     );
     assert_eq!(
         repository.git(["show", "--format=%s", "--no-patch", &release.to_string()]),
-        "🔖 Prepare release 0.1.0"
+        "🔖 Release v0.1.0"
     );
     assert_eq!(
         repository.git(["rev-parse", &format!("{release}^")]),

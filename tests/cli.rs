@@ -180,7 +180,7 @@ fn plan_reads_head_and_prepare_creates_the_first_release_commit() {
         "{}",
         String::from_utf8_lossy(&prepared.stderr)
     );
-    assert!(String::from_utf8_lossy(&prepared.stdout).contains("Prepare release 0.1.0"));
+    assert!(String::from_utf8_lossy(&prepared.stdout).contains("Release v0.1.0"));
     let release = repository.head();
     assert!(
         repository
