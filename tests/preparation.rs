@@ -165,6 +165,38 @@ fn plans_the_first_release_from_the_implicit_zero_baseline() {
 }
 
 #[test]
+fn replans_the_first_release_after_reverting_a_failed_candidate() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("🎉 Begin project");
+    repository.write("feature", "implemented\n");
+    let feature = repository.commit("✨ Add the first feature");
+    write_version(&repository, "0.1.0");
+    repository.write("CHANGELOG.md", "## [0.1.0]\n");
+    let candidate = repository.commit("🔖 Release v0.1.0");
+    repository.git(["revert", "--no-edit", &candidate]);
+    repository.write("fix", "fixed\n");
+    let fix = repository.commit("🐛 Fix the failed candidate");
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated(&repository, "0.0.0"),
+        &GitCliffAnalyzer,
+        "2026-11-06",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+
+    assert_eq!(plan.previous_release, None);
+    assert_eq!(plan.next_version, Some(Version::new(0, 1, 0)));
+    assert_eq!(plan.analysis.commits.len(), 3);
+    assert_eq!(plan.analysis.commits[0].id, fix);
+    assert_eq!(plan.analysis.commits[1].id, feature);
+    assert!(!plan.notes.contains("Revert"));
+    assert!(!plan.notes.contains("⏪"));
+}
+
+#[test]
 fn exits_without_a_commit_when_the_full_range_is_not_release_worthy() {
     let repository = GitRepo::new();
     write_version(&repository, "0.1.0");

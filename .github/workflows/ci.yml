@@ -37,6 +37,25 @@ jobs:
       - name: Check flake
         run: nix flake check --build-all --print-build-logs
 
+      - name: Plan release
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          presswerk=$(nix build --no-link --print-out-paths .#presswerk)/bin/presswerk
+          plan="$RUNNER_TEMP/presswerk-plan.txt"
+          status=0
+          "$presswerk" plan > "$plan" 2>&1 || status=$?
+          cat "$plan"
+          {
+            echo '## Release plan'
+            echo
+            echo '```text'
+            cat "$plan"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
       - name: Prepare release
         if: github.event_name == 'push'
         env:
