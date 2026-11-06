@@ -79,7 +79,8 @@ private repository inside an organization, it has failed. Concretely, this means
   alongside personal tokens;
 - no calls to services the consumer did not configure; telemetry is opt-in and exported only
   to endpoints the consumer chose (see [observability](observability.md));
-- the license must allow unrestricted use in proprietary projects.
+- the license must allow unrestricted use in proprietary projects. Presswerk is therefore
+  dual-licensed under MIT or Apache-2.0, at the user's option.
 
 ## Goals
 
