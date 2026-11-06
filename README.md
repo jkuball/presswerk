@@ -13,5 +13,6 @@ repositories alike.
 The name means *pressing plant*: one immutable master record, the flake at an exact commit, is
 pressed into every published release. See the [glossary](docs/conception/glossary.md).
 
-The project is currently at the conception stage. There is no implementation or stable
-interface yet. Start with the [documentation index](docs/conception/README.md).
+The project is currently under active development and has no stable interface yet. Start with
+the [documentation index](docs/conception/README.md). Presswerk releases itself from `main` after
+CI passes; see [release recovery](docs/release-recovery.md) for the manual failure paths.
