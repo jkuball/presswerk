@@ -204,5 +204,8 @@ fn version_flag_prints_cargo_version() {
     let output = presswerk(&["--version"]);
 
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "presswerk 0.0.0\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("presswerk {}\n", env!("CARGO_PKG_VERSION"))
+    );
 }
