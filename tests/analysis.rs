@@ -1,6 +1,8 @@
 mod support;
 
-use presswerk::analysis::{Analysis, AnalysisError, Analyzer, Bump, CommitRange, GitCliffAnalyzer};
+use presswerk::analysis::{
+    Analysis, AnalysisError, Analyzer, Bump, CommitRange, GitCliffAnalyzer, render_release_notes,
+};
 use support::GitRepo;
 
 fn commit(repository: &GitRepo, sequence: usize, subject: &str) -> String {
@@ -240,7 +242,7 @@ fn reverts_of_released_commits_become_revert_entries() {
     assert_eq!(analysis.commits.len(), 1);
     let entry = &analysis.commits[0];
     assert_eq!(entry.id, reverted);
-    assert_eq!(entry.subject, "Revert \"✨ Add feature\"");
+    assert_eq!(entry.subject, "⏪️ Revert \"✨ Add feature\"");
     assert_eq!(entry.message, "Revert \"✨ Add feature\"");
     assert_eq!(entry.gitmoji.emoji, "⏪️");
     assert_eq!(entry.gitmoji.shortcode, ":rewind:");
@@ -403,5 +405,68 @@ fn reverting_merges_against_other_mainlines_fails() {
     assert!(
         error.to_string().contains("not its first parent"),
         "{error}"
+    );
+}
+
+#[test]
+fn gitmoji_reverts_of_released_commits_become_revert_entries() {
+    let repository = GitRepo::new();
+    let feature = commit_file(&repository, "feature", "✨ Add feature");
+    let release = commit_file(&repository, "release", "🔖 Release v0.1.0");
+    repository.write("feature", "removed\n");
+    let reverted = repository.commit(&format!(
+        "💥 Remove the feature again\n\nThis reverts commit {feature}."
+    ));
+
+    let analysis = analyze(&repository, Some(&release)).unwrap();
+
+    assert_eq!(analysis.bump, Some(Bump::Patch));
+    assert_eq!(analysis.commits.len(), 1);
+    let entry = &analysis.commits[0];
+    assert_eq!(entry.id, reverted);
+    assert_eq!(entry.subject, "⏪️ 💥 Remove the feature again");
+    assert_eq!(entry.message, "💥 Remove the feature again");
+    assert_eq!(entry.gitmoji.shortcode, ":rewind:");
+    assert_eq!(
+        render_release_notes(&analysis).unwrap(),
+        "### ⏪️ Revert changes\n\n- ⏪️ 💥 Remove the feature again\n"
+    );
+}
+
+#[test]
+fn only_the_first_body_line_identifies_a_revert() {
+    let repository = GitRepo::new();
+    let root = commit_file(&repository, "root", "🎉 Begin project");
+    let feature = commit_file(&repository, "feature", "✨ Add feature");
+    repository.write("squashed", "squashed\n");
+    let squashed = repository.commit(&format!(
+        "🐛 Fix several things (#1)\n\n* 🐛 Fix one thing\n\n* Revert \"✨ Add feature\"\n\nThis reverts commit {feature}."
+    ));
+
+    let analysis = analyze(&repository, Some(&root)).unwrap();
+
+    assert_eq!(ids(&analysis), [squashed.as_str(), feature.as_str()]);
+}
+
+#[test]
+fn released_merges_reverted_against_any_mainline_become_revert_entries() {
+    let repository = GitRepo::new();
+    let main = repository.git(["branch", "--show-current"]);
+    commit_file(&repository, "root", "🎉 Begin project");
+    repository.git(["checkout", "--quiet", "-b", "feature"]);
+    commit_file(&repository, "feature", "✨ Add feature");
+    repository.git(["checkout", "--quiet", &main]);
+    commit_file(&repository, "main", "📝 Document main");
+    let merged = merge(&repository, &["feature"], "🔀 Merge feature");
+    let release = commit_file(&repository, "release", "🔖 Release v0.1.0");
+    let reverted = revert(&repository, &["-m", "2", &merged]);
+
+    let analysis = analyze(&repository, Some(&release)).unwrap();
+
+    assert_eq!(ids(&analysis), [reverted.as_str()]);
+    assert_eq!(analysis.commits[0].gitmoji.shortcode, ":rewind:");
+    assert_eq!(
+        analysis.commits[0].subject,
+        "⏪️ Revert \"🔀 Merge feature\""
     );
 }

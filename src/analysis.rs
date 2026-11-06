@@ -204,7 +204,7 @@ impl Analyzer for GitCliffAnalyzer {
                 continue;
             };
 
-            let target = resolve_reverted_commit(&git, commit.id(), reverted)?;
+            let target = resolve_commit_id(&git, commit.id(), reverted.commit)?;
             if !in_range.contains(&target.id()) {
                 analyzed.push(reverted_outside_range(commit.id(), subject));
                 continue;
@@ -215,6 +215,9 @@ impl Analyzer for GitCliffAnalyzer {
                     commit.id(),
                     target.id()
                 )));
+            }
+            if let Some(mainline) = reverted.mainline {
+                ensure_first_parent_mainline(&git, commit.id(), &target, mainline)?;
             }
             suppressed.extend(introduced_commits(&git, &target)?.intersection(&in_range));
         }
@@ -237,27 +240,25 @@ fn analyzed_commit(id: Oid, subject: &str) -> Option<AnalyzedCommit> {
     })
 }
 
-/// Records a revert whose target was released earlier, keeping an explicit Gitmoji intention
-/// and otherwise filing the generated subject under the catalog's revert intention.
+/// Records a revert whose target was released earlier under the catalog's revert intention,
+/// keeping the revert's own subject as the message.
 fn reverted_outside_range(id: Oid, subject: &str) -> AnalyzedCommit {
-    analyzed_commit(id, subject).unwrap_or_else(|| {
-        let entry = GITMOJIS
-            .iter()
-            .find(|entry| entry.code == REWIND_SHORTCODE)
-            .expect("the Gitmoji catalog contains the revert intention");
-        AnalyzedCommit {
-            id: id.to_string(),
-            subject: subject.to_owned(),
-            gitmoji: Gitmoji {
-                emoji: entry.emoji.to_owned(),
-                shortcode: entry.code.to_owned(),
-                description: entry.description.to_owned(),
-                bump: entry.semver,
-            },
-            scope: None,
-            message: subject.to_owned(),
-        }
-    })
+    let entry = GITMOJIS
+        .iter()
+        .find(|entry| entry.code == REWIND_SHORTCODE)
+        .expect("the Gitmoji catalog contains the revert intention");
+    AnalyzedCommit {
+        id: id.to_string(),
+        subject: format!("{} {subject}", entry.emoji),
+        gitmoji: Gitmoji {
+            emoji: entry.emoji.to_owned(),
+            shortcode: entry.code.to_owned(),
+            description: entry.description.to_owned(),
+            bump: entry.semver,
+        },
+        scope: None,
+        message: subject.to_owned(),
+    }
 }
 
 /// The commit a standard `git revert` message body names, as written.
@@ -268,8 +269,12 @@ struct RevertedCommit<'a> {
 }
 
 fn reverted_commit(message: &str) -> Option<RevertedCommit<'_>> {
-    let mut lines = message.lines().skip(1);
-    let rest = lines.find_map(|line| line.strip_prefix(REVERT_PREFIX))?;
+    // Only the body's first line identifies a revert; later lines may quote other messages.
+    let mut lines = message
+        .lines()
+        .skip(1)
+        .skip_while(|line| line.trim().is_empty());
+    let rest = lines.next()?.strip_prefix(REVERT_PREFIX)?;
     let commit = leading_token(rest);
     let mainline = rest[commit.len()..]
         .starts_with(", reversing")
@@ -290,23 +295,22 @@ fn leading_token(text: &str) -> &str {
     &text[..end]
 }
 
-fn resolve_reverted_commit<'repo>(
-    repository: &'repo GitRepository,
+/// The first-parent formula for merged commits only holds for reverts against the first parent.
+fn ensure_first_parent_mainline(
+    repository: &GitRepository,
     revert: Oid,
-    reverted: RevertedCommit<'_>,
-) -> Result<git2::Commit<'repo>, AnalysisError> {
-    let target = resolve_commit_id(repository, revert, reverted.commit)?;
-    if let Some(mainline) = reverted.mainline {
-        let mainline = resolve_commit_id(repository, revert, mainline)?;
-        if target.parent_count() < 2 || target.parent_id(0).ok() != Some(mainline.id()) {
-            return Err(AnalysisError::new(format!(
-                "revert {revert} reverts merge {} relative to {}, which is not its first parent",
-                target.id(),
-                mainline.id()
-            )));
-        }
+    target: &git2::Commit<'_>,
+    mainline: &str,
+) -> Result<(), AnalysisError> {
+    let mainline = resolve_commit_id(repository, revert, mainline)?;
+    if target.parent_count() < 2 || target.parent_id(0).ok() != Some(mainline.id()) {
+        return Err(AnalysisError::new(format!(
+            "revert {revert} reverts merge {} relative to {}, which is not its first parent",
+            target.id(),
+            mainline.id()
+        )));
     }
-    Ok(target)
+    Ok(())
 }
 
 fn resolve_commit_id<'repo>(
