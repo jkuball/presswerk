@@ -5,8 +5,6 @@ relevant document and remove it from this list.
 
 ## Product
 
-- the license, which must allow unrestricted use in proprietary projects (see
-  [overview](overview.md#target-users));
 - whether Presswerk ships a reusable GitHub Action;
 - branding: logo, color scheme, tagline, and whatever else the documentation and website need.
   Must be decided before `1.0.0`.
