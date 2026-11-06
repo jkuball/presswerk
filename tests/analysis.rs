@@ -470,3 +470,36 @@ fn released_merges_reverted_against_any_mainline_become_revert_entries() {
         "⏪️ Revert \"🔀 Merge feature\""
     );
 }
+
+#[test]
+fn reverting_merges_without_a_valid_mainline_fails() {
+    for (mainline, expected) in [
+        (None, "without recording its mainline parent"),
+        (Some("not-a-commit"), "malformed commit ID"),
+        (
+            Some("0123456789abcdef0123456789abcdef01234567"),
+            "does not resolve to exactly one commit",
+        ),
+    ] {
+        let repository = GitRepo::new();
+        let main = repository.git(["branch", "--show-current"]);
+        let root = commit_file(&repository, "root", "🎉 Begin project");
+        repository.git(["checkout", "--quiet", "-b", "feature"]);
+        commit_file(&repository, "feature", "✨ Add feature");
+        repository.git(["checkout", "--quiet", &main]);
+        commit_file(&repository, "main", "📝 Document main");
+        let merged = merge(&repository, &["feature"], "🔀 Merge feature");
+        repository.write("feature", "removed\n");
+        let body = match mainline {
+            Some(mainline) => {
+                format!("This reverts commit {merged}, reversing\nchanges made to {mainline}.")
+            }
+            None => format!("This reverts commit {merged}."),
+        };
+        repository.commit(&format!("Revert \"🔀 Merge feature\"\n\n{body}"));
+
+        let error = analyze(&repository, Some(&root)).unwrap_err();
+
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}

@@ -216,8 +216,8 @@ impl Analyzer for GitCliffAnalyzer {
                     target.id()
                 )));
             }
-            if let Some(mainline) = reverted.mainline {
-                ensure_first_parent_mainline(&git, commit.id(), &target, mainline)?;
+            if target.parent_count() > 1 || reverted.mainline.is_some() {
+                ensure_first_parent_mainline(&git, commit.id(), &target, reverted.mainline)?;
             }
             suppressed.extend(introduced_commits(&git, &target)?.intersection(&in_range));
         }
@@ -295,13 +295,20 @@ fn leading_token(text: &str) -> &str {
     &text[..end]
 }
 
-/// The first-parent formula for merged commits only holds for reverts against the first parent.
+/// The first-parent formula for merged commits only holds for reverts that record the first
+/// parent as their mainline.
 fn ensure_first_parent_mainline(
     repository: &GitRepository,
     revert: Oid,
     target: &git2::Commit<'_>,
-    mainline: &str,
+    mainline: Option<&str>,
 ) -> Result<(), AnalysisError> {
+    let Some(mainline) = mainline else {
+        return Err(AnalysisError::new(format!(
+            "revert {revert} reverts merge {} without recording its mainline parent",
+            target.id()
+        )));
+    };
     let mainline = resolve_commit_id(repository, revert, mainline)?;
     if target.parent_count() < 2 || target.parent_id(0).ok() != Some(mainline.id()) {
         return Err(AnalysisError::new(format!(
