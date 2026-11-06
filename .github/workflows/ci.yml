@@ -28,14 +28,19 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.candidate || github.sha }}
 
-      - uses: DeterminateSystems/nix-installer-action@v23
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - uses: cachix/cachix-action@v17
         with:
-          use-gha-cache: true
-          use-flakehub: false
+          name: jkuball
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true
 
-      - name: Check flake
-        run: nix flake check --build-all --print-build-logs
+      - name: Build flake
+        run: >
+          nix run --inputs-from . nixpkgs#nix-fast-build --
+          --flake ".#" --select 'flake: { inherit (flake) packages checks; }'
+          --no-nom --skip-cached --push-build-closure
+          ${{ secrets.CACHIX_AUTH_TOKEN != '' && '--cachix-cache jkuball' || '' }}
 
       - name: Plan release
         if: github.event_name == 'pull_request'
