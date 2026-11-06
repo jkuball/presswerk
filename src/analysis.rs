@@ -1,15 +1,21 @@
 use git_cliff_core::repo::Repository as GitCliffRepository;
-use git2::Repository as GitRepository;
+use git2::{Oid, Repository as GitRepository};
 use minijinja::{Environment, context, value::Serde};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::fmt;
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_NOTES_TEMPLATE: &str = include_str!("release-notes.md.j2");
 const BOOKMARK_SHORTCODE: &str = ":bookmark:";
+const REWIND_SHORTCODE: &str = ":rewind:";
+const REVERT_PREFIX: &str = "This reverts commit ";
+const MAINLINE_PREFIX: &str = "changes made to ";
+// Git's shortest abbreviation up to a full SHA-256 object ID.
+const COMMIT_ID_LENGTHS: RangeInclusive<usize> = 4..=64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -166,28 +172,186 @@ impl Analyzer for GitCliffAnalyzer {
             .map_err(|error| {
                 AnalysisError::new(format!("failed to read commit range {revision:?}: {error}"))
             })?;
+        let git = GitRepository::open(&range.repository).map_err(|error| {
+            AnalysisError::new(format!(
+                "failed to open Git repository {}: {error}",
+                range.repository.display()
+            ))
+        })?;
 
-        let commits = commits
-            .iter()
-            .filter_map(|commit| {
-                let commit = git_cliff_core::commit::Commit::from(commit);
-                let subject = commit.message.lines().next()?.trim_end();
-                let parsed = parse_gitmoji_subject(subject)?;
-                if parsed.gitmoji.shortcode == BOOKMARK_SHORTCODE {
-                    return None;
+        let in_range: HashSet<Oid> = commits.iter().map(git2::Commit::id).collect();
+        let mut visited = HashSet::new();
+        let mut suppressed = HashSet::<Oid>::new();
+        let mut analyzed = Vec::new();
+
+        // Topological order visits every commit before its parents, so a revert is always
+        // decided before the commits it reverts.
+        for commit in &commits {
+            visited.insert(commit.id());
+            if suppressed.contains(&commit.id()) || commit.parent_count() > 1 {
+                continue;
+            }
+
+            let message = commit.message().unwrap_or_default();
+            let Some(subject) = message.lines().next().map(str::trim_end) else {
+                continue;
+            };
+
+            let Some(reverted) = reverted_commit(message) else {
+                if let Some(entry) = analyzed_commit(commit.id(), subject) {
+                    analyzed.push(entry);
                 }
-                Some(AnalyzedCommit {
-                    id: commit.id,
-                    subject: subject.to_owned(),
-                    gitmoji: parsed.gitmoji,
-                    scope: parsed.scope,
-                    message: parsed.message,
-                })
-            })
-            .collect();
+                continue;
+            };
 
-        Ok(Analysis::from_commits(commits))
+            let target = resolve_reverted_commit(&git, commit.id(), reverted)?;
+            if !in_range.contains(&target.id()) {
+                analyzed.push(reverted_outside_range(commit.id(), subject));
+                continue;
+            }
+            if visited.contains(&target.id()) {
+                return Err(AnalysisError::new(format!(
+                    "revert {} targets commit {} which is not one of its ancestors",
+                    commit.id(),
+                    target.id()
+                )));
+            }
+            suppressed.extend(introduced_commits(&git, &target)?.intersection(&in_range));
+        }
+
+        Ok(Analysis::from_commits(analyzed))
     }
+}
+
+fn analyzed_commit(id: Oid, subject: &str) -> Option<AnalyzedCommit> {
+    let parsed = parse_gitmoji_subject(subject)?;
+    if parsed.gitmoji.shortcode == BOOKMARK_SHORTCODE {
+        return None;
+    }
+    Some(AnalyzedCommit {
+        id: id.to_string(),
+        subject: subject.to_owned(),
+        gitmoji: parsed.gitmoji,
+        scope: parsed.scope,
+        message: parsed.message,
+    })
+}
+
+/// Records a revert whose target was released earlier, keeping an explicit Gitmoji intention
+/// and otherwise filing the generated subject under the catalog's revert intention.
+fn reverted_outside_range(id: Oid, subject: &str) -> AnalyzedCommit {
+    analyzed_commit(id, subject).unwrap_or_else(|| {
+        let entry = GITMOJIS
+            .iter()
+            .find(|entry| entry.code == REWIND_SHORTCODE)
+            .expect("the Gitmoji catalog contains the revert intention");
+        AnalyzedCommit {
+            id: id.to_string(),
+            subject: subject.to_owned(),
+            gitmoji: Gitmoji {
+                emoji: entry.emoji.to_owned(),
+                shortcode: entry.code.to_owned(),
+                description: entry.description.to_owned(),
+                bump: entry.semver,
+            },
+            scope: None,
+            message: subject.to_owned(),
+        }
+    })
+}
+
+/// The commit a standard `git revert` message body names, as written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RevertedCommit<'a> {
+    commit: &'a str,
+    mainline: Option<&'a str>,
+}
+
+fn reverted_commit(message: &str) -> Option<RevertedCommit<'_>> {
+    let mut lines = message.lines().skip(1);
+    let rest = lines.find_map(|line| line.strip_prefix(REVERT_PREFIX))?;
+    let commit = leading_token(rest);
+    let mainline = rest[commit.len()..]
+        .starts_with(", reversing")
+        .then(|| {
+            lines
+                .next()?
+                .strip_prefix(MAINLINE_PREFIX)
+                .map(leading_token)
+        })
+        .flatten();
+    Some(RevertedCommit { commit, mainline })
+}
+
+fn leading_token(text: &str) -> &str {
+    let end = text
+        .find(|character: char| character.is_whitespace() || matches!(character, '.' | ','))
+        .unwrap_or(text.len());
+    &text[..end]
+}
+
+fn resolve_reverted_commit<'repo>(
+    repository: &'repo GitRepository,
+    revert: Oid,
+    reverted: RevertedCommit<'_>,
+) -> Result<git2::Commit<'repo>, AnalysisError> {
+    let target = resolve_commit_id(repository, revert, reverted.commit)?;
+    if let Some(mainline) = reverted.mainline {
+        let mainline = resolve_commit_id(repository, revert, mainline)?;
+        if target.parent_count() < 2 || target.parent_id(0).ok() != Some(mainline.id()) {
+            return Err(AnalysisError::new(format!(
+                "revert {revert} reverts merge {} relative to {}, which is not its first parent",
+                target.id(),
+                mainline.id()
+            )));
+        }
+    }
+    Ok(target)
+}
+
+fn resolve_commit_id<'repo>(
+    repository: &'repo GitRepository,
+    revert: Oid,
+    id: &str,
+) -> Result<git2::Commit<'repo>, AnalysisError> {
+    if !COMMIT_ID_LENGTHS.contains(&id.len())
+        || !id.chars().all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(AnalysisError::new(format!(
+            "revert {revert} names malformed commit ID {id:?}"
+        )));
+    }
+    repository.find_commit_by_prefix(id).map_err(|error| {
+        AnalysisError::new(format!(
+            "revert {revert} names commit {id:?}, which does not resolve to exactly one commit: {error}"
+        ))
+    })
+}
+
+/// The commits a reverted commit contributed: the commit itself, or for a merge every commit
+/// that its secondary parents introduced over its first parent.
+fn introduced_commits(
+    repository: &GitRepository,
+    commit: &git2::Commit<'_>,
+) -> Result<HashSet<Oid>, AnalysisError> {
+    if commit.parent_count() < 2 {
+        return Ok(HashSet::from([commit.id()]));
+    }
+
+    let walk = || -> Result<HashSet<Oid>, git2::Error> {
+        let mut revwalk = repository.revwalk()?;
+        for parent in commit.parent_ids().skip(1) {
+            revwalk.push(parent)?;
+        }
+        revwalk.hide(commit.parent_id(0)?)?;
+        revwalk.collect()
+    };
+    walk().map_err(|error| {
+        AnalysisError::new(format!(
+            "failed to read the commits merged by {}: {error}",
+            commit.id()
+        ))
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
