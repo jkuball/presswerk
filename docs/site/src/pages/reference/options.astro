@@ -99,7 +99,11 @@ options.sort((left, right) => left.option.name.localeCompare(right.option.name))
       section.hidden = !match;
       if (match) shown += 1;
     }
-    status!.value = terms.length ? `${shown} of ${sections.length} options` : '';
+    status!.value = !terms.length
+      ? ''
+      : shown
+        ? `${shown} of ${sections.length} options`
+        : 'No options match; clear the filter to show all.';
   }
 
   if (filter && input && status) {

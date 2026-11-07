@@ -31,9 +31,9 @@ publisher. For each publisher it looks up the release for the tag and acts on wh
 - **Draft:** it publishes the existing draft.
 - **Published:** the release is complete, and it is left as it is.
 
-Before anything is written, Presswerk checks the state of the tag and of every publisher. A
-release whose prerelease flag does not match the version is *conflicting*: Presswerk stops and
-never overwrites it. An existing release is otherwise never edited, only a draft is published.
+Before anything is written, Presswerk checks the state of the tag and of every publisher. A tag
+that is lightweight or points to another commit, or a release whose prerelease flag does not match the version, is
+*conflicting*: Presswerk stops and never overwrites it. An existing release is otherwise never edited, only a draft is published.
 
 So a retry of the same candidate completes missing state and keeps everything that already
 matches. After publishing, Presswerk reads every release back and fails unless it is published.
