@@ -158,3 +158,18 @@ nav.sidebar a[aria-current='page']:focus {
 .pw-graph .pele-commits {
   fill: var(--pw-ink);
 }
+
+/*
+ * On narrow screens Starlight moves the theme picker into the sidebar's mobile menu.
+ * Pages without a sidebar (the splash landing page) have no such menu, so keep the
+ * picker in the header there.
+ */
+@media (max-width: 49.99rem) {
+  :root:not([data-has-sidebar]) .header .right-group {
+    display: flex;
+  }
+  :root:not([data-has-sidebar]) .header .social-icons:empty,
+  :root:not([data-has-sidebar]) .header .social-icons:not(:has(a))::after {
+    display: none;
+  }
+}
