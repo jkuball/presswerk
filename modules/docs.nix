@@ -33,12 +33,14 @@
 
         buildPhase = ''
           runHook preBuild
-          pnpm build --outDir "$out"
+          pnpm build
           runHook postBuild
         '';
 
         installPhase = ''
           runHook preInstall
+          mkdir -p $out
+          cp -r dist/. $out/
           runHook postInstall
         '';
       });
