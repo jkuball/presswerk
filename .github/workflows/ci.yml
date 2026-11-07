@@ -11,9 +11,7 @@ on:
         required: false
         type: string
 
-permissions:
-  actions: write
-  contents: write
+permissions: {}
 
 concurrency:
   group: ${{ github.event_name == 'pull_request' && github.ref || 'presswerk-release' }}
@@ -21,26 +19,46 @@ concurrency:
 
 jobs:
   ci:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ inputs.candidate || github.sha }}
 
       - uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Detect Cachix push credentials
+        id: cachix
+        if: github.event_name != 'pull_request'
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          if test -n "$CACHIX_AUTH_TOKEN"; then
+            echo 'push=true' >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: cachix/cachix-action@v17
+        if: steps.cachix.outputs.push == 'true'
         with:
           name: jkuball
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
 
       - name: Build flake
-        run: >
-          nix run --inputs-from . nixpkgs#nix-fast-build --
-          --flake ".#" --select 'flake: { inherit (flake) packages checks; }'
-          --no-nom --skip-cached --push-build-closure
-          ${{ secrets.CACHIX_AUTH_TOKEN != '' && '--cachix-cache jkuball' || '' }}
+        env:
+          CACHIX_PUSH: ${{ steps.cachix.outputs.push == 'true' }}
+        run: |
+          cache_args=()
+          if test "$CACHIX_PUSH" = true; then
+            cache_args=(--push-build-closure --cachix-cache jkuball)
+          fi
+          nix run --inputs-from . nixpkgs#nix-fast-build -- \
+            --flake ".#" --select 'flake: { inherit (flake) packages checks; }' \
+            --no-nom --skip-cached "${cache_args[@]}"
 
       - name: Plan release
         if: github.event_name == 'pull_request'
@@ -61,8 +79,21 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
+  prepare-release:
+    if: github.event_name == 'push'
+    needs: ci
+    permissions:
+      actions: write
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: DeterminateSystems/determinate-nix-action@v3
+
       - name: Prepare release
-        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -86,8 +117,21 @@ jobs:
           git push origin HEAD:main
           gh workflow run ci.yml --ref main -f candidate="$candidate"
 
+  publish-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
+    needs: ci
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.candidate }}
+
+      - uses: DeterminateSystems/determinate-nix-action@v3
+
       - name: Publish release
-        if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
