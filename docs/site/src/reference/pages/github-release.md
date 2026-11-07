@@ -20,10 +20,11 @@ presswerk.lib.mkRelease {
 by default. The token never enters the declaration or the Nix store; Presswerk reads it at run
 time and stops if the variable is unset or empty.
 
-`presswerk publish` always needs the token. Once a previous release exists, `presswerk plan` and
-`presswerk prepare` need it too: they check that the previous release's GitHub Release is
-complete before planning the next one. Only the very first release can be planned and prepared
-without it. In GitHub Actions, the token needs the `contents: write` permission to publish.
+`presswerk publish` needs the token whenever it publishes or retries a release commit. On an
+ordinary commit it exits with "Nothing to do." before reading it. Once a previous release exists,
+`presswerk plan` and `presswerk prepare` need it too: they check that the previous release's
+GitHub Release is complete before planning the next one. Only the very first release can be
+planned and prepared without it. In GitHub Actions, the token needs the `contents: write` permission to publish.
 
 ## Behavior
 
