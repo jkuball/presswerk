@@ -48,5 +48,5 @@ Presswerk is licensed under either the [MIT license](LICENSE-MIT) or the
 [Apache License 2.0](LICENSE-APACHE), at your option. Unless stated otherwise, contributions are
 licensed on the same terms.
 
-The vendored [Gitmoji catalog](src/gitmoji/README.md) is licensed under the MIT license by its
-upstream authors.
+The vendored [Gitmoji catalog](modules/release/gitmoji/README.md) is licensed under the MIT
+license by its upstream authors.
