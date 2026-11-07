@@ -1,8 +1,11 @@
 use crate::analysis::{Analysis, Analyzer, CommitRange, GitCliffAnalyzer};
 use crate::changelog::read_version_section;
 use crate::classification::{CommitClassification, classify_commit};
-use crate::declaration::{GithubReleasePublisher as GithubReleaseDeclaration, ReleaseDeclaration};
-use crate::evaluation::evaluate_release_declaration;
+use crate::declaration::{
+    DeclarationError, GithubReleasePublisher as GithubReleaseDeclaration, ReleaseDeclaration,
+};
+use crate::evaluation::{EvaluationError, evaluate_release_declaration};
+use crate::release_commit::TrustedPredecessor;
 use git2::{ErrorCode, ObjectType, Oid, Repository};
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -14,15 +17,48 @@ use std::process::Command;
 use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsupportedPredecessor {
+    pub tag: String,
+    pub commit: Oid,
+    pub schema_version: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicationError {
     message: String,
+    unsupported_predecessor: Option<UnsupportedPredecessor>,
 }
 
 impl PublicationError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            unsupported_predecessor: None,
         }
+    }
+
+    pub fn unsupported_predecessor(
+        tag: impl Into<String>,
+        commit: Oid,
+        schema_version: i64,
+    ) -> Self {
+        let tag = tag.into();
+        let message = format!(
+            "previous release tag {tag:?} at {commit} uses unsupported declaration schemaVersion {schema_version}; verify that release with its original Presswerk toolchain, then run `presswerk prepare --trust-predecessor {tag}={commit}`"
+        );
+        Self {
+            message,
+            unsupported_predecessor: Some(UnsupportedPredecessor {
+                tag,
+                commit,
+                schema_version,
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn as_unsupported_predecessor(&self) -> Option<&UnsupportedPredecessor> {
+        self.unsupported_predecessor.as_ref()
     }
 }
 
@@ -693,15 +729,21 @@ pub fn publish_to_remote(
     let tag_publisher = GitTagPublisher::new(repository_path, remote);
 
     match tag_publisher.state(&release)? {
-        RemoteState::Missing => validate_candidate(
-            repository_path,
-            commit,
-            &declaration,
-            &changelog,
-            remote,
-            analyzer,
-        )?,
-        RemoteState::Matching => {}
+        RemoteState::Missing => {
+            let parent_version =
+                verify_candidate_predecessor(repository_path, commit, &declaration, remote, true)?;
+            validate_candidate(
+                repository_path,
+                commit,
+                &declaration,
+                &parent_version,
+                &changelog,
+                analyzer,
+            )?;
+        }
+        RemoteState::Matching => {
+            verify_candidate_predecessor(repository_path, commit, &declaration, remote, false)?;
+        }
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     }
 
@@ -819,14 +861,13 @@ pub fn is_valid_successor(parent: &Version, candidate: &Version) -> bool {
             .is_some_and(|major| candidate_core == [major, 0, 0])
 }
 
-fn validate_candidate(
+fn verify_candidate_predecessor(
     repository_path: &Path,
     commit: Oid,
     declaration: &ReleaseDeclaration,
-    changelog: &str,
     remote: &str,
-    analyzer: &dyn Analyzer,
-) -> Result<(), PublicationError> {
+    verify_completion: bool,
+) -> Result<Version, PublicationError> {
     let repository = Repository::open(repository_path).map_err(|error| {
         PublicationError::new(format!(
             "could not open Git repository {}: {error}",
@@ -836,6 +877,12 @@ fn validate_candidate(
     let candidate = repository.find_commit(commit).map_err(|error| {
         PublicationError::new(format!("could not read release commit {commit}: {error}"))
     })?;
+    let trusted_predecessor = TrustedPredecessor::from_commit_message(
+        candidate
+            .message()
+            .map_err(|_| PublicationError::new("release commit message is not valid UTF-8"))?,
+    )
+    .map_err(|error| PublicationError::new(error.to_string()))?;
     let parent = if candidate.parent_count() == 0 {
         None
     } else {
@@ -852,14 +899,32 @@ fn validate_candidate(
         }
         None => Version::new(0, 0, 0),
     };
-
-    verify_predecessor(
+    verify_predecessor_with_trust_mode(
         repository_path,
         commit,
         &parent_version,
         declaration,
         remote,
+        trusted_predecessor.as_ref(),
+        verify_completion,
     )?;
+    Ok(parent_version)
+}
+
+fn validate_candidate(
+    repository_path: &Path,
+    commit: Oid,
+    declaration: &ReleaseDeclaration,
+    parent_version: &Version,
+    changelog: &str,
+    analyzer: &dyn Analyzer,
+) -> Result<(), PublicationError> {
+    let repository = Repository::open(repository_path).map_err(|error| {
+        PublicationError::new(format!(
+            "could not open Git repository {}: {error}",
+            repository_path.display()
+        ))
+    })?;
     let stable_base = stable_base(&repository, commit, declaration)?;
     let range = stable_base
         .as_ref()
@@ -867,13 +932,14 @@ fn validate_candidate(
             || CommitRange::initial(repository_path, commit.to_string()),
             |(_, base)| CommitRange::between(repository_path, base.to_string(), commit.to_string()),
         )
-        .map_err(|error| PublicationError::new(error.to_string()))?;
+        .map_err(|error| PublicationError::new(error.to_string()))?
+        .excluding(commit);
     let analysis = analyzer
         .analyze(&range, &declaration.analyzer.gitmoji.catalog)
         .map_err(|error| PublicationError::new(error.to_string()))?;
     validate_new_release(
         &declaration.version,
-        &parent_version,
+        parent_version,
         stable_base.as_ref().map(|(version, _)| version),
         &analysis,
         changelog,
@@ -894,13 +960,68 @@ pub fn verify_predecessor(
     current_declaration: &ReleaseDeclaration,
     remote: &str,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError> {
+    verify_predecessor_with_trust(
+        repository_path,
+        candidate,
+        previous_version,
+        current_declaration,
+        remote,
+        None,
+    )
+}
+
+pub fn verify_predecessor_with_trust(
+    repository_path: &Path,
+    candidate: Oid,
+    previous_version: &Version,
+    current_declaration: &ReleaseDeclaration,
+    remote: &str,
+    trusted_predecessor: Option<&TrustedPredecessor>,
+) -> Result<Option<VerifiedPredecessor>, PublicationError> {
+    verify_predecessor_with_trust_mode(
+        repository_path,
+        candidate,
+        previous_version,
+        current_declaration,
+        remote,
+        trusted_predecessor,
+        true,
+    )
+}
+
+fn verify_predecessor_with_trust_mode(
+    repository_path: &Path,
+    candidate: Oid,
+    previous_version: &Version,
+    current_declaration: &ReleaseDeclaration,
+    remote: &str,
+    trusted_predecessor: Option<&TrustedPredecessor>,
+    verify_completion: bool,
+) -> Result<Option<VerifiedPredecessor>, PublicationError> {
     let tag_publisher = GitTagPublisher::new(repository_path, remote);
-    verify_predecessor_with(
+    let previous_tag = current_declaration
+        .tag
+        .render(previous_version)
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+    verify_predecessor_with_mode(
         repository_path,
         candidate,
         previous_version,
         current_declaration,
         &tag_publisher,
+        trusted_predecessor,
+        verify_completion,
+        |commit| match evaluate_release_declaration(repository_path, &commit.to_string()) {
+            Ok(evaluated) => Ok(evaluated.declaration),
+            Err(EvaluationError::Declaration(DeclarationError::UnsupportedSchemaVersion(
+                schema_version,
+            ))) => Err(PublicationError::unsupported_predecessor(
+                previous_tag.clone(),
+                commit,
+                schema_version,
+            )),
+            Err(error) => Err(PublicationError::new(error.to_string())),
+        },
         |publisher, tag, _version| {
             GithubClient::from_environment(&publisher.api_url, &publisher.token.secret)?
                 .release_state(&publisher.repository, tag)
@@ -908,15 +1029,52 @@ pub fn verify_predecessor(
     )
 }
 
-pub fn verify_predecessor_with<F>(
+#[allow(clippy::too_many_arguments)]
+pub fn verify_predecessor_with<E, F>(
     repository_path: &Path,
     candidate: Oid,
     previous_version: &Version,
     current_declaration: &ReleaseDeclaration,
     tag_publisher: &dyn TagPublisher,
+    trusted_predecessor: Option<&TrustedPredecessor>,
+    evaluate_declaration: E,
+    release_state: F,
+) -> Result<Option<VerifiedPredecessor>, PublicationError>
+where
+    E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
+    F: FnMut(
+        &GithubReleaseDeclaration,
+        &str,
+        &Version,
+    ) -> Result<GithubReleaseState, PublicationError>,
+{
+    verify_predecessor_with_mode(
+        repository_path,
+        candidate,
+        previous_version,
+        current_declaration,
+        tag_publisher,
+        trusted_predecessor,
+        true,
+        evaluate_declaration,
+        release_state,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_predecessor_with_mode<E, F>(
+    repository_path: &Path,
+    candidate: Oid,
+    previous_version: &Version,
+    current_declaration: &ReleaseDeclaration,
+    tag_publisher: &dyn TagPublisher,
+    trusted_predecessor: Option<&TrustedPredecessor>,
+    verify_completion: bool,
+    mut evaluate_declaration: E,
     mut release_state: F,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError>
 where
+    E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
     F: FnMut(
         &GithubReleaseDeclaration,
         &str,
@@ -935,6 +1093,11 @@ where
         if *previous_version == Version::new(0, 0, 0)
             && !has_release_tags(&repository, &current_declaration.tag)?
         {
+            if trusted_predecessor.is_some() {
+                return Err(PublicationError::new(
+                    "--trust-predecessor is unnecessary for the first release",
+                ));
+            }
             return Ok(None);
         }
         return Err(PublicationError::new(format!(
@@ -955,25 +1118,74 @@ where
         )));
     }
 
-    let previous = Release {
-        commit: previous_commit.to_string(),
-        version: previous_version.clone(),
-        tag: previous_tag.clone(),
-        notes: String::new(),
-    };
-    match tag_publisher.state(&previous)? {
-        RemoteState::Matching => {}
-        RemoteState::Missing => {
-            return Err(PublicationError::new(format!(
-                "previous release tag {previous_tag:?} is missing from the remote"
-            )));
+    let previous_declaration = match evaluate_declaration(previous_commit) {
+        Ok(declaration) => {
+            if trusted_predecessor.is_some() {
+                return Err(PublicationError::new(format!(
+                    "trusted predecessor {previous_tag}={previous_commit} is unnecessary because its declaration schema is supported"
+                )));
+            }
+            declaration
         }
-        RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
+        Err(error) => {
+            let Some(unsupported) = error.as_unsupported_predecessor() else {
+                return Err(error);
+            };
+            if unsupported.tag != previous_tag || unsupported.commit != previous_commit {
+                return Err(error);
+            }
+            let Some(trusted) = trusted_predecessor else {
+                return Err(error);
+            };
+            if trusted.tag != previous_tag || trusted.commit != previous_commit {
+                return Err(PublicationError::new(format!(
+                    "trusted predecessor {}={} does not match expected unsupported predecessor {previous_tag}={previous_commit}",
+                    trusted.tag, trusted.commit
+                )));
+            }
+            return verified_remote_predecessor(
+                tag_publisher,
+                previous_version,
+                previous_tag,
+                previous_commit,
+            )
+            .map(Some);
+        }
+    };
+    require_github_publishers(&previous_declaration)?;
+    if previous_declaration.version != *previous_version {
+        return Err(PublicationError::new(format!(
+            "previous release tag {previous_tag:?} contains version {}, expected {previous_version}",
+            previous_declaration.version
+        )));
+    }
+    let declared_tag = previous_declaration
+        .tag
+        .render(previous_version)
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+    if declared_tag != previous_tag {
+        return Err(PublicationError::new(format!(
+            "previous release at {previous_commit} declares tag {declared_tag:?}, expected {previous_tag:?}"
+        )));
     }
 
-    // Historical declarations may use a pre-1.0 schema this CLI intentionally does not decode.
+    if !verify_completion {
+        return Ok(Some(VerifiedPredecessor {
+            version: previous_version.clone(),
+            tag: previous_tag,
+            commit: previous_commit,
+        }));
+    }
+
+    let verified = verified_remote_predecessor(
+        tag_publisher,
+        previous_version,
+        previous_tag.clone(),
+        previous_commit,
+    )?;
+
     let expected_prerelease = !previous_version.pre.is_empty();
-    for publisher in current_declaration.publishers.github_release.values() {
+    for publisher in previous_declaration.publishers.github_release.values() {
         match release_state(publisher, &previous_tag, previous_version)? {
             GithubReleaseState::Published { prerelease } if prerelease == expected_prerelease => {}
             state => {
@@ -984,11 +1196,32 @@ where
             }
         }
     }
-    Ok(Some(VerifiedPredecessor {
+    Ok(Some(verified))
+}
+
+fn verified_remote_predecessor(
+    tag_publisher: &dyn TagPublisher,
+    previous_version: &Version,
+    previous_tag: String,
+    previous_commit: Oid,
+) -> Result<VerifiedPredecessor, PublicationError> {
+    let previous = Release {
+        commit: previous_commit.to_string(),
         version: previous_version.clone(),
-        tag: previous_tag,
-        commit: previous_commit,
-    }))
+        tag: previous_tag.clone(),
+        notes: String::new(),
+    };
+    match tag_publisher.state(&previous)? {
+        RemoteState::Matching => Ok(VerifiedPredecessor {
+            version: previous_version.clone(),
+            tag: previous_tag,
+            commit: previous_commit,
+        }),
+        RemoteState::Missing => Err(PublicationError::new(format!(
+            "previous release tag {previous_tag:?} is missing from the remote"
+        ))),
+        RemoteState::Conflicting(message) => Err(PublicationError::new(message)),
+    }
 }
 
 fn require_github_publishers(declaration: &ReleaseDeclaration) -> Result<(), PublicationError> {

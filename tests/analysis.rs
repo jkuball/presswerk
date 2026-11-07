@@ -191,7 +191,25 @@ fn ids(analysis: &Analysis) -> Vec<&str> {
 }
 
 #[test]
-fn merges_contribute_their_branch_commits_but_not_themselves() {
+fn exclusion_skips_only_the_candidate_oid() {
+    let repository = GitRepo::new();
+    let root = commit_file(&repository, "root", "🎉 Begin project");
+    let bookmark = commit_file(&repository, "bookmark", "🔖 Mark an ordinary milestone");
+    let candidate = commit_file(&repository, "candidate", "🔖 Prepare release candidate");
+    let range = CommitRange::between(repository.path(), root, &candidate)
+        .unwrap()
+        .excluding(candidate.parse().unwrap());
+    let mut catalog = gitmoji_catalog();
+    catalog.get_mut("bookmark").unwrap().semver = Some(Bump::Patch);
+
+    let analysis = GitCliffAnalyzer.analyze(&range, &catalog).unwrap();
+
+    assert_eq!(analysis.bump, Some(Bump::Patch));
+    assert_eq!(ids(&analysis), [bookmark]);
+}
+
+#[test]
+fn excluding_a_merge_candidate_keeps_secondary_parent_commits() {
     let repository = GitRepo::new();
     let root = commit_file(&repository, "root", "🎉 Begin project");
     let main = repository.git(["branch", "--show-current"]);
@@ -212,7 +230,12 @@ fn merges_contribute_their_branch_commits_but_not_themselves() {
         3
     );
 
-    let analysis = analyze(&repository, Some(&root)).unwrap();
+    let range = CommitRange::between(repository.path(), root, &merged)
+        .unwrap()
+        .excluding(merged.parse().unwrap());
+    let analysis = GitCliffAnalyzer
+        .analyze(&range, &gitmoji_catalog())
+        .unwrap();
 
     assert_eq!(analysis.bump, Some(Bump::Minor));
     let mut analyzed = ids(&analysis);

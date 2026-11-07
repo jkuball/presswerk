@@ -264,7 +264,7 @@ fn refuses_pending_and_incomplete_previous_releases() {
 }
 
 #[test]
-fn uses_the_current_declaration_for_predecessor_release_state_checks() {
+fn uses_the_exact_predecessor_declaration_for_release_state_checks() {
     let repository = GitRepo::new();
     write_version(&repository, "0.1.0");
     repository.commit("🔖 Release v0.1.0");
@@ -280,6 +280,14 @@ fn uses_the_current_declaration_for_predecessor_release_state_checks() {
         .get_mut("default")
         .unwrap()
         .repository = "new/project".into();
+    let mut previous_declaration = declaration("0.1.0");
+    previous_declaration
+        .publishers
+        .github_release
+        .get_mut("default")
+        .unwrap()
+        .repository = "old/project".into();
+    let evaluated_commits = RefCell::new(Vec::new());
     let checked_repositories = RefCell::new(Vec::new());
     let tag = FakeTagPublisher(RemoteState::Matching);
 
@@ -295,6 +303,11 @@ fn uses_the_current_declaration_for_predecessor_release_state_checks() {
                 version,
                 declaration,
                 &tag,
+                None,
+                |commit| {
+                    evaluated_commits.borrow_mut().push(commit);
+                    Ok(previous_declaration.clone())
+                },
                 |publisher, _, _| {
                     checked_repositories
                         .borrow_mut()
@@ -309,7 +322,8 @@ fn uses_the_current_declaration_for_predecessor_release_state_checks() {
 
     assert_eq!(plan.commit.to_string(), candidate);
     assert_eq!(plan.previous_release, Some(previous.clone()));
-    assert_eq!(*checked_repositories.borrow(), ["new/project"]);
+    assert_eq!(*evaluated_commits.borrow(), [previous.commit]);
+    assert_eq!(*checked_repositories.borrow(), ["old/project"]);
 }
 
 #[test]
@@ -320,6 +334,8 @@ fn refuses_deleted_moved_and_lightweight_remote_predecessor_tags() {
     repository.annotated_tag("v0.1.0");
     repository.write("feature", "implemented\n");
     repository.commit("✨ Add a feature");
+    let previous_declaration = declaration("0.1.0");
+
     for (state, expected) in [
         (RemoteState::Missing, "missing from the remote"),
         (
@@ -344,6 +360,8 @@ fn refuses_deleted_moved_and_lightweight_remote_predecessor_tags() {
                     version,
                     declaration,
                     &tag,
+                    None,
+                    |_| Ok(previous_declaration.clone()),
                     |_, _, _| Ok(GithubReleaseState::Published { prerelease: false }),
                 )
                 .map_err(Into::into)

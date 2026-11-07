@@ -1,8 +1,8 @@
 use crate::analysis::{Analysis, Analyzer, CommitRange, render_release_notes};
 use crate::declaration::{ReleaseDeclaration, Tag, VersionFile};
 use crate::evaluation::{EvaluatedReleaseDeclaration, evaluate_release_declaration};
-use crate::publication::{VerifiedPredecessor, verify_predecessor};
-use crate::release_commit::{ReleaseFile, create_release_commit};
+use crate::publication::{VerifiedPredecessor, verify_predecessor_with_trust};
+use crate::release_commit::{ReleaseFile, TrustedPredecessor, create_release_commit};
 use crate::version::VersionFileWriter;
 use anyhow::{Context, Result, bail};
 use git2::{ErrorCode, ObjectType, Oid, Repository, StatusOptions};
@@ -28,31 +28,43 @@ pub struct ReleasePlan {
     pub version_files: Vec<VersionFileChange>,
     pub notes: String,
     release_files: Vec<ReleaseFile>,
+    trusted_predecessor: Option<TrustedPredecessor>,
 }
 
 pub fn build_head_release_plan(
     repository_path: impl AsRef<Path>,
     analyzer: &dyn Analyzer,
 ) -> Result<ReleasePlan> {
+    build_head_release_plan_with_trust(repository_path, analyzer, None)
+}
+
+pub fn build_head_release_plan_with_trust(
+    repository_path: impl AsRef<Path>,
+    analyzer: &dyn Analyzer,
+    trusted_predecessor: Option<TrustedPredecessor>,
+) -> Result<ReleasePlan> {
     let repository_path = repository_path.as_ref();
     let evaluated = evaluate_release_declaration(repository_path, "HEAD")?;
     let date = time::OffsetDateTime::now_utc().date().to_string();
-    build_release_plan(
+    let mut plan = build_release_plan(
         repository_path,
         evaluated,
         analyzer,
         &date,
         |candidate, previous_version, declaration| {
-            verify_predecessor(
+            verify_predecessor_with_trust(
                 repository_path,
                 candidate,
                 previous_version,
                 declaration,
                 "origin",
+                trusted_predecessor.as_ref(),
             )
             .map_err(Into::into)
         },
-    )
+    )?;
+    plan.trusted_predecessor = trusted_predecessor;
+    Ok(plan)
 }
 
 pub fn build_release_plan(
@@ -141,6 +153,7 @@ pub fn build_release_plan(
         version_files,
         notes,
         release_files,
+        trusted_predecessor: None,
     })
 }
 
@@ -173,6 +186,7 @@ pub fn prepare_release(plan: &ReleasePlan) -> Result<Option<Oid>> {
         plan.commit,
         version,
         &plan.release_files,
+        plan.trusted_predecessor.as_ref(),
     )
     .map(Some)
     .map_err(Into::into)

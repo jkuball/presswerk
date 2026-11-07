@@ -336,13 +336,15 @@ in
       expected = defaults;
     };
 
-    "test Presswerk self declaration matches schema and Cargo version" = {
+    "test Presswerk self release pins its schema while the current library stays on schema 2" = {
       expr = {
-        schemaVersion = self.presswerk.default.schemaVersion;
+        selfSchemaVersion = self.presswerk.default.schemaVersion;
+        currentSchemaVersion = defaults.schemaVersion;
         versionMatches = self.presswerk.default.version == presswerkVersion;
       };
       expected = {
-        schemaVersion = 2;
+        selfSchemaVersion = 1;
+        currentSchemaVersion = 2;
         versionMatches = true;
       };
     };
@@ -359,6 +361,7 @@ in
         import-tree
         nix-unit
         nixpkgs
+        presswerk-release
         rust-flake
         treefmt-nix
         ;

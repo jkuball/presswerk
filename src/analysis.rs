@@ -76,6 +76,7 @@ pub struct CommitRange {
     repository: PathBuf,
     base: Option<String>,
     target: String,
+    excluded: Option<Oid>,
 }
 
 impl CommitRange {
@@ -89,6 +90,7 @@ impl CommitRange {
             repository,
             base: None,
             target,
+            excluded: None,
         })
     }
 
@@ -104,7 +106,14 @@ impl CommitRange {
             repository,
             base: Some(base),
             target,
+            excluded: None,
         })
+    }
+
+    #[must_use]
+    pub fn excluding(mut self, commit: Oid) -> Self {
+        self.excluded = Some(commit);
+        self
     }
 
     #[must_use]
@@ -195,7 +204,10 @@ impl Analyzer for GitCliffAnalyzer {
         // decided before the commits it reverts.
         for commit in &commits {
             visited.insert(commit.id());
-            if suppressed.contains(&commit.id()) || commit.parent_count() > 1 {
+            if range.excluded == Some(commit.id())
+                || suppressed.contains(&commit.id())
+                || commit.parent_count() > 1
+            {
                 continue;
             }
 

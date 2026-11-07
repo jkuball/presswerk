@@ -217,8 +217,8 @@ lookup is:
    release is [pending](#pending-releases); a tag pointing elsewhere is a conflict;
 1. verify that the previous release is fully published. For the first milestone, its GitHub
    Release must exist and be published, not missing or a draft. A network or authentication
-   error must not be mistaken for a complete release. Before 1.0, the destinations come from
-   the current declaration so this check does not require decoding an older declaration schema;
+   error must not be mistaken for a complete release. The tag format and destinations come from
+   that tagged release's declaration, so a later publisher change cannot rewrite its identity;
 1. analyze the applicable commit range, such as `v1.3.0..HEAD`, using Git history. For the first
    release there is no physical tag, so the range includes the root commit.
 
@@ -398,10 +398,15 @@ commits come first; equal-sized groups are ordered by Gitmoji shortcode. Each en
 least the commit subject; whether the default also includes the body is an implementation
 choice. Commits without a Gitmoji are not included in those notes.
 
-Release commits use `🔖`. A range contains at most one release commit, its previous release's,
-on its boundary; it is never grouped as an ordinary `🔖` entry. A release commit cannot list
-itself either: its notes are rendered before it exists. How the template refers to the
-previous release, if at all, is up to the template.
+Release commits use `🔖`. The candidate's exact object ID is excluded from publication analysis;
+`bookmark` has no built-in meaning and ordinary commits using it still follow the declared
+catalog. A range contains at most one earlier release commit on its boundary, which the range
+excludes. A release commit cannot list itself either: its notes are rendered before it exists.
+How the template refers to the previous release, if at all, is up to the template.
+
+The exceptional pre-1.0 trusted-predecessor crossing adds a final
+`Presswerk-Trusted-Predecessor: <tag> <sha>` commit trailer. The trailer is part of the immutable
+candidate and is consumed by `publish`; ordinary release commits do not contain it.
 
 Analysis uses the commits actually reachable in Git history, not forge pull-request metadata.
 After a squash merge the squash commit is analyzed, not the original commits that were not

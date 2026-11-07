@@ -144,6 +144,15 @@ fn publish_help_documents_the_optional_revision() {
 }
 
 #[test]
+fn prepare_help_documents_the_trusted_predecessor_boundary() {
+    let output = presswerk(&["prepare", "--help"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("--trust-predecessor <TAG=SHA>"));
+}
+
+#[test]
 fn publish_defaults_to_head_and_exits_for_an_ordinary_commit() {
     let repository = ordinary_repository();
 

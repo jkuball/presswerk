@@ -116,6 +116,33 @@ ordinary commits is unaffected.
 is to `prepare`. For example, `check` after a local `prepare` shows whether `publish` would
 succeed before anything is pushed, as far as local credentials match those of CI.
 
+### Unsupported predecessor boundary
+
+Predecessor declarations are normally decoded strictly with the current release toolchain. Their
+own version, tag format, and publisher destinations remain authoritative. Presswerk does not
+project selected fields from an unsupported declaration or silently substitute the current
+publishers.
+
+Before 1.0, an intentional schema break may require a one-time crossing:
+
+1. use the predecessor's original locked Presswerk toolchain to run `publish <tag>` again. This
+   revalidates the tagged declaration, remote tag, and every old publisher without changing an
+   already complete release;
+1. record the annotated tag's peeled commit SHA and confirm the local and remote tag agree;
+1. update the release toolchain, then run `prepare` normally. It must stop with the dedicated
+   unsupported-predecessor error naming that exact tag and SHA;
+1. rerun `prepare --trust-predecessor <tag>=<sha>`. The exception is accepted only when the local
+   tag, remote tag, SHA, and ancestry all match that exact unsupported predecessor;
+1. review and push the generated release commit. It records
+   `Presswerk-Trusted-Predecessor: <tag> <sha>` as its final commit trailer. `publish` takes no
+   trust flag; it consumes the immutable trailer and revalidates the same facts before writing.
+
+The flag and trailer are rejected for a supported predecessor, the first release, a different
+SHA or tag, a missing or moved remote tag, or a non-ancestor. They bypass only decoding and
+rechecking the old publishers, which step 1 performed with the old tool. After 1.0, schema
+evolution is expected to preserve backward compatibility. This mechanism remains an emergency
+fallback, not the normal upgrade procedure.
+
 ### Extension shape
 
 The extension shape remains open. Plausible options are:
