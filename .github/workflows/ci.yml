@@ -28,6 +28,21 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.candidate || github.sha }}
 
+      - name: Configure Presswerk deploy key
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          PRESSWERK_DEPLOY_KEY: ${{ secrets.PRESSWERK_DEPLOY_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$PRESSWERK_DEPLOY_KEY" > ~/.ssh/presswerk
+          chmod 600 ~/.ssh/presswerk
+          ssh-keyscan github.com > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<'EOF'
+          Host github.com
+            IdentityFile ~/.ssh/presswerk
+            IdentitiesOnly yes
+          EOF
+
       - uses: DeterminateSystems/determinate-nix-action@v3
       - uses: cachix/cachix-action@v17
         with:
@@ -47,10 +62,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          presswerk=$(nix build --no-link --print-out-paths .#presswerk)/bin/presswerk
           plan="$RUNNER_TEMP/presswerk-plan.txt"
           status=0
-          "$presswerk" plan > "$plan" 2>&1 || status=$?
+          nix run .#presswerk-release -- plan > "$plan" 2>&1 || status=$?
           cat "$plan"
           {
             echo '## Release plan'
@@ -77,7 +91,7 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
 
           before=$(git rev-parse HEAD)
-          nix run .#presswerk -- prepare
+          nix run .#presswerk-release -- prepare
           candidate=$(git rev-parse HEAD)
           if test "$candidate" = "$before"; then
             exit 0
@@ -94,4 +108,4 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ inputs.candidate }}"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          nix run .#presswerk -- publish HEAD
+          nix run .#presswerk-release -- publish HEAD

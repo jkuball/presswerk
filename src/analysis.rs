@@ -1,3 +1,4 @@
+use crate::declaration::{GitmojiCatalog, GitmojiCatalogEntry, strip_variation_selectors};
 use git_cliff_core::repo::Repository as GitCliffRepository;
 use git2::{Oid, Repository as GitRepository};
 use minijinja::{Environment, context, value::Serde};
@@ -10,8 +11,6 @@ use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_NOTES_TEMPLATE: &str = include_str!("release-notes.md.j2");
-const BOOKMARK_SHORTCODE: &str = ":bookmark:";
-const REWIND_SHORTCODE: &str = ":rewind:";
 const REVERT_PREFIX: &str = "This reverts commit ";
 const MAINLINE_PREFIX: &str = "changes made to ";
 // Git's shortest abbreviation up to a full SHA-256 object ID.
@@ -77,6 +76,7 @@ pub struct CommitRange {
     repository: PathBuf,
     base: Option<String>,
     target: String,
+    excluded: Option<Oid>,
 }
 
 impl CommitRange {
@@ -90,6 +90,7 @@ impl CommitRange {
             repository,
             base: None,
             target,
+            excluded: None,
         })
     }
 
@@ -105,7 +106,14 @@ impl CommitRange {
             repository,
             base: Some(base),
             target,
+            excluded: None,
         })
+    }
+
+    #[must_use]
+    pub fn excluding(mut self, commit: Oid) -> Self {
+        self.excluded = Some(commit);
+        self
     }
 
     #[must_use]
@@ -152,14 +160,22 @@ fn resolve_commit(repository: &Path, revision: &str) -> Result<String, AnalysisE
 }
 
 pub trait Analyzer {
-    fn analyze(&self, range: &CommitRange) -> Result<Analysis, AnalysisError>;
+    fn analyze(
+        &self,
+        range: &CommitRange,
+        catalog: &GitmojiCatalog,
+    ) -> Result<Analysis, AnalysisError>;
 }
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GitCliffAnalyzer;
 
 impl Analyzer for GitCliffAnalyzer {
-    fn analyze(&self, range: &CommitRange) -> Result<Analysis, AnalysisError> {
+    fn analyze(
+        &self,
+        range: &CommitRange,
+        catalog: &GitmojiCatalog,
+    ) -> Result<Analysis, AnalysisError> {
         let repository = GitCliffRepository::init(range.repository.clone()).map_err(|error| {
             AnalysisError::new(format!(
                 "failed to open Git repository {}: {error}",
@@ -188,7 +204,10 @@ impl Analyzer for GitCliffAnalyzer {
         // decided before the commits it reverts.
         for commit in &commits {
             visited.insert(commit.id());
-            if suppressed.contains(&commit.id()) || commit.parent_count() > 1 {
+            if range.excluded == Some(commit.id())
+                || suppressed.contains(&commit.id())
+                || commit.parent_count() > 1
+            {
                 continue;
             }
 
@@ -198,7 +217,7 @@ impl Analyzer for GitCliffAnalyzer {
             };
 
             let Some(reverted) = reverted_commit(message) else {
-                if let Some(entry) = analyzed_commit(commit.id(), subject) {
+                if let Some(entry) = analyzed_commit(commit.id(), subject, catalog) {
                     analyzed.push(entry);
                 }
                 continue;
@@ -206,7 +225,9 @@ impl Analyzer for GitCliffAnalyzer {
 
             let target = resolve_commit_id(&git, commit.id(), reverted.commit)?;
             if !in_range.contains(&target.id()) {
-                analyzed.push(reverted_outside_range(commit.id(), subject));
+                if let Some(entry) = reverted_outside_range(commit.id(), subject, catalog) {
+                    analyzed.push(entry);
+                }
                 continue;
             }
             if visited.contains(&target.id()) {
@@ -226,11 +247,8 @@ impl Analyzer for GitCliffAnalyzer {
     }
 }
 
-fn analyzed_commit(id: Oid, subject: &str) -> Option<AnalyzedCommit> {
-    let parsed = parse_gitmoji_subject(subject)?;
-    if parsed.gitmoji.shortcode == BOOKMARK_SHORTCODE {
-        return None;
-    }
+fn analyzed_commit(id: Oid, subject: &str, catalog: &GitmojiCatalog) -> Option<AnalyzedCommit> {
+    let parsed = parse_gitmoji_subject(subject, catalog)?;
     Some(AnalyzedCommit {
         id: id.to_string(),
         subject: subject.to_owned(),
@@ -242,23 +260,21 @@ fn analyzed_commit(id: Oid, subject: &str) -> Option<AnalyzedCommit> {
 
 /// Records a revert whose target was released earlier under the catalog's revert intention,
 /// keeping the revert's own subject as the message.
-fn reverted_outside_range(id: Oid, subject: &str) -> AnalyzedCommit {
-    let entry = GITMOJIS
-        .iter()
-        .find(|entry| entry.code == REWIND_SHORTCODE)
-        .expect("the Gitmoji catalog contains the revert intention");
-    AnalyzedCommit {
+fn reverted_outside_range(
+    id: Oid,
+    subject: &str,
+    catalog: &GitmojiCatalog,
+) -> Option<AnalyzedCommit> {
+    let Some(entry) = catalog.get("rewind") else {
+        return analyzed_commit(id, subject, catalog);
+    };
+    Some(AnalyzedCommit {
         id: id.to_string(),
         subject: format!("{} {subject}", entry.emoji),
-        gitmoji: Gitmoji {
-            emoji: entry.emoji.to_owned(),
-            shortcode: entry.code.to_owned(),
-            description: entry.description.to_owned(),
-            bump: entry.semver,
-        },
+        gitmoji: gitmoji("rewind", entry),
         scope: None,
         message: subject.to_owned(),
-    }
+    })
 }
 
 /// The commit a standard `git revert` message body names, as written.
@@ -419,18 +435,11 @@ impl fmt::Display for RenderError {
 
 impl Error for RenderError {}
 
-#[derive(Debug)]
-struct CatalogGitmoji {
-    emoji: &'static str,
-    code: &'static str,
-    description: &'static str,
-    semver: Option<Bump>,
-}
-
-include!("gitmoji/catalog.rs");
-
 #[must_use]
-pub fn parse_gitmoji_subject(subject: &str) -> Option<ParsedGitmojiSubject> {
+pub fn parse_gitmoji_subject(
+    subject: &str,
+    catalog: &GitmojiCatalog,
+) -> Option<ParsedGitmojiSubject> {
     let subject = subject.lines().next()?.trim_end();
     let separator = subject.find(char::is_whitespace)?;
     let intention = &subject[..separator];
@@ -439,22 +448,20 @@ pub fn parse_gitmoji_subject(subject: &str) -> Option<ParsedGitmojiSubject> {
         return None;
     }
 
-    let entry = GITMOJIS.iter().find(|entry| {
-        if intention.starts_with(':') {
-            intention == entry.code
+    let (shortcode, entry) = catalog.iter().find(|(shortcode, entry)| {
+        if let Some(shortcode_subject) = intention
+            .strip_prefix(':')
+            .and_then(|value| value.strip_suffix(':'))
+        {
+            shortcode_subject == shortcode.as_str()
         } else {
-            strip_variation_selectors(intention) == strip_variation_selectors(entry.emoji)
+            strip_variation_selectors(intention) == strip_variation_selectors(&entry.emoji)
         }
     })?;
     let (scope, message) = parse_scope_and_message(remainder)?;
 
     Some(ParsedGitmojiSubject {
-        gitmoji: Gitmoji {
-            emoji: entry.emoji.to_owned(),
-            shortcode: entry.code.to_owned(),
-            description: entry.description.to_owned(),
-            bump: entry.semver,
-        },
+        gitmoji: gitmoji(shortcode, entry),
         scope,
         message: message.to_owned(),
     })
@@ -492,11 +499,13 @@ fn parse_scope_and_message(remainder: &str) -> Option<(Option<String>, &str)> {
     (!message.is_empty()).then_some((None, message))
 }
 
-fn strip_variation_selectors(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| *character != '\u{fe0f}')
-        .collect()
+fn gitmoji(shortcode: &str, entry: &GitmojiCatalogEntry) -> Gitmoji {
+    Gitmoji {
+        emoji: entry.emoji.clone(),
+        shortcode: format!(":{shortcode}:"),
+        description: entry.description.clone(),
+        bump: entry.semver,
+    }
 }
 
 pub fn next_version(current: Option<&Version>, bump: Bump) -> Result<Version, VersionError> {
@@ -578,8 +587,39 @@ pub fn render_release_notes(analysis: &Analysis) -> Result<String, RenderError> 
 mod tests {
     use super::*;
 
+    fn entry(emoji: &str, description: &str, semver: Option<Bump>) -> GitmojiCatalogEntry {
+        GitmojiCatalogEntry {
+            emoji: emoji.into(),
+            description: description.into(),
+            semver,
+        }
+    }
+
+    fn test_catalog() -> GitmojiCatalog {
+        BTreeMap::from([
+            (
+                "boom".into(),
+                entry("💥", "Introduce breaking changes.", Some(Bump::Major)),
+            ),
+            ("bug".into(), entry("🐛", "Fix a bug.", Some(Bump::Patch))),
+            (
+                "memo".into(),
+                entry("📝", "Add or update documentation.", None),
+            ),
+            ("recycle".into(), entry("♻️", "Refactor code.", None)),
+            (
+                "sparkles".into(),
+                entry("✨", "Introduce new features.", Some(Bump::Minor)),
+            ),
+            (
+                "zap".into(),
+                entry("⚡️", "Improve performance.", Some(Bump::Patch)),
+            ),
+        ])
+    }
+
     fn commit(id: &str, subject: &str) -> AnalyzedCommit {
-        let parsed = parse_gitmoji_subject(subject).unwrap();
+        let parsed = parse_gitmoji_subject(subject, &test_catalog()).unwrap();
         AnalyzedCommit {
             id: id.into(),
             subject: subject.into(),
@@ -591,13 +631,15 @@ mod tests {
 
     #[test]
     fn parses_unicode_and_shortcode_subjects() {
-        let unicode = parse_gitmoji_subject("⚡ Improve startup time").unwrap();
+        let catalog = test_catalog();
+        let unicode = parse_gitmoji_subject("⚡ Improve startup time", &catalog).unwrap();
         assert_eq!(unicode.gitmoji.shortcode, ":zap:");
         assert_eq!(unicode.gitmoji.bump, Some(Bump::Patch));
         assert_eq!(unicode.scope, None);
         assert_eq!(unicode.message, "Improve startup time");
 
-        let shortcode = parse_gitmoji_subject(":sparkles: (cli): Add release planning").unwrap();
+        let shortcode =
+            parse_gitmoji_subject(":sparkles: (cli): Add release planning", &catalog).unwrap();
         assert_eq!(shortcode.gitmoji.emoji, "✨");
         assert_eq!(shortcode.gitmoji.bump, Some(Bump::Minor));
         assert_eq!(shortcode.scope.as_deref(), Some("cli"));
@@ -606,17 +648,19 @@ mod tests {
 
     #[test]
     fn parses_optional_scope_and_colon() {
-        let scoped = parse_gitmoji_subject("♻️ (analysis) Simplify parsing").unwrap();
+        let catalog = test_catalog();
+        let scoped = parse_gitmoji_subject("♻️ (analysis) Simplify parsing", &catalog).unwrap();
         assert_eq!(scoped.scope.as_deref(), Some("analysis"));
         assert_eq!(scoped.message, "Simplify parsing");
 
-        let colon = parse_gitmoji_subject("🐛 : Fix retries").unwrap();
+        let colon = parse_gitmoji_subject("🐛 : Fix retries", &catalog).unwrap();
         assert_eq!(colon.scope, None);
         assert_eq!(colon.message, "Fix retries");
     }
 
     #[test]
     fn rejects_subjects_outside_the_gitmoji_specification() {
+        let catalog = test_catalog();
         for subject in [
             "Add a feature",
             "🦄 Unknown intention",
@@ -625,8 +669,54 @@ mod tests {
             "✨ (cli):",
             "✨ () Empty scope",
         ] {
-            assert_eq!(parse_gitmoji_subject(subject), None, "{subject}");
+            assert_eq!(parse_gitmoji_subject(subject, &catalog), None, "{subject}");
         }
+    }
+
+    #[test]
+    fn parses_a_custom_catalog_entry_in_unicode_and_shortcode_forms() {
+        let mut catalog = test_catalog();
+        catalog.insert(
+            "flying_saucer".into(),
+            entry(
+                "🛸",
+                "Experimental feature behind a flag.",
+                Some(Bump::Minor),
+            ),
+        );
+
+        for subject in ["🛸 Add experiment", ":flying_saucer: Add experiment"] {
+            let parsed = parse_gitmoji_subject(subject, &catalog).unwrap();
+            assert_eq!(parsed.gitmoji.shortcode, ":flying_saucer:");
+            assert_eq!(parsed.gitmoji.bump, Some(Bump::Minor));
+        }
+    }
+
+    #[test]
+    fn uses_the_declared_level_instead_of_an_upstream_default() {
+        let mut catalog = test_catalog();
+        catalog.get_mut("sparkles").unwrap().semver = Some(Bump::Patch);
+
+        let parsed = parse_gitmoji_subject("✨ Change behavior", &catalog).unwrap();
+
+        assert_eq!(parsed.gitmoji.bump, Some(Bump::Patch));
+    }
+
+    #[test]
+    fn a_declared_null_level_does_not_trigger_a_release() {
+        let mut catalog = test_catalog();
+        catalog.get_mut("sparkles").unwrap().semver = None;
+        let parsed = parse_gitmoji_subject("✨ Change behavior", &catalog).unwrap();
+        let analysis = Analysis::from_commits(vec![AnalyzedCommit {
+            id: "1".into(),
+            subject: "✨ Change behavior".into(),
+            gitmoji: parsed.gitmoji,
+            scope: parsed.scope,
+            message: parsed.message,
+        }]);
+
+        assert_eq!(analysis.bump, None);
+        assert_eq!(analysis.next_version(None).unwrap(), None);
     }
 
     #[test]

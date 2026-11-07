@@ -2,9 +2,11 @@ use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser, Subcommand};
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::preparation::{
-    build_head_release_plan, is_worktree_dirty, prepare_release, render_plan,
+    build_head_release_plan, build_head_release_plan_with_trust, is_worktree_dirty,
+    prepare_release, render_plan,
 };
 use presswerk::publication::{PublishOutcome, publish};
+use presswerk::release_commit::TrustedPredecessor;
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -18,7 +20,11 @@ enum Command {
     /// Show the release that would be prepared without writing anything.
     Plan,
     /// Create a release commit from the committed HEAD tree.
-    Prepare,
+    Prepare {
+        /// Trust one exact unsupported predecessor after verifying it with its original toolchain.
+        #[arg(long, value_name = "TAG=SHA")]
+        trust_predecessor: Option<String>,
+    },
     /// Publish an exact release candidate.
     Publish {
         #[arg(default_value = "HEAD")]
@@ -53,11 +59,16 @@ fn run() -> Result<()> {
             }
             print!("{}", render_plan(&plan));
         }
-        Command::Prepare => {
+        Command::Prepare { trust_predecessor } => {
             if is_worktree_dirty(".")? {
                 bail!("working tree is dirty; commit or stash your changes first");
             }
-            let plan = build_head_release_plan(".", &GitCliffAnalyzer)?;
+            let trusted_predecessor = trust_predecessor
+                .as_deref()
+                .map(TrustedPredecessor::from_argument)
+                .transpose()?;
+            let plan =
+                build_head_release_plan_with_trust(".", &GitCliffAnalyzer, trusted_predecessor)?;
             match prepare_release(&plan)? {
                 Some(commit) => println!(
                     "committed  {}  🔖 Release v{}",
