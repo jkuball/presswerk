@@ -132,7 +132,6 @@
         package = pkgs.prek;
         hooks = {
           gitleaks.enable = true;
-
           gitmoji-commit = {
             enable = true;
             name = "gitmoji commit message";
