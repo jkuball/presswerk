@@ -383,9 +383,15 @@ This keeps Presswerk from being married to git-cliff. Useful conventions are:
 
 For the self-release, the [Gitmoji specification](https://gitmoji.dev/specification) and its
 [catalog](https://github.com/carloscuesta/gitmoji/blob/master/packages/gitmojis/src/gitmojis.json)
-are the reference. The catalog contains SemVer levels for some Gitmojis and `null` for others;
-the specification accepts Unicode and shortcode spellings. For Presswerk's self-release, notes
-include commits with a Gitmoji even when that emoji does not trigger a version bump. Notes group
+are the reference. The release declaration carries the resolved catalog keyed by shortcode
+without surrounding colons. Presswerk's release module starts with a vendored upstream catalog,
+while ordinary module merging lets a project change SemVer levels or add entries. The CLI has no
+built-in catalog and matches Unicode and shortcode subjects only against the catalog declared at
+the exact commit being analyzed.
+
+The catalog contains SemVer levels for some Gitmojis and `null` for others; the specification
+accepts Unicode and shortcode spellings. For Presswerk's self-release, notes include commits with
+a Gitmoji even when that emoji does not trigger a version bump. Notes group
 commits by emoji, with Unicode and shortcode spellings in the same group. Groups with more
 commits come first; equal-sized groups are ordered by Gitmoji shortcode. Each entry includes at
 least the commit subject; whether the default also includes the body is an implementation

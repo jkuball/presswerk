@@ -4,7 +4,7 @@ use anyhow::bail;
 use git2::Oid;
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::declaration::{
-    Analyzer, AnalyzerConvention, Changelog, GithubReleasePublisher, Publishers,
+    Analyzer, AnalyzerConvention, Changelog, GithubReleasePublisher, GitmojiAnalyzer, Publishers,
     ReleaseDeclaration, Tag, Token, TomlVersionFile, VersionFile,
 };
 use presswerk::evaluation::EvaluatedReleaseDeclaration;
@@ -16,11 +16,11 @@ use presswerk::publication::{
 use semver::Version;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use support::GitRepo;
+use support::{GitRepo, gitmoji_catalog};
 
 fn declaration(version: &str) -> ReleaseDeclaration {
     ReleaseDeclaration {
-        schema_version: 1,
+        schema_version: 2,
         version: Version::parse(version).unwrap(),
         version_files: vec![VersionFile::Toml(TomlVersionFile {
             path: "Cargo.toml".into(),
@@ -31,6 +31,9 @@ fn declaration(version: &str) -> ReleaseDeclaration {
         },
         analyzer: Analyzer {
             convention: AnalyzerConvention::Gitmoji,
+            gitmoji: GitmojiAnalyzer {
+                catalog: gitmoji_catalog(),
+            },
         },
         changelog: Changelog {
             path: "CHANGELOG.md".into(),

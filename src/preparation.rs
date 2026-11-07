@@ -102,7 +102,7 @@ pub fn build_release_plan(
             )
         },
     )?;
-    let analysis = analyzer.analyze(&range)?;
+    let analysis = analyzer.analyze(&range, &declaration.analyzer.gitmoji.catalog)?;
     let next_version = analysis.next_version(Some(&declaration.version))?;
     let notes = render_release_notes(&analysis)?;
     let mut version_files = Vec::new();

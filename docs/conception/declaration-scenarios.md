@@ -34,7 +34,7 @@ outside and evaluates `presswerk.default`.
     packages = { /* presswerk-static for x86_64-linux, presswerk for aarch64-darwin */ };
 
     presswerk.default = {
-      schemaVersion = 1;
+      schemaVersion = 2;
       version = (nixpkgs.lib.importTOML ./Cargo.toml).package.version;
 
       versionFiles = [
@@ -240,7 +240,26 @@ presswerk.default.analyzer = {
 ```
 
 In the common case only `analyzer.convention` is written. Options for a backend that is not
-selected produce a warning. The exact options are still open.
+selected produce a warning. Backend-specific options remain open.
+
+For the built-in Gitmoji convention, the release module provides the vendored catalog as a
+mergeable default. Keys are shortcodes without surrounding colons:
+
+```nix
+presswerk.default.analyzer = {
+  convention = "gitmoji";
+  gitmoji.catalog.memo.semver = "patch";
+  gitmoji.catalog.flying_saucer = {
+    emoji = "🛸";
+    description = "Experimental feature behind a flag.";
+    semver = null;
+  };
+};
+```
+
+Each entry declares its Unicode emoji, release-note description, and `major`, `minor`, `patch`,
+or `null` SemVer level. Standard module merging handles overrides and additions; `lib.mkForce`
+can replace the default catalog when a project needs removals.
 
 ## Changelogs per service
 

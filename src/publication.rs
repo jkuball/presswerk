@@ -869,7 +869,7 @@ fn validate_candidate(
         )
         .map_err(|error| PublicationError::new(error.to_string()))?;
     let analysis = analyzer
-        .analyze(&range)
+        .analyze(&range, &declaration.analyzer.gitmoji.catalog)
         .map_err(|error| PublicationError::new(error.to_string()))?;
     validate_new_release(
         &declaration.version,

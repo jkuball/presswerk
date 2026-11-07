@@ -19,11 +19,14 @@ use support::GitRepo;
 fn declaration(version: &str, repository: &str) -> ReleaseDeclaration {
     ReleaseDeclaration::from_json(&format!(
         r#"{{
-          "schemaVersion": 1,
+          "schemaVersion": 2,
           "version": "{version}",
           "versionFiles": [],
           "tag": {{ "format": "v{{version}}" }},
-          "analyzer": {{ "convention": "gitmoji" }},
+          "analyzer": {{
+            "convention": "gitmoji",
+            "gitmoji": {{ "catalog": {{}} }}
+          }},
           "changelog": {{ "path": "CHANGELOG.md" }},
           "publishers": {{
             "github-release": {{

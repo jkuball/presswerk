@@ -4,6 +4,11 @@
     let
       inherit (lib) mkOption types;
 
+      gitmojiCatalog = builtins.fromJSON (builtins.readFile ./gitmoji/catalog.json);
+      variationSelector = builtins.fromJSON ''"\uFE0F"'';
+      normalizedEmoji = emoji: builtins.replaceStrings [ variationSelector ] [ "" ] emoji;
+      catalogEmojis = map (entry: normalizedEmoji entry.emoji) (builtins.attrValues config.analyzer.gitmoji.catalog);
+
       relativePath = types.addCheck types.str (
         path:
         path != ""
@@ -42,6 +47,29 @@
             type = relativePath;
             default = "Cargo.lock";
             description = "Repository-relative path to Cargo.lock.";
+          };
+        };
+      };
+
+      gitmojiModule = {
+        options = {
+          emoji = mkOption {
+            type = types.nonEmptyStr;
+            description = "Unicode spelling of the Gitmoji.";
+          };
+
+          description = mkOption {
+            type = types.nonEmptyStr;
+            description = "Release-note group description for the Gitmoji.";
+          };
+
+          semver = mkOption {
+            type = types.nullOr (types.enum [
+              "major"
+              "minor"
+              "patch"
+            ]);
+            description = "Semantic-version level triggered by the Gitmoji, or null for no release.";
           };
         };
       };
@@ -91,10 +119,18 @@
           description = "Release tag format; must contain {version} exactly once, not adjacent to another brace.";
         };
 
-        analyzer.convention = mkOption {
-          type = types.enum [ "gitmoji" ];
-          default = "gitmoji";
-          description = "Commit convention analyzed for releases.";
+        analyzer = {
+          convention = mkOption {
+            type = types.enum [ "gitmoji" ];
+            default = "gitmoji";
+            description = "Commit convention analyzed for releases.";
+          };
+
+          gitmoji.catalog = mkOption {
+            type = types.attrsOf (types.submodule gitmojiModule);
+            default = { };
+            description = "Gitmoji catalog keyed by shortcode without surrounding colons.";
+          };
         };
 
         changelog.path = mkOption {
@@ -121,14 +157,33 @@
         };
       };
 
-      config.version = lib.mkMerge (lib.mapAttrsToList
-        (
-          name: cargo:
-            lib.mkDefinition {
-              file = "versionFiles.cargo.${name} (${cargo.cargoToml})";
-              value = (builtins.fromTOML (builtins.readFile (config.sourceRoot + "/${cargo.cargoToml}"))).package.version;
-            }
-        )
-        config.versionFiles.cargo);
+      config = {
+        analyzer.gitmoji.catalog = lib.mapAttrs
+          (
+            _shortcode: lib.mapAttrs (_field: lib.mkDefault)
+          )
+          gitmojiCatalog;
+
+        assertions = [
+          {
+            assertion = lib.all (shortcode: shortcode != "" && !(lib.hasInfix ":" shortcode)) (builtins.attrNames config.analyzer.gitmoji.catalog);
+            message = "analyzer.gitmoji.catalog must be keyed by shortcode without surrounding colons";
+          }
+          {
+            assertion = builtins.length catalogEmojis == builtins.length (lib.unique catalogEmojis);
+            message = "analyzer.gitmoji.catalog emoji values must be unique after removing variation selectors";
+          }
+        ];
+
+        version = lib.mkMerge (lib.mapAttrsToList
+          (
+            name: cargo:
+              lib.mkDefinition {
+                file = "versionFiles.cargo.${name} (${cargo.cargoToml})";
+                value = (builtins.fromTOML (builtins.readFile (config.sourceRoot + "/${cargo.cargoToml}"))).package.version;
+              }
+          )
+          config.versionFiles.cargo);
+      };
     };
 }

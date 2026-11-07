@@ -184,10 +184,14 @@ into the CLI, so a runtime extension mechanism is not required for the first mil
 The standardized declaration contains a required integer `schemaVersion`. It is owned by the
 renderer and is not an authoring option. The module that changes the normalized declaration
 incompatibly bumps this value in the same commit, independent of Presswerk's Cargo version. The
-CLI checks `schemaVersion` before interpreting the rest of the declaration and may retain
-decoders for older versions. This also avoids a self-release transition problem: release
-preparation can change the Cargo version without changing which declaration schema the running
-CLI and generated candidate use.
+CLI checks `schemaVersion` before interpreting the rest of the declaration.
+
+Before Presswerk 1.0, each CLI supports exactly the schema emitted by `mkRelease` from the same
+Presswerk version. A repository therefore obtains both the release module and CLI from its locked
+`presswerk` flake input; unsupported-schema errors direct the user to update that input. Release
+validation remains reproducible because a release commit and its parent share the same
+`flake.lock`. Backward-compatible schema decoders may be introduced when the declaration format
+is stabilized for 1.0, but are not maintained during the pre-1.0 design phase.
 
 Release modules receive a `presswerk` module argument whose `version` is the version of the
 Presswerk Nix module implementation. Extensions can use standard module assertions when they

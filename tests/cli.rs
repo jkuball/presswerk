@@ -44,11 +44,14 @@ fn ordinary_repository() -> GitRepo {
         r#"{
   outputs = { self }: {
     presswerk.default = {
-      schemaVersion = 1;
+      schemaVersion = 2;
       version = "0.0.0";
       versionFiles = [];
       tag.format = "v{version}";
-      analyzer.convention = "gitmoji";
+      analyzer = {
+        convention = "gitmoji";
+        gitmoji.catalog = {};
+      };
       changelog.path = "CHANGELOG.md";
       publishers."github-release".default = {
         apiUrl = "https://api.github.com";
@@ -80,14 +83,21 @@ fn release_repository() -> GitRepo {
         r#"{
   outputs = { self }: {
     presswerk.default = {
-      schemaVersion = 1;
+      schemaVersion = 2;
       version = (builtins.fromTOML (builtins.readFile (self + "/Cargo.toml"))).package.version;
       versionFiles = [
         { path = "Cargo.toml"; toml = "package.version"; }
         { path = "Cargo.lock"; cargoLock = "example"; }
       ];
       tag.format = "v{version}";
-      analyzer.convention = "gitmoji";
+      analyzer = {
+        convention = "gitmoji";
+        gitmoji.catalog.sparkles = {
+          emoji = "✨";
+          description = "Introduce new features.";
+          semver = "minor";
+        };
+      };
       changelog.path = "CHANGELOG.md";
       publishers."github-release".default = {
         apiUrl = "https://api.github.com";
