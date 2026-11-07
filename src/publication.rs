@@ -256,7 +256,7 @@ impl GithubClient {
             url.query_pairs_mut()
                 .append_pair("per_page", &PER_PAGE.to_string())
                 .append_pair("page", &page.to_string());
-            let releases: Vec<GithubRelease> = match self.request("GET", &url).call() {
+            let releases: Vec<ListedGithubRelease> = match self.request("GET", &url).call() {
                 Ok(response) => response.into_json().map_err(|error| {
                     PublicationError::new(format!(
                         "could not decode GitHub Releases of {repository}: {error}"
@@ -274,11 +274,17 @@ impl GithubClient {
                 }
             };
             let complete = releases.len() < PER_PAGE;
-            matches.extend(
-                releases
-                    .into_iter()
-                    .filter(|release| release.tag_name == tag),
-            );
+            for listed in releases {
+                // An entry without a usable tag could be the release we look for: fail closed.
+                if listed.tag_name.is_empty() {
+                    return Err(PublicationError::new(format!(
+                        "GitHub listed a release without a tag name in {repository}"
+                    )));
+                }
+                if listed.tag_name == tag {
+                    matches.push(listed.release);
+                }
+            }
             if complete {
                 break;
             }
@@ -491,10 +497,15 @@ impl Publisher for GithubPublisher {
 #[derive(Debug, Clone, Deserialize)]
 struct GithubRelease {
     id: u64,
-    #[serde(default)]
-    tag_name: String,
     draft: bool,
     prerelease: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListedGithubRelease {
+    tag_name: String,
+    #[serde(flatten)]
+    release: GithubRelease,
 }
 
 #[derive(Debug, Serialize)]

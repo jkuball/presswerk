@@ -836,6 +836,23 @@ fn github_missing_release_reads_every_listing_page() {
 }
 
 #[test]
+fn github_rejects_listed_releases_without_a_tag_name() {
+    for entry in [
+        r#"[{"id":7,"draft":true,"prerelease":false}]"#,
+        r#"[{"id":7,"tag_name":"","draft":true,"prerelease":false}]"#,
+    ] {
+        let (url, server) = mock_github_api(tag_lookup_and_listing(vec![entry.into()]));
+        let client = GithubClient::new(&url, "test-token").unwrap();
+
+        assert!(
+            client.release_state("owner/project", "v0.1.0").is_err(),
+            "accepted {entry}"
+        );
+        server.join().unwrap();
+    }
+}
+
+#[test]
 fn github_rejects_several_drafts_for_one_tag() {
     let (url, server) = mock_github_api(tag_lookup_and_listing(vec![
         r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false},{"id":8,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#.into(),
