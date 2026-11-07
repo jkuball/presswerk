@@ -151,7 +151,17 @@
       devshells.default = {
         packages = [
           config.rust-project.toolchain
+          pkgs.nodejs
+          pkgs.pnpm
           pkgs.prek
+        ];
+
+        commands = [
+          {
+            name = "docs-preview";
+            help = "Preview the documentation site";
+            command = "pnpm --dir docs/site install --frozen-lockfile && pnpm --dir docs/site dev";
+          }
         ];
 
         devshell.startup.install-pre-commit.text = config.pre-commit.installationScript;
