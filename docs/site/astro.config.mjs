@@ -26,6 +26,17 @@ export default defineConfig({
       sidebar: [
         { label: 'Documentation', items: [{ label: 'Overview', slug: 'index' }] },
         {
+          label: 'Guide',
+          items: [
+            { label: 'Why Presswerk', slug: 'guide' },
+            { label: 'Release model', slug: 'guide/model' },
+            { label: 'Quickstart', slug: 'guide/quickstart' },
+            { label: 'GitHub Actions', slug: 'guide/github-actions' },
+            { label: 'Gitmoji and the catalog', slug: 'guide/gitmoji' },
+            { label: 'Recovery', slug: 'guide/recovery' },
+          ],
+        },
+        {
           label: 'Reference',
           items: [
             { label: 'Release options', link: '/reference/options/' },
