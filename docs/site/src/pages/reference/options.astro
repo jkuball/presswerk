@@ -1,0 +1,163 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { Code } from '@astrojs/starlight/components';
+import { getCollection, render } from 'astro:content';
+import type { ReleaseOption } from '../../reference/data';
+
+type Option = ReleaseOption & { defaultHtml: string | null };
+
+const options = await Promise.all(
+  (await getCollection('options')).map(async (entry) => ({
+    option: entry.data as Option,
+    Description: (await render(entry)).Content,
+  })),
+);
+options.sort((left, right) => left.option.name.localeCompare(right.option.name));
+---
+
+<StarlightPage
+  frontmatter={{
+    title: 'Release options',
+    description: 'Every option of the release module evaluated by lib.mkRelease.',
+    editUrl: false,
+  }}
+  headings={options.map(({ option }) => ({ depth: 2, slug: option.anchor, text: option.name }))}
+>
+  <p>
+    Options of the release module that <code>lib.mkRelease</code> evaluates into the
+    <a href={`${import.meta.env.BASE_URL}reference/declaration-schema/`}>plain declaration</a>.
+    <code>&lt;name&gt;</code> stands for a name of your choice.
+  </p>
+
+  <div class="pw-option-filter not-content" hidden>
+    <label for="pw-option-filter">Filter options</label>
+    <input id="pw-option-filter" type="search" placeholder="tag, publishers, catalog…" autocomplete="off" />
+    <output for="pw-option-filter" aria-live="polite"></output>
+  </div>
+
+  {
+    options.map(({ option, Description }) => (
+      <section class="pw-option" data-option={`${option.name} ${option.description}`.toLowerCase()}>
+        <h2 id={option.anchor}>
+          <code>{option.name}</code>
+        </h2>
+        <Description />
+        <dl>
+          <dt>Type</dt>
+          <dd>{option.type}</dd>
+          <dt>Default</dt>
+          <dd>
+            {option.default === null ? (
+              'none, the option must be set'
+            ) : option.defaultHtml !== null ? (
+              <Fragment set:html={option.defaultHtml} />
+            ) : (
+              <Code code={option.default.text} lang="nix" />
+            )}
+          </dd>
+          {option.example && (
+            <>
+              <dt>Example</dt>
+              <dd>
+                <Code code={option.example.text} lang="nix" />
+              </dd>
+            </>
+          )}
+          {option.readOnly && (
+            <>
+              <dt>Read-only</dt>
+              <dd>Set by Presswerk; it cannot be defined in a release module.</dd>
+            </>
+          )}
+          <dt>Declared in</dt>
+          <dd>
+            {option.declarations.map((declaration) => (
+              <a href={declaration.url}>
+                <code>
+                  {declaration.path}:{declaration.line}
+                </code>
+              </a>
+            ))}
+          </dd>
+        </dl>
+      </section>
+    ))
+  }
+</StarlightPage>
+
+<script>
+  const filter = document.querySelector<HTMLElement>('.pw-option-filter');
+  const input = document.querySelector<HTMLInputElement>('#pw-option-filter');
+  const status = document.querySelector<HTMLOutputElement>('.pw-option-filter output');
+  const sections = [...document.querySelectorAll<HTMLElement>('.pw-option')];
+
+  function apply() {
+    const terms = input!.value.toLowerCase().split(/\s+/).filter(Boolean);
+    let shown = 0;
+    for (const section of sections) {
+      const match = terms.every((term) => section.dataset.option!.includes(term));
+      section.hidden = !match;
+      if (match) shown += 1;
+    }
+    status!.value = !terms.length
+      ? ''
+      : shown
+        ? `${shown} of ${sections.length} options`
+        : 'No options match; clear the filter to show all.';
+  }
+
+  if (filter && input && status) {
+    filter.hidden = false;
+    input.addEventListener('input', apply);
+    // Never hide the option a link points at.
+    window.addEventListener('hashchange', () => {
+      const target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+      if (target?.closest<HTMLElement>('.pw-option')?.hidden) {
+        input.value = '';
+        apply();
+        target.scrollIntoView();
+      }
+    });
+  }
+</script>
+
+<style>
+  .pw-option-filter {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    margin-block: 1.5rem;
+  }
+  .pw-option-filter input {
+    flex: 1 1 16rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 3px;
+    background: var(--sl-color-black);
+    color: var(--sl-color-white);
+    font: inherit;
+  }
+  .pw-option-filter output {
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-sm);
+  }
+  .pw-option h2 {
+    font-size: var(--sl-text-h4);
+    overflow-wrap: anywhere;
+  }
+  .pw-option dl {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 0.25rem 1rem;
+  }
+  .pw-option dt {
+    font-weight: 600;
+  }
+  .pw-option dd {
+    margin: 0;
+  }
+  .pw-option dd > :global(*) {
+    margin-top: 0;
+  }
+</style>

@@ -233,7 +233,8 @@ impl GithubClient {
                         "could not decode GitHub Release {tag:?} in {repository}: {error}"
                     ))
                 }),
-            Err(ureq::Error::Status(404, _)) => Ok(None),
+            // GitHub finds only published releases by tag; a draft must be looked up in the listing.
+            Err(ureq::Error::Status(404, _)) => self.draft_release(repository, tag),
             Err(ureq::Error::Status(status, _)) => Err(PublicationError::new(format!(
                 "could not inspect GitHub Release {tag:?} in {repository} (HTTP {status})"
             ))),
@@ -241,6 +242,54 @@ impl GithubClient {
                 "could not inspect GitHub Release {tag:?} in {repository}: {error}"
             ))),
         }
+    }
+
+    fn draft_release(
+        &self,
+        repository: &str,
+        tag: &str,
+    ) -> Result<Option<GithubRelease>, PublicationError> {
+        const PER_PAGE: usize = 100;
+        let mut matches = Vec::new();
+        for page in 1.. {
+            let mut url = self.endpoint(repository, &["releases"])?;
+            url.query_pairs_mut()
+                .append_pair("per_page", &PER_PAGE.to_string())
+                .append_pair("page", &page.to_string());
+            let releases: Vec<GithubRelease> = match self.request("GET", &url).call() {
+                Ok(response) => response.into_json().map_err(|error| {
+                    PublicationError::new(format!(
+                        "could not decode GitHub Releases of {repository}: {error}"
+                    ))
+                })?,
+                Err(ureq::Error::Status(status, _)) => {
+                    return Err(PublicationError::new(format!(
+                        "could not list GitHub Releases of {repository} (HTTP {status})"
+                    )));
+                }
+                Err(ureq::Error::Transport(error)) => {
+                    return Err(PublicationError::new(format!(
+                        "could not list GitHub Releases of {repository}: {error}"
+                    )));
+                }
+            };
+            let complete = releases.len() < PER_PAGE;
+            matches.extend(
+                releases
+                    .into_iter()
+                    .filter(|release| release.tag_name == tag),
+            );
+            if complete {
+                break;
+            }
+        }
+        if matches.len() > 1 {
+            return Err(PublicationError::new(format!(
+                "found {} GitHub Releases for {tag:?} in {repository}, expected at most one",
+                matches.len()
+            )));
+        }
+        Ok(matches.pop())
     }
 
     fn create_draft(
@@ -442,6 +491,8 @@ impl Publisher for GithubPublisher {
 #[derive(Debug, Clone, Deserialize)]
 struct GithubRelease {
     id: u64,
+    #[serde(default)]
+    tag_name: String,
     draft: bool,
     prerelease: bool,
 }
