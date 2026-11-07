@@ -837,17 +837,27 @@ fn github_missing_release_reads_every_listing_page() {
 
 #[test]
 fn github_rejects_listed_releases_without_a_tag_name() {
-    for entry in [
-        r#"[{"id":7,"draft":true,"prerelease":false}]"#,
-        r#"[{"id":7,"tag_name":"","draft":true,"prerelease":false}]"#,
+    for (entry, expected) in [
+        (
+            r#"[{"id":7,"draft":true,"prerelease":false}]"#,
+            "could not decode GitHub Releases",
+        ),
+        (
+            r#"[{"id":7,"tag_name":"","draft":true,"prerelease":false}]"#,
+            "without a tag name",
+        ),
     ] {
+        // The mock serves only the lookup and the listing, so publishing must stop before a POST.
         let (url, server) = mock_github_api(tag_lookup_and_listing(vec![entry.into()]));
-        let client = GithubClient::new(&url, "test-token").unwrap();
-
-        assert!(
-            client.release_state("owner/project", "v0.1.0").is_err(),
-            "accepted {entry}"
+        let publisher = GithubPublisher::new(
+            GithubClient::new(&url, "test-token").unwrap(),
+            "owner/project",
         );
+
+        let error = publisher
+            .publish(&release("0123456789012345678901234567890123456789".into()))
+            .unwrap_err();
+        assert!(error.to_string().contains(expected), "{entry}: {error}");
         server.join().unwrap();
     }
 }
