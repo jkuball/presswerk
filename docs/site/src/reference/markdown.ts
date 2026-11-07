@@ -35,6 +35,8 @@ const fence = (language: string, text: string) => {
 };
 const code = (text: string) => (text.includes('`') ? `\`\` ${text} \`\`` : `\`${text}\``);
 const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\n+/g, ' ');
+/** Escape Markdown syntax in plain text such as option types, like the pattern `[^/]+/[^/]+`. */
+const plain = (text: string) => text.replace(/[\\`*_[\]<>|]/g, '\\$&');
 
 export const optionHref = (base: string, option: Pick<ReleaseOption, 'anchor'>) =>
   `${base}reference/options/#${option.anchor}`;
@@ -44,10 +46,16 @@ function literalMarkdown(literal: Literal): string {
   return literal.text.includes('\n') ? fence('nix', literal.text) : code(literal.text);
 }
 
+/** A list item for a literal; multi-line values go into an indented block below the label. */
+function literalItem(label: string, literal: Literal): string {
+  const value = literalMarkdown(literal);
+  return value.includes('\n') ? `- ${label}:\n\n  ${value.replace(/\n/g, '\n  ')}\n` : `- ${label}: ${value}`;
+}
+
 export function optionMarkdown(option: ReleaseOption): string {
-  const lines = [`### ${code(option.name)}`, '', option.description.trim(), '', `- Type: ${option.type}`];
-  if (option.default) lines.push(`- Default: ${literalMarkdown(option.default).replace(/\n/g, '\n  ')}`);
-  if (option.example) lines.push(`- Example: ${literalMarkdown(option.example).replace(/\n/g, '\n  ')}`);
+  const lines = [`### ${code(option.name)}`, '', option.description.trim(), '', `- Type: ${plain(option.type)}`];
+  lines.push(option.default ? literalItem('Default', option.default) : '- Default: none, the option must be set');
+  if (option.example) lines.push(literalItem('Example', option.example));
   if (option.readOnly) lines.push('- Read-only');
   for (const declaration of option.declarations) {
     lines.push(`- Declared in: [${declaration.path}:${declaration.line}](${declaration.url})`);
@@ -68,7 +76,7 @@ export function optionsMarkdown(options: ReleaseOption[]): string {
 function optionsTable(options: ReleaseOption[], base: string): string {
   const rows = options.map((option) => {
     const value = option.default ? cell(option.default.kind === 'nix' ? code(option.default.text) : option.default.text) : 'required';
-    return `| [${code(option.name)}](${optionHref(base, option)}) | ${cell(option.type)} | ${value} | ${cell(option.description)} |`;
+    return `| [${code(option.name)}](${optionHref(base, option)}) | ${plain(option.type)} | ${value} | ${cell(option.description)} |`;
   });
   return ['| Option | Type | Default | Description |', '| --- | --- | --- | --- |', ...rows].join('\n');
 }

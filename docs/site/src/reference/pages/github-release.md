@@ -27,14 +27,13 @@ the `contents: write` permission.
 publisher. For each publisher it looks up the release for the tag and acts on what it finds:
 
 - **Missing:** it creates the release as a draft that targets the release commit, then
-  publishes the draft.
-- **Draft:** a previous run stopped between the two steps, so it publishes the existing draft.
+  publishes the draft, so the release never appears without its notes.
+- **Draft:** it publishes the existing draft.
 - **Published:** the release is complete, and it is left as it is.
 
-Before anything is written, Presswerk checks the state of every publisher. A release whose
-prerelease flag does not match the version is *conflicting*: Presswerk stops and never
-overwrites it.
+Before anything is written, Presswerk checks the state of the tag and of every publisher. A
+release whose prerelease flag does not match the version is *conflicting*: Presswerk stops and
+never overwrites it. An existing release is otherwise never edited, only a draft is published.
 
 So a retry of the same candidate completes missing state and keeps everything that already
-matches. If two runs race, the second finds the release the first created and continues with
-it. After publishing, Presswerk reads the release back and fails unless it is published.
+matches. After publishing, Presswerk reads every release back and fails unless it is published.
