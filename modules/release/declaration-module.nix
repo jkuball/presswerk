@@ -7,7 +7,9 @@
       gitmojiCatalog = builtins.fromJSON (builtins.readFile ./gitmoji/catalog.json);
       variationSelector = builtins.fromJSON ''"\uFE0F"'';
       normalizedEmoji = emoji: builtins.replaceStrings [ variationSelector ] [ "" ] emoji;
-      catalogEmojis = map (entry: normalizedEmoji entry.emoji) (builtins.attrValues config.analyzer.gitmoji.catalog);
+      catalogEntries = builtins.attrValues config.analyzer.gitmoji.catalog;
+      catalogEmojis = map (entry: normalizedEmoji entry.emoji) catalogEntries;
+      catalogShortcodes = map (entry: entry.shortcode) catalogEntries;
 
       relativePath = types.addCheck types.str (
         path:
@@ -51,11 +53,17 @@
         };
       };
 
-      gitmojiModule = {
+      gitmojiModule = { name, ... }: {
         options = {
+          shortcode = mkOption {
+            type = types.str;
+            default = name;
+            description = "Serialized shortcode without surrounding colons; defaults to the catalog entry identifier.";
+          };
+
           emoji = mkOption {
             type = types.nonEmptyStr;
-            description = "Unicode spelling of the Gitmoji.";
+            description = "Unicode spelling of the Gitmoji; U+FE0F is ignored when checking uniqueness.";
           };
 
           description = mkOption {
@@ -129,7 +137,7 @@
           gitmoji.catalog = mkOption {
             type = types.attrsOf (types.submodule gitmojiModule);
             default = { };
-            description = "Gitmoji catalog keyed by shortcode without surrounding colons.";
+            description = "Gitmoji catalog keyed by entry identifier; each entry's shortcode defaults to its identifier.";
           };
         };
 
@@ -166,12 +174,16 @@
 
         assertions = [
           {
-            assertion = lib.all (shortcode: shortcode != "" && !(lib.hasInfix ":" shortcode)) (builtins.attrNames config.analyzer.gitmoji.catalog);
-            message = "analyzer.gitmoji.catalog must be keyed by shortcode without surrounding colons";
+            assertion = lib.all (shortcode: shortcode != "" && !(lib.hasInfix ":" shortcode)) catalogShortcodes;
+            message = "analyzer.gitmoji.catalog shortcodes must be non-empty and contain no colons";
+          }
+          {
+            assertion = builtins.length catalogShortcodes == builtins.length (lib.unique catalogShortcodes);
+            message = "analyzer.gitmoji.catalog shortcodes must be unique";
           }
           {
             assertion = builtins.length catalogEmojis == builtins.length (lib.unique catalogEmojis);
-            message = "analyzer.gitmoji.catalog emoji values must be unique after removing variation selectors";
+            message = "analyzer.gitmoji.catalog emoji values must be unique after removing variation selector-16 (U+FE0F)";
           }
         ];
 

@@ -243,13 +243,14 @@ In the common case only `analyzer.convention` is written. Options for a backend 
 selected produce a warning. Backend-specific options remain open.
 
 For the built-in Gitmoji convention, the release module provides the vendored catalog as a
-mergeable default. Keys are shortcodes without surrounding colons:
+mergeable default. Outer keys identify entries; `shortcode` defaults to that key but can differ:
 
 ```nix
 presswerk.default.analyzer = {
   convention = "gitmoji";
   gitmoji.catalog.memo.semver = "patch";
   gitmoji.catalog.flying_saucer = {
+    shortcode = "flying-saucer";
     emoji = "🛸";
     description = "Experimental feature behind a flag.";
     semver = null;
@@ -258,8 +259,11 @@ presswerk.default.analyzer = {
 ```
 
 Each entry declares its Unicode emoji, release-note description, and `major`, `minor`, `patch`,
-or `null` SemVer level. Standard module merging handles overrides and additions; `lib.mkForce`
-can replace the default catalog when a project needs removals.
+or `null` SemVer level. Resolved shortcodes must be non-empty, colon-free, and unique. The plain
+release declaration is keyed by resolved shortcode, so the example serializes `flying-saucer`
+without carrying the authoring-only `flying_saucer` identifier. Standard module merging handles
+overrides and additions; `lib.mkForce` can replace the default catalog when a project needs
+removals.
 
 ## Changelogs per service
 
