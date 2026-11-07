@@ -8,7 +8,8 @@ A commit's Gitmoji may be written as the emoji or as its `:shortcode:`. The rele
 semantic-version bump the commit triggers; `none` means the commit does not cause a release on
 its own.
 
-Change entries or add your own in the release module; every field defaults to the catalog value:
+Override fields of an existing entry in the release module; fields you leave out keep their
+catalog values:
 
 ```nix
 presswerk.lib.mkRelease {
@@ -16,5 +17,12 @@ presswerk.lib.mkRelease {
   analyzer.gitmoji.catalog.construction_worker.semver = "patch";
 }
 ```
+
+A new entry has no catalog values to fall back on: it must set
+[`emoji`](/reference/options/#analyzer.gitmoji.catalog.name.emoji),
+[`description`](/reference/options/#analyzer.gitmoji.catalog.name.description), and
+[`semver`](/reference/options/#analyzer.gitmoji.catalog.name.semver) (`null` for no release),
+and only its shortcode defaults to its attribute name. See
+[Add a project-specific entry](/guide/gitmoji/#add-a-project-specific-entry) in the guide.
 
 <!-- reference:catalog -->
