@@ -13,12 +13,15 @@ WebKit rasterises masked SVG images at low resolution and they turn blurry.
 The wordmark is set in Archivo (SIL Open Font License) at width 62 and weight
 800 and converted to outlines, so the assets need no font at runtime.
 
-Usage, from the repository root:
+Run it through the flake, which pins Python, its libraries and the variable
+Archivo font, and writes the assets into the current checkout:
 
-    nix shell --impure --expr 'with import <nixpkgs> {}; python3.withPackages (p: [p.fonttools p.shapely])' \\
-      -c python3 docs/brand/generate.py path/to/Archivo[wdth,wght].ttf
+    nix run .#brand-assets
 
-The variable Archivo font is available from https://github.com/google/fonts/tree/main/ofl/archivo.
+`nix flake check` fails when the committed assets differ from what the
+generator produces.
+
+Direct use: python3 generate.py ARCHIVO_VARIABLE_TTF REPOSITORY_ROOT
 """
 
 import math
@@ -36,9 +39,8 @@ from shapely.ops import unary_union
 INK_LIGHT = "#111111"  # ink on the light theme
 INK_DARK = "#ECECEA"  # ink on the dark theme
 
-REPO = Path(__file__).resolve().parents[2]
-ASSETS = REPO / "docs/site/src/assets/brand"
-PUBLIC = REPO / "docs/site/public"
+ASSETS = Path("docs/site/src/assets/brand")
+PUBLIC = Path("docs/site/public")
 
 CENTRE = (50, 50)
 SEGMENTS = 96  # per quarter circle; smooth even at hero size
@@ -153,18 +155,19 @@ def favicon():
     return svg(100, 100, style + mark_path(False, INK_LIGHT, ' class="ink"'), "Presswerk")
 
 
-def main(archivo_path):
+def main(archivo_path, root):
     font = instantiateVariableFont(TTFont(archivo_path), {"wdth": 62, "wght": 800})
-    ASSETS.mkdir(parents=True, exist_ok=True)
-    PUBLIC.mkdir(parents=True, exist_ok=True)
+    assets, public = Path(root) / ASSETS, Path(root) / PUBLIC
+    assets.mkdir(parents=True, exist_ok=True)
+    public.mkdir(parents=True, exist_ok=True)
     for theme, ink in (("light", INK_LIGHT), ("dark", INK_DARK)):
-        (ASSETS / f"mark-{theme}.svg").write_text(svg(100, 100, mark_path(True, ink), "Presswerk"))
-        (ASSETS / f"icon-{theme}.svg").write_text(svg(100, 100, mark_path(False, ink), "Presswerk"))
-        (ASSETS / f"lockup-{theme}.svg").write_text(lockup(font, ink))
-    (PUBLIC / "favicon.svg").write_text(favicon())
+        (assets / f"mark-{theme}.svg").write_text(svg(100, 100, mark_path(True, ink), "Presswerk"))
+        (assets / f"icon-{theme}.svg").write_text(svg(100, 100, mark_path(False, ink), "Presswerk"))
+        (assets / f"lockup-{theme}.svg").write_text(lockup(font, ink))
+    (public / "favicon.svg").write_text(favicon())
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         sys.exit(__doc__)
-    main(sys.argv[1])
+    main(sys.argv[1], sys.argv[2])
