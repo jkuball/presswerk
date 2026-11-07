@@ -20,13 +20,14 @@ and the self-release recovery guide at [`docs/release-recovery.md`](docs/release
 ## Quick look
 
 ```console
-$ nix run github:jkuball/presswerk -- plan
-$ nix run github:jkuball/presswerk -- prepare
-$ nix run github:jkuball/presswerk -- publish HEAD
+$ nix run --inputs-from . presswerk -- plan
+$ nix run --inputs-from . presswerk -- prepare
+$ nix run --inputs-from . presswerk -- publish HEAD
 ```
 
-`plan` is read-only. `prepare` creates a release commit, and `publish` releases an exact
-candidate after CI has checked it.
+Run the CLI from the Presswerk input locked in your flake (named `presswerk` here) so it matches
+your `mkRelease`. `plan` is read-only. `prepare` creates a release commit, and `publish` releases
+an exact candidate after CI has checked it.
 
 ## Development
 
