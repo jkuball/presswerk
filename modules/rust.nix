@@ -37,7 +37,12 @@
         };
 
         crates.presswerk.crane.args = nixBindingsEnvironment // {
-          meta.mainProgram = "presswerk";
+          meta = {
+            description = "Controlled releases for software built with Nix flakes";
+            homepage = "https://jkuball.github.io/presswerk/";
+            license = with lib.licenses; [ mit asl20 ];
+            mainProgram = "presswerk";
+          };
           nativeBuildInputs = with pkgs; [ rustPlatform.bindgenHook pkg-config makeWrapper gitMinimal ];
           buildInputs = [ pkgs.boehmgc ] ++ nixLibraries;
           postConfigure = configureBindgen;
