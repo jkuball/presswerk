@@ -595,7 +595,7 @@ mod tests {
         }
     }
 
-    fn catalog() -> GitmojiCatalog {
+    fn test_catalog() -> GitmojiCatalog {
         BTreeMap::from([
             (
                 "boom".into(),
@@ -619,7 +619,7 @@ mod tests {
     }
 
     fn commit(id: &str, subject: &str) -> AnalyzedCommit {
-        let parsed = parse_gitmoji_subject(subject, &catalog()).unwrap();
+        let parsed = parse_gitmoji_subject(subject, &test_catalog()).unwrap();
         AnalyzedCommit {
             id: id.into(),
             subject: subject.into(),
@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn parses_unicode_and_shortcode_subjects() {
-        let catalog = catalog();
+        let catalog = test_catalog();
         let unicode = parse_gitmoji_subject("⚡ Improve startup time", &catalog).unwrap();
         assert_eq!(unicode.gitmoji.shortcode, ":zap:");
         assert_eq!(unicode.gitmoji.bump, Some(Bump::Patch));
@@ -648,7 +648,7 @@ mod tests {
 
     #[test]
     fn parses_optional_scope_and_colon() {
-        let catalog = catalog();
+        let catalog = test_catalog();
         let scoped = parse_gitmoji_subject("♻️ (analysis) Simplify parsing", &catalog).unwrap();
         assert_eq!(scoped.scope.as_deref(), Some("analysis"));
         assert_eq!(scoped.message, "Simplify parsing");
@@ -660,7 +660,7 @@ mod tests {
 
     #[test]
     fn rejects_subjects_outside_the_gitmoji_specification() {
-        let catalog = catalog();
+        let catalog = test_catalog();
         for subject in [
             "Add a feature",
             "🦄 Unknown intention",
@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn parses_a_custom_catalog_entry_in_unicode_and_shortcode_forms() {
-        let mut catalog = catalog();
+        let mut catalog = test_catalog();
         catalog.insert(
             "flying_saucer".into(),
             entry(
@@ -694,7 +694,7 @@ mod tests {
 
     #[test]
     fn uses_the_declared_level_instead_of_an_upstream_default() {
-        let mut catalog = catalog();
+        let mut catalog = test_catalog();
         catalog.get_mut("sparkles").unwrap().semver = Some(Bump::Patch);
 
         let parsed = parse_gitmoji_subject("✨ Change behavior", &catalog).unwrap();
@@ -704,7 +704,7 @@ mod tests {
 
     #[test]
     fn a_declared_null_level_does_not_trigger_a_release() {
-        let mut catalog = catalog();
+        let mut catalog = test_catalog();
         catalog.get_mut("sparkles").unwrap().semver = None;
         let parsed = parse_gitmoji_subject("✨ Change behavior", &catalog).unwrap();
         let analysis = Analysis::from_commits(vec![AnalyzedCommit {
