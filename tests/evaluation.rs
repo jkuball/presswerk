@@ -24,14 +24,17 @@ fn valid_flake(version: &str) -> String {
     legacyPackages.x86_64-linux.presswerk = throw "installable lookup must not be used";
 
     presswerk.default = {
-      schemaVersion = 1;
+      schemaVersion = 2;
       version = "@VERSION@";
       versionFiles = [
         { path = "Cargo.toml"; toml = "package.version"; }
         { path = "Cargo.lock"; cargoLock = "presswerk"; }
       ];
       tag.format = "v{version}";
-      analyzer.convention = "gitmoji";
+      analyzer = {
+        convention = "gitmoji";
+        gitmoji.catalog = {};
+      };
       changelog.path = "CHANGELOG.md";
       publishers."github-release".default = {
         apiUrl = "https://api.github.com";
@@ -129,14 +132,16 @@ fn rejects_unsupported_schemas_before_decoding_the_remainder() {
     let repository = GitRepo::new();
     repository.write(
         "flake.nix",
-        flake("{ schemaVersion = 2; version = false; unexpected = true; }"),
+        flake("{ schemaVersion = 1; version = false; unexpected = true; }"),
     );
     repository.write("flake.lock", LOCK_FILE);
     repository.commit("🧪 Add future declaration");
 
+    let error = evaluate(&repository, "HEAD").unwrap_err();
+    assert!(error.to_string().contains("locked `presswerk` flake input"));
     assert!(matches!(
-        evaluate(&repository, "HEAD").unwrap_err(),
-        EvaluationError::Declaration(DeclarationError::UnsupportedSchemaVersion(2))
+        error,
+        EvaluationError::Declaration(DeclarationError::UnsupportedSchemaVersion(1))
     ));
 }
 

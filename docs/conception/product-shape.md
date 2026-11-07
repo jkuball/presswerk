@@ -41,15 +41,19 @@ a separate `resume` command unnecessary.
 
 ### The press is not part of the master
 
-By default, the CLI comes from outside the master record: the release commit pins *what* is
-released (artifacts, version, notes, and the release declaration), not *how* it is pressed. A
-newer Presswerk can therefore republish an older tag, which is how bugs in publishers are
-fixed after the fact.
+The release commit pins *what* is released (artifacts, version, notes, and the release
+declaration), not the executable bytes used to press it. Before Presswerk 1.0, however, a
+repository pins a release toolchain and uses both its CLI and its `mkRelease`, because each CLI
+supports exactly that toolchain's schema. The Presswerk repository keeps this bootstrap contract
+in the `presswerk-release` input: `presswerk.default` comes from its library and the matching CLI
+is exposed as `packages.presswerk-release`.
 
-Consumers may still pin the CLI in their flake, for example in a dev shell, as a reproducible
-default. A pinned CLI is not the only one allowed: a newer, externally installed Presswerk can
-still republish the same tag. What cannot be fixed afterward is code that is part of the master
-record itself, such as the declaration or the flake-parts module and library at that commit.
+The self-release pin does not advance with the current source tree. Upgrading it is a deliberate
+release-toolchain migration that must account for any incompatible declaration change; current
+CLIs do not decode older pre-1.0 schemas. Once the declaration schema is stable, compatible newer
+CLIs can again republish an older tag to pick up publisher fixes. What cannot be fixed afterward
+is code that is part of the master record itself, such as the declaration or the flake-parts
+module and library at that commit.
 
 The CLI is always an impure process: it reads Git history, talks to forges and registries, and
 receives credentials at runtime. How it is wired into a local shell or a CI system is described
@@ -184,10 +188,22 @@ into the CLI, so a runtime extension mechanism is not required for the first mil
 The standardized declaration contains a required integer `schemaVersion`. It is owned by the
 renderer and is not an authoring option. The module that changes the normalized declaration
 incompatibly bumps this value in the same commit, independent of Presswerk's Cargo version. The
-CLI checks `schemaVersion` before interpreting the rest of the declaration and may retain
-decoders for older versions. This also avoids a self-release transition problem: release
-preparation can change the Cargo version without changing which declaration schema the running
-CLI and generated candidate use.
+CLI checks `schemaVersion` before interpreting the rest of the declaration.
+
+Before Presswerk 1.0, each CLI supports exactly the schema emitted by `mkRelease` from the same
+Presswerk version. A repository therefore obtains both the release module and CLI from one locked
+release-toolchain input. Unsupported-schema errors identify a mismatched pin; the current CLI
+does not project or decode older declarations. The Presswerk repository deliberately keeps its
+self-release toolchain on the `presswerk-release` pin even while the local package and library
+move to a newer schema. Updating that pin is an explicit migration, not part of an ordinary
+source change. A deliberate pre-1.0 schema crossing uses the explicit trusted-predecessor
+procedure: the old toolchain revalidates its release, `prepare` records the exact trusted tag and
+SHA in the release commit, and `publish` revalidates that immutable assertion. It is accepted only
+for an otherwise exact unsupported predecessor and never replaces normal predecessor validation.
+
+After 1.0, schema evolution is expected to preserve backward compatibility. The trusted
+predecessor mechanism remains available only as an emergency fallback, not as the normal upgrade
+procedure.
 
 Release modules receive a `presswerk` module argument whose `version` is the version of the
 Presswerk Nix module implementation. Extensions can use standard module assertions when they

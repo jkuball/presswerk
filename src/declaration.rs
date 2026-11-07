@@ -1,12 +1,13 @@
+use crate::analysis::Bump;
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use url::Url;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -51,6 +52,7 @@ impl ReleaseDeclaration {
             version_file.validate()?;
         }
         self.tag.validate()?;
+        self.analyzer.validate()?;
         validate_relative_path(&self.changelog.path)?;
 
         // M1 only supports GitHub Releases, so every release needs one.
@@ -181,6 +183,61 @@ impl Error for TagError {}
 #[serde(deny_unknown_fields)]
 pub struct Analyzer {
     pub convention: AnalyzerConvention,
+    pub gitmoji: GitmojiAnalyzer,
+}
+
+impl Analyzer {
+    fn validate(&self) -> Result<(), DeclarationError> {
+        let mut emojis = HashSet::new();
+        for (shortcode, entry) in &self.gitmoji.catalog {
+            if shortcode.is_empty() || shortcode.contains(':') {
+                return Err(DeclarationError::Invalid(format!(
+                    "Gitmoji catalog key {shortcode:?} must be a shortcode without surrounding colons"
+                )));
+            }
+            if entry.emoji.is_empty() {
+                return Err(DeclarationError::Invalid(format!(
+                    "Gitmoji catalog entry {shortcode:?} must have a non-empty emoji"
+                )));
+            }
+            if entry.description.is_empty() {
+                return Err(DeclarationError::Invalid(format!(
+                    "Gitmoji catalog entry {shortcode:?} must have a non-empty description"
+                )));
+            }
+            if !emojis.insert(strip_variation_selectors(&entry.emoji)) {
+                return Err(DeclarationError::Invalid(format!(
+                    "Gitmoji catalog emoji {:?} is not unique after removing variation selectors",
+                    entry.emoji
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitmojiAnalyzer {
+    pub catalog: GitmojiCatalog,
+}
+
+pub type GitmojiCatalog = BTreeMap<String, GitmojiCatalogEntry>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitmojiCatalogEntry {
+    pub emoji: String,
+    pub description: String,
+    #[serde(deserialize_with = "deserialize_semver")]
+    pub semver: Option<Bump>,
+}
+
+fn deserialize_semver<'de, D>(deserializer: D) -> Result<Option<Bump>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::deserialize(deserializer)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,9 +334,10 @@ impl fmt::Display for DeclarationError {
             Self::InvalidSchemaVersion => {
                 write!(formatter, "declaration schemaVersion must be an integer")
             }
-            Self::UnsupportedSchemaVersion(version) => {
-                write!(formatter, "unsupported declaration schemaVersion {version}")
-            }
+            Self::UnsupportedSchemaVersion(version) => write!(
+                formatter,
+                "unsupported declaration schemaVersion {version}; update the locked `presswerk` flake input so the release module and CLI use the same Presswerk version"
+            ),
             Self::InvalidDeclaration(error) => write!(formatter, "invalid declaration: {error}"),
             Self::Invalid(message) => formatter.write_str(message),
         }
@@ -293,6 +351,13 @@ impl Error for DeclarationError {
             _ => None,
         }
     }
+}
+
+pub(crate) fn strip_variation_selectors(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| *character != '\u{fe0f}')
+        .collect()
 }
 
 fn validate_relative_path(path: &str) -> Result<(), DeclarationError> {
@@ -317,14 +382,25 @@ mod tests {
 
     fn declaration(patch: impl FnOnce(&mut Value)) -> String {
         let mut declaration = json!({
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "version": "1.2.3",
             "versionFiles": [
                 { "path": "Cargo.toml", "toml": "package.version" },
                 { "path": "Cargo.lock", "cargoLock": "presswerk" }
             ],
             "tag": { "format": "v{version}" },
-            "analyzer": { "convention": "gitmoji" },
+            "analyzer": {
+                "convention": "gitmoji",
+                "gitmoji": {
+                    "catalog": {
+                        "sparkles": {
+                            "emoji": "✨",
+                            "description": "Introduce new features.",
+                            "semver": "minor"
+                        }
+                    }
+                }
+            },
             "changelog": { "path": "CHANGELOG.md" },
             "publishers": {
                 "github-release": {
@@ -341,9 +417,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_the_m1_schema_with_a_required_changelog() {
+    fn parses_schema_two_with_the_declared_gitmoji_catalog() {
         let declaration = ReleaseDeclaration::from_json(&declaration(|_| {})).unwrap();
-        assert_eq!(declaration.schema_version, 1);
+        assert_eq!(declaration.schema_version, 2);
         assert_eq!(declaration.version, Version::new(1, 2, 3));
         assert_eq!(
             declaration.changelog,
@@ -354,6 +430,50 @@ mod tests {
         assert_eq!(
             declaration.publishers.github_release["default"].api_url,
             "https://api.github.com"
+        );
+        assert_eq!(
+            declaration.analyzer.gitmoji.catalog["sparkles"].semver,
+            Some(Bump::Minor)
+        );
+    }
+
+    #[test]
+    fn requires_each_catalog_entry_to_declare_a_semver_level() {
+        let missing = declaration(|value| {
+            value["analyzer"]["gitmoji"]["catalog"]["sparkles"]
+                .as_object_mut()
+                .unwrap()
+                .remove("semver");
+        });
+
+        assert!(matches!(
+            ReleaseDeclaration::from_json(&missing).unwrap_err(),
+            DeclarationError::InvalidDeclaration(_)
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_catalog_emojis_without_variation_selectors() {
+        let duplicate = declaration(|value| {
+            value["analyzer"]["gitmoji"]["catalog"] = json!({
+                "zap": {
+                    "emoji": "⚡️",
+                    "description": "Improve performance.",
+                    "semver": "patch"
+                },
+                "custom_zap": {
+                    "emoji": "⚡",
+                    "description": "Duplicate the zap intention.",
+                    "semver": null
+                }
+            });
+        });
+
+        assert!(
+            ReleaseDeclaration::from_json(&duplicate)
+                .unwrap_err()
+                .to_string()
+                .contains("not unique")
         );
     }
 
@@ -371,13 +491,14 @@ mod tests {
     #[test]
     fn rejects_an_unsupported_schema_before_the_remainder() {
         let error = ReleaseDeclaration::from_json(
-            r#"{ "schemaVersion": 2, "version": false, "unexpected": true }"#,
+            r#"{ "schemaVersion": 1, "version": false, "unexpected": true }"#,
         )
         .unwrap_err();
 
+        assert!(error.to_string().contains("locked `presswerk` flake input"));
         assert!(matches!(
             error,
-            DeclarationError::UnsupportedSchemaVersion(2)
+            DeclarationError::UnsupportedSchemaVersion(1)
         ));
     }
 

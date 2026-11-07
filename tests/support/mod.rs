@@ -1,10 +1,49 @@
 #![allow(dead_code)]
 
+use presswerk::analysis::Bump;
+use presswerk::declaration::{GitmojiCatalog, GitmojiCatalogEntry};
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 use tempfile::TempDir;
+
+pub fn gitmoji_catalog() -> GitmojiCatalog {
+    let entry = |emoji: &str, description: &str, semver| GitmojiCatalogEntry {
+        emoji: emoji.into(),
+        description: description.into(),
+        semver,
+    };
+    BTreeMap::from([
+        (
+            "bookmark".into(),
+            entry("🔖", "Release / Version tags.", None),
+        ),
+        (
+            "boom".into(),
+            entry("💥", "Introduce breaking changes.", Some(Bump::Major)),
+        ),
+        ("bug".into(), entry("🐛", "Fix a bug.", Some(Bump::Patch))),
+        (
+            "memo".into(),
+            entry("📝", "Add or update documentation.", None),
+        ),
+        (
+            "rewind".into(),
+            entry("⏪️", "Revert changes.", Some(Bump::Patch)),
+        ),
+        (
+            "sparkles".into(),
+            entry("✨", "Introduce new features.", Some(Bump::Minor)),
+        ),
+        ("tada".into(), entry("🎉", "Begin a project.", None)),
+        (
+            "twisted_rightwards_arrows".into(),
+            entry("🔀", "Merge branches.", None),
+        ),
+    ])
+}
 
 pub struct GitRepo {
     directory: TempDir,

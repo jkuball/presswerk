@@ -3,7 +3,7 @@ mod support;
 use presswerk::analysis::{
     Analysis, AnalysisError, Analyzer, Bump, CommitRange, GitCliffAnalyzer, render_release_notes,
 };
-use support::GitRepo;
+use support::{GitRepo, gitmoji_catalog};
 
 fn commit(repository: &GitRepo, sequence: usize, subject: &str) -> String {
     repository.write("history", format!("{sequence}\n"));
@@ -13,7 +13,11 @@ fn commit(repository: &GitRepo, sequence: usize, subject: &str) -> String {
 struct RejectingAnalyzer;
 
 impl Analyzer for RejectingAnalyzer {
-    fn analyze(&self, _range: &CommitRange) -> Result<Analysis, AnalysisError> {
+    fn analyze(
+        &self,
+        _range: &CommitRange,
+        _catalog: &presswerk::declaration::GitmojiCatalog,
+    ) -> Result<Analysis, AnalysisError> {
         Err(AnalysisError::new("external analyzer failure"))
     }
 }
@@ -28,10 +32,12 @@ fn analyzes_initial_history_and_omits_non_entries() {
     let fix = commit(&repository, 4, ":bug: Fix release planning");
     let range = CommitRange::initial(repository.path(), repository.head()).unwrap();
 
-    let analysis = GitCliffAnalyzer.analyze(&range).unwrap();
+    let analysis = GitCliffAnalyzer
+        .analyze(&range, &gitmoji_catalog())
+        .unwrap();
 
     assert_eq!(analysis.bump, Some(Bump::Minor));
-    assert_eq!(analysis.commits.len(), 3);
+    assert_eq!(analysis.commits.len(), 4);
     assert!(analysis.commits.iter().any(|commit| commit.id == feature));
     assert!(
         analysis
@@ -44,8 +50,23 @@ fn analyzes_initial_history_and_omits_non_entries() {
         analysis
             .commits
             .iter()
-            .all(|commit| commit.gitmoji.shortcode != ":bookmark:")
+            .any(|commit| commit.gitmoji.shortcode == ":bookmark:")
     );
+}
+
+#[test]
+fn bookmark_uses_the_declared_release_level() {
+    let repository = GitRepo::new();
+    let bookmark = commit(&repository, 0, "🔖 Mark a milestone");
+    let range = CommitRange::initial(repository.path(), "HEAD").unwrap();
+    let mut catalog = gitmoji_catalog();
+    catalog.get_mut("bookmark").unwrap().semver = Some(Bump::Patch);
+
+    let analysis = GitCliffAnalyzer.analyze(&range, &catalog).unwrap();
+
+    assert_eq!(analysis.bump, Some(Bump::Patch));
+    assert_eq!(analysis.commits.len(), 1);
+    assert_eq!(analysis.commits[0].id, bookmark);
 }
 
 #[test]
@@ -55,7 +76,9 @@ fn initial_range_includes_the_root_and_pins_head() {
     let range = CommitRange::initial(repository.path(), "HEAD").unwrap();
     commit(&repository, 1, "💥 Later breaking change");
 
-    let analysis = GitCliffAnalyzer.analyze(&range).unwrap();
+    let analysis = GitCliffAnalyzer
+        .analyze(&range, &gitmoji_catalog())
+        .unwrap();
 
     assert_eq!(analysis.bump, Some(Bump::Minor));
     assert_eq!(analysis.commits.len(), 1);
@@ -71,7 +94,9 @@ fn between_range_honors_the_base_and_pins_head() {
     let range = CommitRange::between(repository.path(), base, "HEAD").unwrap();
     commit(&repository, 3, "💥 Later breaking change");
 
-    let analysis = GitCliffAnalyzer.analyze(&range).unwrap();
+    let analysis = GitCliffAnalyzer
+        .analyze(&range, &gitmoji_catalog())
+        .unwrap();
 
     assert_eq!(analysis.bump, Some(Bump::Minor));
     assert_eq!(analysis.commits.len(), 1);
@@ -101,7 +126,9 @@ fn repository_analysis_rejects_leading_whitespace() {
     );
     let range = CommitRange::initial(repository.path(), "HEAD").unwrap();
 
-    let analysis = GitCliffAnalyzer.analyze(&range).unwrap();
+    let analysis = GitCliffAnalyzer
+        .analyze(&range, &gitmoji_catalog())
+        .unwrap();
 
     assert_eq!(analysis.bump, None);
     assert!(analysis.commits.is_empty());
@@ -116,7 +143,9 @@ fn external_analyzers_can_construct_errors() {
     assert_eq!(range.base(), None);
     assert_eq!(range.target(), target);
 
-    let error = RejectingAnalyzer.analyze(&range).unwrap_err();
+    let error = RejectingAnalyzer
+        .analyze(&range, &gitmoji_catalog())
+        .unwrap_err();
 
     assert_eq!(error.to_string(), "external analyzer failure");
 }
@@ -150,7 +179,7 @@ fn analyze(repository: &GitRepo, base: Option<&str>) -> Result<Analysis, Analysi
         None => CommitRange::initial(repository.path(), "HEAD"),
     }
     .unwrap();
-    GitCliffAnalyzer.analyze(&range)
+    GitCliffAnalyzer.analyze(&range, &gitmoji_catalog())
 }
 
 fn ids(analysis: &Analysis) -> Vec<&str> {
@@ -162,7 +191,25 @@ fn ids(analysis: &Analysis) -> Vec<&str> {
 }
 
 #[test]
-fn merges_contribute_their_branch_commits_but_not_themselves() {
+fn exclusion_skips_only_the_candidate_oid() {
+    let repository = GitRepo::new();
+    let root = commit_file(&repository, "root", "🎉 Begin project");
+    let bookmark = commit_file(&repository, "bookmark", "🔖 Mark an ordinary milestone");
+    let candidate = commit_file(&repository, "candidate", "🔖 Prepare release candidate");
+    let range = CommitRange::between(repository.path(), root, &candidate)
+        .unwrap()
+        .excluding(candidate.parse().unwrap());
+    let mut catalog = gitmoji_catalog();
+    catalog.get_mut("bookmark").unwrap().semver = Some(Bump::Patch);
+
+    let analysis = GitCliffAnalyzer.analyze(&range, &catalog).unwrap();
+
+    assert_eq!(analysis.bump, Some(Bump::Patch));
+    assert_eq!(ids(&analysis), [bookmark]);
+}
+
+#[test]
+fn excluding_a_merge_candidate_keeps_secondary_parent_commits() {
     let repository = GitRepo::new();
     let root = commit_file(&repository, "root", "🎉 Begin project");
     let main = repository.git(["branch", "--show-current"]);
@@ -183,7 +230,12 @@ fn merges_contribute_their_branch_commits_but_not_themselves() {
         3
     );
 
-    let analysis = analyze(&repository, Some(&root)).unwrap();
+    let range = CommitRange::between(repository.path(), root, &merged)
+        .unwrap()
+        .excluding(merged.parse().unwrap());
+    let analysis = GitCliffAnalyzer
+        .analyze(&range, &gitmoji_catalog())
+        .unwrap();
 
     assert_eq!(analysis.bump, Some(Bump::Minor));
     let mut analyzed = ids(&analysis);
@@ -247,6 +299,22 @@ fn reverts_of_released_commits_become_revert_entries() {
     assert_eq!(entry.gitmoji.emoji, "⏪️");
     assert_eq!(entry.gitmoji.shortcode, ":rewind:");
     assert_eq!(entry.scope, None);
+}
+
+#[test]
+fn a_released_revert_does_not_require_a_rewind_catalog_entry() {
+    let repository = GitRepo::new();
+    let feature = commit_file(&repository, "feature", "✨ Add feature");
+    let release = commit_file(&repository, "release", "🔖 Release v0.1.0");
+    revert(&repository, &[&feature]);
+    let range = CommitRange::between(repository.path(), release, "HEAD").unwrap();
+    let mut catalog = gitmoji_catalog();
+    catalog.remove("rewind");
+
+    let analysis = GitCliffAnalyzer.analyze(&range, &catalog).unwrap();
+
+    assert_eq!(analysis.bump, None);
+    assert!(analysis.commits.is_empty());
 }
 
 #[test]

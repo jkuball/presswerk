@@ -9,6 +9,8 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    presswerk-release.url = "git+ssh://git@github.com/jkuball/presswerk?ref=refs/tags/v0.1.0";
+
     flake-parts.url = "github:hercules-ci/flake-parts";
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
 
