@@ -1,36 +1,13 @@
 use anyhow::{Result, bail};
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser};
 use presswerk::analysis::GitCliffAnalyzer;
+use presswerk::cli::{Cli, Command};
 use presswerk::preparation::{
     build_head_release_plan, build_head_release_plan_with_trust, is_worktree_dirty,
     prepare_release, render_plan,
 };
 use presswerk::publication::{PublishOutcome, publish};
 use presswerk::release_commit::TrustedPredecessor;
-
-#[derive(Parser)]
-#[command(version, about)]
-struct Cli {
-    #[command(subcommand)]
-    command: Option<Command>,
-}
-
-#[derive(Subcommand)]
-enum Command {
-    /// Show the release that would be prepared without writing anything.
-    Plan,
-    /// Create a release commit from the committed HEAD tree.
-    Prepare {
-        /// Trust one exact unsupported predecessor after verifying it with its original toolchain.
-        #[arg(long, value_name = "TAG=SHA")]
-        trust_predecessor: Option<String>,
-    },
-    /// Publish an exact release candidate.
-    Publish {
-        #[arg(default_value = "HEAD")]
-        revision: String,
-    },
-}
 
 fn main() {
     if let Err(error) = run() {
