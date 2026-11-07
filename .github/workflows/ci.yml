@@ -44,7 +44,7 @@ jobs:
       - uses: cachix/cachix-action@v17
         with:
           name: jkuball
-          authToken: ${{ github.event_name != 'pull_request' && secrets.CACHIX_AUTH_TOKEN || '' }}
+          authToken: ${{ steps.cachix.outputs.push == 'true' && secrets.CACHIX_AUTH_TOKEN || '' }}
           skipPush: true
 
       - name: Build flake
@@ -142,9 +142,10 @@ jobs:
 
       - name: Publish release
         env:
+          CANDIDATE: ${{ inputs.candidate }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          test "$(git rev-parse HEAD)" = "${{ inputs.candidate }}"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           nix run .#presswerk -- publish HEAD
