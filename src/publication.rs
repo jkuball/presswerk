@@ -901,11 +901,6 @@ pub fn verify_predecessor(
         previous_version,
         current_declaration,
         &tag_publisher,
-        |commit| {
-            evaluate_release_declaration(repository_path, &commit.to_string())
-                .map(|evaluated| evaluated.declaration)
-                .map_err(|error| PublicationError::new(error.to_string()))
-        },
         |publisher, tag, _version| {
             GithubClient::from_environment(&publisher.api_url, &publisher.token.secret)?
                 .release_state(&publisher.repository, tag)
@@ -913,17 +908,15 @@ pub fn verify_predecessor(
     )
 }
 
-pub fn verify_predecessor_with<E, F>(
+pub fn verify_predecessor_with<F>(
     repository_path: &Path,
     candidate: Oid,
     previous_version: &Version,
     current_declaration: &ReleaseDeclaration,
     tag_publisher: &dyn TagPublisher,
-    mut evaluate_declaration: E,
     mut release_state: F,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError>
 where
-    E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
     F: FnMut(
         &GithubReleaseDeclaration,
         &str,
@@ -962,24 +955,6 @@ where
         )));
     }
 
-    let previous_declaration = evaluate_declaration(previous_commit)?;
-    require_github_publishers(&previous_declaration)?;
-    if previous_declaration.version != *previous_version {
-        return Err(PublicationError::new(format!(
-            "previous release tag {previous_tag:?} contains version {}, expected {previous_version}",
-            previous_declaration.version
-        )));
-    }
-    let declared_tag = previous_declaration
-        .tag
-        .render(previous_version)
-        .map_err(|error| PublicationError::new(error.to_string()))?;
-    if declared_tag != previous_tag {
-        return Err(PublicationError::new(format!(
-            "previous release at {previous_commit} declares tag {declared_tag:?}, expected {previous_tag:?}"
-        )));
-    }
-
     let previous = Release {
         commit: previous_commit.to_string(),
         version: previous_version.clone(),
@@ -996,8 +971,9 @@ where
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     }
 
+    // Historical declarations may use a pre-1.0 schema this CLI intentionally does not decode.
     let expected_prerelease = !previous_version.pre.is_empty();
-    for publisher in previous_declaration.publishers.github_release.values() {
+    for publisher in current_declaration.publishers.github_release.values() {
         match release_state(publisher, &previous_tag, previous_version)? {
             GithubReleaseState::Published { prerelease } if prerelease == expected_prerelease => {}
             state => {

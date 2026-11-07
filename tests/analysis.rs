@@ -37,7 +37,7 @@ fn analyzes_initial_history_and_omits_non_entries() {
         .unwrap();
 
     assert_eq!(analysis.bump, Some(Bump::Minor));
-    assert_eq!(analysis.commits.len(), 3);
+    assert_eq!(analysis.commits.len(), 4);
     assert!(analysis.commits.iter().any(|commit| commit.id == feature));
     assert!(
         analysis
@@ -50,8 +50,23 @@ fn analyzes_initial_history_and_omits_non_entries() {
         analysis
             .commits
             .iter()
-            .all(|commit| commit.gitmoji.shortcode != ":bookmark:")
+            .any(|commit| commit.gitmoji.shortcode == ":bookmark:")
     );
+}
+
+#[test]
+fn bookmark_uses_the_declared_release_level() {
+    let repository = GitRepo::new();
+    let bookmark = commit(&repository, 0, "🔖 Mark a milestone");
+    let range = CommitRange::initial(repository.path(), "HEAD").unwrap();
+    let mut catalog = gitmoji_catalog();
+    catalog.get_mut("bookmark").unwrap().semver = Some(Bump::Patch);
+
+    let analysis = GitCliffAnalyzer.analyze(&range, &catalog).unwrap();
+
+    assert_eq!(analysis.bump, Some(Bump::Patch));
+    assert_eq!(analysis.commits.len(), 1);
+    assert_eq!(analysis.commits[0].id, bookmark);
 }
 
 #[test]
@@ -261,6 +276,22 @@ fn reverts_of_released_commits_become_revert_entries() {
     assert_eq!(entry.gitmoji.emoji, "⏪️");
     assert_eq!(entry.gitmoji.shortcode, ":rewind:");
     assert_eq!(entry.scope, None);
+}
+
+#[test]
+fn a_released_revert_does_not_require_a_rewind_catalog_entry() {
+    let repository = GitRepo::new();
+    let feature = commit_file(&repository, "feature", "✨ Add feature");
+    let release = commit_file(&repository, "release", "🔖 Release v0.1.0");
+    revert(&repository, &[&feature]);
+    let range = CommitRange::between(repository.path(), release, "HEAD").unwrap();
+    let mut catalog = gitmoji_catalog();
+    catalog.remove("rewind");
+
+    let analysis = GitCliffAnalyzer.analyze(&range, &catalog).unwrap();
+
+    assert_eq!(analysis.bump, None);
+    assert!(analysis.commits.is_empty());
 }
 
 #[test]

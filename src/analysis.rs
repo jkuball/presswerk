@@ -11,7 +11,6 @@ use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_NOTES_TEMPLATE: &str = include_str!("release-notes.md.j2");
-const BOOKMARK_SHORTCODE: &str = ":bookmark:";
 const REVERT_PREFIX: &str = "This reverts commit ";
 const MAINLINE_PREFIX: &str = "changes made to ";
 // Git's shortest abbreviation up to a full SHA-256 object ID.
@@ -214,7 +213,9 @@ impl Analyzer for GitCliffAnalyzer {
 
             let target = resolve_commit_id(&git, commit.id(), reverted.commit)?;
             if !in_range.contains(&target.id()) {
-                analyzed.push(reverted_outside_range(commit.id(), subject, catalog)?);
+                if let Some(entry) = reverted_outside_range(commit.id(), subject, catalog) {
+                    analyzed.push(entry);
+                }
                 continue;
             }
             if visited.contains(&target.id()) {
@@ -236,9 +237,6 @@ impl Analyzer for GitCliffAnalyzer {
 
 fn analyzed_commit(id: Oid, subject: &str, catalog: &GitmojiCatalog) -> Option<AnalyzedCommit> {
     let parsed = parse_gitmoji_subject(subject, catalog)?;
-    if parsed.gitmoji.shortcode == BOOKMARK_SHORTCODE {
-        return None;
-    }
     Some(AnalyzedCommit {
         id: id.to_string(),
         subject: subject.to_owned(),
@@ -254,13 +252,11 @@ fn reverted_outside_range(
     id: Oid,
     subject: &str,
     catalog: &GitmojiCatalog,
-) -> Result<AnalyzedCommit, AnalysisError> {
-    let entry = catalog.get("rewind").ok_or_else(|| {
-        AnalysisError::new(
-            "the declared Gitmoji catalog has no `rewind` entry for released reverts",
-        )
-    })?;
-    Ok(AnalyzedCommit {
+) -> Option<AnalyzedCommit> {
+    let Some(entry) = catalog.get("rewind") else {
+        return analyzed_commit(id, subject, catalog);
+    };
+    Some(AnalyzedCommit {
         id: id.to_string(),
         subject: format!("{} {subject}", entry.emoji),
         gitmoji: gitmoji("rewind", entry),

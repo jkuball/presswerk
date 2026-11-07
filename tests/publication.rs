@@ -329,14 +329,13 @@ fn refuses_to_overwrite_a_conflicting_remote_tag() {
 }
 
 #[test]
-fn predecessor_verification_uses_the_tagged_commits_own_publishers() {
+fn predecessor_verification_uses_the_current_declarations_publishers() {
     let repository = GitRepo::new();
     let predecessor = repository.commit_version("0.1.0", "🔖 Prepare predecessor");
     repository.annotated_tag("v0.1.0");
     repository.write("publisher", "new/project\n");
     let candidate = repository.commit("✨ Change publisher");
     let current_declaration = declaration("0.1.0", "new/project");
-    let previous_declaration = declaration("0.1.0", "old/project");
     let tag = FakeTagPublisher {
         state: Rc::new(RefCell::new(RemoteState::Matching)),
         writes: Rc::new(RefCell::new(Vec::new())),
@@ -349,10 +348,6 @@ fn predecessor_verification_uses_the_tagged_commits_own_publishers() {
         &Version::new(0, 1, 0),
         &current_declaration,
         &tag,
-        |commit| {
-            assert_eq!(commit.to_string(), predecessor);
-            Ok(previous_declaration.clone())
-        },
         |publisher, _tag, _version| {
             repositories.borrow_mut().push(publisher.repository.clone());
             Ok(GithubReleaseState::Published { prerelease: false })
@@ -362,19 +357,18 @@ fn predecessor_verification_uses_the_tagged_commits_own_publishers() {
     .unwrap();
 
     assert_eq!(verified.commit.to_string(), predecessor);
-    assert_eq!(*repositories.borrow(), ["old/project"]);
+    assert_eq!(*repositories.borrow(), ["new/project"]);
 }
 
 #[test]
-fn predecessor_verification_rejects_an_empty_tagged_publisher_set() {
+fn predecessor_verification_rejects_an_empty_current_publisher_set() {
     let repository = GitRepo::new();
     repository.commit_version("0.1.0", "🔖 Prepare invalid predecessor");
     repository.annotated_tag("v0.1.0");
     repository.write("publisher", "new/project\n");
     let candidate = repository.commit("✨ Change publisher");
-    let current_declaration = declaration("0.1.0", "new/project");
-    let mut previous_declaration = declaration("0.1.0", "old/project");
-    previous_declaration.publishers.github_release.clear();
+    let mut current_declaration = declaration("0.1.0", "new/project");
+    current_declaration.publishers.github_release.clear();
     let tag = FakeTagPublisher {
         state: Rc::new(RefCell::new(RemoteState::Matching)),
         writes: Rc::new(RefCell::new(Vec::new())),
@@ -386,7 +380,6 @@ fn predecessor_verification_rejects_an_empty_tagged_publisher_set() {
         &Version::new(0, 1, 0),
         &current_declaration,
         &tag,
-        |_commit| Ok(previous_declaration.clone()),
         |_publisher, _tag, _version| Ok(GithubReleaseState::Published { prerelease: false }),
     )
     .unwrap_err();

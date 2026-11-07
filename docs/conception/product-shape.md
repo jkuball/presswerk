@@ -41,15 +41,15 @@ a separate `resume` command unnecessary.
 
 ### The press is not part of the master
 
-By default, the CLI comes from outside the master record: the release commit pins *what* is
-released (artifacts, version, notes, and the release declaration), not *how* it is pressed. A
-newer Presswerk can therefore republish an older tag, which is how bugs in publishers are
-fixed after the fact.
+The release commit pins *what* is released (artifacts, version, notes, and the release
+declaration), not the executable bytes used to press it. Before Presswerk 1.0, however,
+declaration-evaluating commands use the CLI from the same locked `presswerk` input as
+`mkRelease`, because each CLI supports exactly that version's schema. Updating the input updates
+the module and CLI together.
 
-Consumers may still pin the CLI in their flake, for example in a dev shell, as a reproducible
-default. A pinned CLI is not the only one allowed: a newer, externally installed Presswerk can
-still republish the same tag. What cannot be fixed afterward is code that is part of the master
-record itself, such as the declaration or the flake-parts module and library at that commit.
+Once the declaration schema is stable, compatible newer CLIs can again republish an older tag to
+pick up publisher fixes. What cannot be fixed afterward is code that is part of the master record
+itself, such as the declaration or the flake-parts module and library at that commit.
 
 The CLI is always an impure process: it reads Git history, talks to forges and registries, and
 receives credentials at runtime. How it is wired into a local shell or a CI system is described
