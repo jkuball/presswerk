@@ -163,14 +163,25 @@ nav.sidebar a[aria-current='page']:focus {
 
 /* Git graphs */
 .pw-graph {
+  display: grid;
+  gap: 0.75rem;
   overflow-x: auto;
   border: 1px solid var(--pw-rule);
   border-radius: 3px;
   padding: 0.75rem;
 }
 .pw-graph svg {
-  width: min(100%, 32rem);
+  display: block;
+  width: max(100%, 36rem);
+  max-width: none !important;
   height: auto;
+}
+.pw-graph figcaption {
+  position: sticky;
+  left: 0;
+  color: var(--pw-muted);
+  font-size: var(--sl-text-sm);
+  max-width: 52rem;
 }
 .pw-graph .pele-commits {
   fill: var(--pw-ink);

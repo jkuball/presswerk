@@ -27,8 +27,10 @@ or hosted state of its own.
 
 The canonical documentation is at <https://jkuball.github.io/presswerk/>.
 
-The repository also contains the current design notes under [`docs/conception`](docs/conception/)
-and the self-release recovery guide at [`docs/release-recovery.md`](docs/release-recovery.md).
+Start with the [guide](https://jkuball.github.io/presswerk/guide/), including the
+[quickstart](https://jkuball.github.io/presswerk/guide/quickstart/) and
+[release recovery](https://jkuball.github.io/presswerk/guide/recovery/). The repository also keeps
+current design notes under [`docs/conception`](docs/conception/) as design references.
 
 ## Quick look
 

@@ -48,7 +48,7 @@ $ nix run --inputs-from . presswerk -- publish HEAD   # tag and publish an exact
 The release commit carries the new version and frozen release notes, so CI builds and checks
 the exact candidate before anything is published:
 
-```mermaid
+```mermaid A feature branch merges into main, then Presswerk creates and tags a dedicated release commit before development continues.
 gitGraph
   commit id: "a1f3c2e"
   branch fix/tag-lookup
@@ -58,3 +58,12 @@ gitGraph
   commit id: "release 0.2.0" tag: "v0.2.0"
   commit id: "c7d1e88"
 ```
+
+## Guide
+
+- [Why Presswerk](./guide/) explains the exact-commit release boundary and current scope.
+- [Quickstart](./guide/quickstart/) releases a small Rust flake through the two-phase workflow.
+- [Release model](./guide/model/) defines candidates, release commits, pressings, and pending releases.
+- [GitHub Actions](./guide/github-actions/) covers serialization, stale-run protection, and exact-candidate dispatch.
+- [Gitmoji and the catalog](./guide/gitmoji/) shows how commits select versions and release-note groups.
+- [Recovery](./guide/recovery/) handles failed preparation, failed candidates, and partial publication.
