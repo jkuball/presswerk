@@ -16,6 +16,7 @@
   --pw-rule: #2c2c2c;
   --pw-accent: #f0705f;
   --pw-accent-wash: #2a1612;
+  --pw-caution-wash: #2a1612;
 
   --sl-color-white: var(--pw-ink);
   --sl-color-gray-1: #e0e0dd;
@@ -68,6 +69,7 @@
   --pw-rule: #d3d3cf;
   --pw-accent: #b82e1c;
   --pw-accent-wash: #f3dcd7;
+  --pw-caution-wash: #f6e3df;
 
   --sl-color-white: var(--pw-ink);
   --sl-color-gray-1: #1e1e1e;
@@ -117,20 +119,35 @@ nav.sidebar a[aria-current='page']:focus {
   box-shadow: inset 2px 0 0 var(--pw-accent);
 }
 
-/* Asides: surface with an accent rule; caution and danger keep their own meaning through icon and title */
+/*
+ * Asides escalate with one colour: tip is neutral, note carries the accent rule,
+ * caution adds an accent wash, danger is a solid accent block.
+ */
 .starlight-aside {
   background-color: var(--pw-surface);
   border-radius: 0 3px 3px 0;
 }
-.starlight-aside--note,
 .starlight-aside--tip {
+  --sl-color-asides-text-accent: var(--pw-ink);
+  --sl-color-asides-border: var(--pw-ink);
+}
+.starlight-aside--note {
   --sl-color-asides-text-accent: var(--pw-accent);
   --sl-color-asides-border: var(--pw-accent);
 }
-.starlight-aside--caution,
+.starlight-aside--caution {
+  --sl-color-asides-text-accent: var(--pw-accent);
+  --sl-color-asides-border: var(--pw-accent);
+  background-color: var(--pw-caution-wash);
+}
 .starlight-aside--danger {
-  --sl-color-asides-text-accent: var(--pw-ink);
-  --sl-color-asides-border: var(--pw-ink);
+  --sl-color-asides-text-accent: var(--pw-ground);
+  --sl-color-asides-border: var(--pw-accent);
+  background-color: var(--pw-accent);
+  color: var(--pw-ground);
+}
+.starlight-aside--danger a {
+  color: var(--pw-ground);
 }
 .starlight-aside__title {
   font-family: var(--sl-font-mono);
