@@ -131,6 +131,7 @@
       pre-commit.settings = {
         package = pkgs.prek;
         hooks = {
+          gitleaks.enable = true;
           gitmoji-commit = {
             enable = true;
             name = "gitmoji commit message";
@@ -151,7 +152,27 @@
       devshells.default = {
         packages = [
           config.rust-project.toolchain
+          pkgs.nodejs
+          pkgs.pnpm
           pkgs.prek
+        ];
+
+        env = [
+          {
+            name = "ASTRO_TELEMETRY_DISABLED";
+            value = "1";
+          }
+        ];
+
+        commands = [
+          {
+            name = "docs-preview";
+            help = "Preview the documentation site";
+            command = ''
+              pnpm --dir "$PRJ_ROOT/docs/site" install --frozen-lockfile \
+                && pnpm --dir "$PRJ_ROOT/docs/site" dev
+            '';
+          }
         ];
 
         devshell.startup.install-pre-commit.text = config.pre-commit.installationScript;

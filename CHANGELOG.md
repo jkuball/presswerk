@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.2.0] - 2026-11-07
+
+### 🐛 Fix a bug
+
+- 🐛 (release) Pin self-release across schema boundaries
+- 🐛 (release) Honor declared catalogs across schema changes
+- 🐛 (docs): Keep portable artifact installation
+- 🐛 (docs): Derive package version from release
+- 🐛 (docs): Fix preview environment
+
+### 📝 Add or update documentation
+
+- 📝 Clarify schema-crossing integration
+- 📝 Clarify pre-1.0 predecessor checks
+- 📝 Point to the moved Gitmoji catalog
+- 📝 Expand the README for a public repository
+
+### ✨ Introduce new features
+
+- ✨ (release) Allow explicit Gitmoji shortcodes
+- ✨ (release) Declare the Gitmoji catalog in schema 2
+- ✨ (docs): Scaffold the documentation site
+
+### 🎨 Improve structure / format of the code
+
+- 🎨 (hooks) Remove extra spacing
+
+### 👷 Add or update CI build system
+
+- 👷 Cache CI builds with Cachix
+
+### 🔒️ Fix security or privacy issues
+
+- 🔒️ (hooks) Scan staged changes with Gitleaks
+
+### 📄 Add or update license
+
+- 📄 License under MIT OR Apache-2.0
+
+### 🧪 Add a failing test
+
+- 🧪 (analysis) Name the test catalog fixture
+
+### ⚡️ Improve performance
+
+- ⚡️ (docs): Build site directly into output
+
 ## [0.1.0] - 2026-11-06
 
 ### ✨ Introduce new features
