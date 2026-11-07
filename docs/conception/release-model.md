@@ -217,7 +217,8 @@ lookup is:
    release is [pending](#pending-releases); a tag pointing elsewhere is a conflict;
 1. verify that the previous release is fully published. For the first milestone, its GitHub
    Release must exist and be published, not missing or a draft. A network or authentication
-   error must not be mistaken for a complete release;
+   error must not be mistaken for a complete release. Before 1.0, the destinations come from
+   the current declaration so this check does not require decoding an older declaration schema;
 1. analyze the applicable commit range, such as `v1.3.0..HEAD`, using Git history. For the first
    release there is no physical tag, so the range includes the root commit.
 
