@@ -158,7 +158,7 @@ export const referencePages: ReferencePage[] = [
     slug: 'reference/gitmoji-catalog',
     title: 'Gitmoji catalog',
     description: 'The default Gitmoji catalog and the release level of each Gitmoji.',
-    markdown: ({ gitmoji }, base) =>
+    markdown: ({ gitmoji, gitmojiLicense }, base) =>
       fill(gitmojiCatalogPage, base, {
         catalog: [
           '| Gitmoji | Shortcode | Description | Release |',
@@ -171,6 +171,7 @@ export const referencePages: ReferencePage[] = [
             ),
         ].join('\n'),
         'catalog-size': String(Object.keys(gitmoji).length),
+        license: fence('text', gitmojiLicense),
       }),
   },
 ];

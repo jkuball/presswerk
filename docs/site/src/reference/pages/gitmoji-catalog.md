@@ -26,3 +26,11 @@ and only its shortcode defaults to its attribute name. See
 [Add a project-specific entry](/guide/gitmoji/#add-a-project-specific-entry) in the guide.
 
 <!-- reference:catalog -->
+
+## License
+
+The catalog entries come from the
+[Gitmoji project](https://github.com/carloscuesta/gitmoji) and are published here under its MIT
+license:
+
+<!-- reference:license -->

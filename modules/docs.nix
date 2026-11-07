@@ -124,6 +124,7 @@ in
         cp ${pkgs.writeText "options.json" (builtins.toJSON optionsReference)} $out/options.json
         cp ${pkgs.writeText "declaration.json" (builtins.toJSON schemaExample)} $out/declaration.json
         cp ${./release/gitmoji/catalog.json} $out/gitmoji.json
+        cp ${./release/gitmoji/LICENSE} $out/gitmoji-license.txt
       '';
 
       packages.docs = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
@@ -170,6 +171,11 @@ in
         grep -q '^### `tag.format`$' "$site/reference/options.md"
         grep -q '^### presswerk publish$' "$site/reference/cli.md"
         grep -q '`:sparkles:`.*| minor |$' "$site/reference/gitmoji-catalog.md"
+        # The vendored catalog is MIT licensed; its notice must travel with the published copy.
+        for copy in "$site/reference/gitmoji-catalog.md" "$site/reference/gitmoji-catalog/index.html"; do
+          grep -q 'Copyright (c) 2016-2022 Carlos Cuesta' "$copy"
+          grep -q 'copies or substantial portions of the Software' "$copy"
+        done
         if grep -q 'assertions' "$site/reference/options.md"; then
           echo "internal options leaked into the reference" >&2
           exit 1
