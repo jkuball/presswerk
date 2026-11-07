@@ -132,6 +132,7 @@ in
             analyzer.gitmoji.catalog = {
               memo.semver = "patch";
               flying_saucer = {
+                shortcode = "flying-saucer";
                 emoji = "🛸";
                 description = "Experimental feature behind a flag.";
                 semver = null;
@@ -141,7 +142,7 @@ in
         in
         {
           memo = declaration.analyzer.gitmoji.catalog.memo;
-          flying_saucer = declaration.analyzer.gitmoji.catalog.flying_saucer;
+          flying_saucer = declaration.analyzer.gitmoji.catalog."flying-saucer";
         };
       expected = {
         memo = vendoredCatalog.memo // { semver = "patch"; };
@@ -151,6 +152,62 @@ in
           semver = null;
         };
       };
+    };
+
+    "test Gitmoji shortcode defaults to the entry identifier" = {
+      expr = (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.gitmoji.catalog.space_ship = {
+          emoji = "🛰️";
+          description = "Operate a satellite.";
+          semver = null;
+        };
+      }).analyzer.gitmoji.catalog.space_ship;
+      expected = {
+        emoji = "🛰️";
+        description = "Operate a satellite.";
+        semver = null;
+      };
+    };
+
+    "test duplicate resolved Gitmoji shortcodes fail" = {
+      expr = succeeds (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.gitmoji.catalog.other_memo = {
+          shortcode = "memo";
+          emoji = "📚";
+          description = "Duplicate the resolved memo shortcode.";
+          semver = null;
+        };
+      });
+      expected = false;
+    };
+
+    "test Gitmoji shortcodes must be non-empty and colon-free" = {
+      expr = map
+        (
+          shortcode:
+          succeeds (mkRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            analyzer.gitmoji.catalog.custom = {
+              inherit shortcode;
+              emoji = "🧿";
+              description = "Test invalid shortcode validation.";
+              semver = null;
+            };
+          })
+        )
+        [
+          ""
+          ":custom:"
+        ];
+      expected = [
+        false
+        false
+      ];
     };
 
     "test Gitmoji catalog can be replaced with mkForce" = {

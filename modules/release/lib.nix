@@ -43,7 +43,12 @@ in
       tag.format = releaseConfig.tag.format;
       analyzer = {
         convention = releaseConfig.analyzer.convention;
-        gitmoji.catalog = releaseConfig.analyzer.gitmoji.catalog;
+        gitmoji.catalog = lib.mapAttrs'
+          (
+            _identifier: entry:
+              lib.nameValuePair entry.shortcode (builtins.removeAttrs entry [ "shortcode" ])
+          )
+          releaseConfig.analyzer.gitmoji.catalog;
       };
       changelog.path = releaseConfig.changelog.path;
       publishers.github-release = releaseConfig.publishers.github-release;

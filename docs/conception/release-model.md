@@ -384,9 +384,10 @@ This keeps Presswerk from being married to git-cliff. Useful conventions are:
 
 For the self-release, the [Gitmoji specification](https://gitmoji.dev/specification) and its
 [catalog](https://github.com/carloscuesta/gitmoji/blob/master/packages/gitmojis/src/gitmojis.json)
-are the reference. The release declaration carries the resolved catalog keyed by shortcode
-without surrounding colons. Presswerk's release module starts with a vendored upstream catalog,
-while ordinary module merging lets a project change SemVer levels or add entries. The CLI has no
+are the reference. Authoring keys identify catalog entries and each entry's shortcode defaults to
+its key; the release declaration rekeys the resolved catalog by shortcode without surrounding
+colons. Presswerk's release module starts with a vendored upstream catalog, while ordinary module
+merging lets a project change shortcodes or SemVer levels and add entries. The CLI has no
 built-in catalog and matches Unicode and shortcode subjects only against the catalog declared at
 the exact commit being analyzed.
 
