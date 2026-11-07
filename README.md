@@ -1,6 +1,6 @@
 # Presswerk
 
-Controlled releases for software built with Nix flakes.
+Bringing controlled outside world mutation into your immutable software builds.
 
 > [!WARNING]
 > Presswerk is early, work-in-progress software. It releases itself, but its commands,
