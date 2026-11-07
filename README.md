@@ -1,6 +1,19 @@
-# Presswerk
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/site/src/assets/brand/lockup-dark.svg">
+    <img alt="Presswerk" src="docs/site/src/assets/brand/lockup-light.svg" width="420">
+  </picture>
+</h1>
 
-Bringing controlled outside world mutation into your immutable software builds.
+<p align="center">
+  Bringing controlled outside world mutation into your immutable software builds.
+</p>
+
+<p align="center">
+  <a href="https://github.com/jkuball/presswerk/releases">Releases</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="docs/conception/README.md">Conception</a>
+</p>
 
 > [!WARNING]
 > Presswerk is early, work-in-progress software. It already releases itself, but it has no
