@@ -21,6 +21,7 @@ tag, and a GitHub Release to the configured repository.
 You need:
 
 - Git, Cargo, and a [flake-enabled Nix installation](https://nixos.org/download/);
+- an authenticated [GitHub CLI](https://cli.github.com/) for local verification;
 - an empty GitHub repository whose default branch is `main`;
 - permission for GitHub Actions to write repository contents and dispatch workflows;
 - a branch policy that permits the workflow's release commit push.
@@ -36,7 +37,6 @@ Create a Cargo binary and set its committed version to `0.0.0`:
 $ mkdir pktest && cd pktest
 $ git init -b main
 $ cargo init --name pktest .
-$ cargo generate-lockfile
 ```
 
 Edit `Cargo.toml`:
@@ -48,12 +48,18 @@ version = "0.0.0"
 edition = "2024"
 ```
 
+Regenerate `Cargo.lock` after changing the package version:
+
+```console
+$ cargo generate-lockfile
+```
+
 Your generated `src/main.rs` is enough for the exercise.
 
 ## 2. Declare the package and release
 
 Create `flake.nix`. Replace `YOUR-OWNER/pktest` with the repository you created. The Presswerk input
-is pinned by `flake.lock`; the tag below is the current stable toolchain used by this guide.
+is pinned by `flake.lock`; the tag below is the v0.3.0 release toolchain this guide documents.
 
 ```nix title="flake.nix"
 {
@@ -63,7 +69,7 @@ is pinned by `flake.lock`; the tag below is the current stable toolchain used by
     flake-parts.url = "github:hercules-ci/flake-parts";
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
 
-    presswerk.url = "github:jkuball/presswerk/v0.2.2";
+    presswerk.url = "github:jkuball/presswerk/v0.3.0";
     presswerk.inputs.presswerk-release.url = "github:jkuball/presswerk/v0.1.0";
   };
 
@@ -108,9 +114,12 @@ Lock and check the flake:
 
 ```console
 $ nix flake lock
-$ nix build .#
+$ nix build .# --no-link
 $ nix flake check
 ```
+
+`--no-link` prevents `nix build` from leaving an untracked `result` symlink. `prepare` requires a
+clean worktree.
 
 A project may use flake-parts as shown here, but this is ordinary flake output composition. A
 Presswerk-specific flake-parts adapter is not implemented.
@@ -154,7 +163,7 @@ jobs:
 
       - name: Build and check
         run: |
-          nix build .# --print-build-logs
+          nix build .# --no-link --print-build-logs
           nix flake check --print-build-logs
 
       - name: Plan release
@@ -208,7 +217,7 @@ Add your repository remote, then commit the complete project with a release-wort
 
 ```console
 $ git remote add origin git@github.com:YOUR-OWNER/pktest.git
-$ git add Cargo.toml Cargo.lock src flake.nix flake.lock .github/workflows/ci.yml
+$ git add .gitignore Cargo.toml Cargo.lock src flake.nix flake.lock .github/workflows/ci.yml
 $ git commit -m "✨ Add the first command"
 $ nix run --inputs-from . presswerk -- plan
 ```
@@ -251,7 +260,8 @@ Fetch the result and compare the release commit across Git, Actions, and GitHub 
 
 ```console
 $ git fetch origin main --tags
-$ git log --oneline --decorate -3 origin/main
+$ git pull --ff-only origin main
+$ git log --oneline --decorate -3 main
 $ git rev-list -n 1 v0.1.0
 $ gh run list --workflow=ci.yml --limit=5
 $ gh release view v0.1.0 --json tagName,isDraft,isPrerelease,url
@@ -269,6 +279,19 @@ body that publication used.
 
 ## Next change
 
-Make another commit using the [Gitmoji convention](../gitmoji/), run `plan`, and push. A `🐛` commit
-plans a patch release, while `✨` plans the next minor release. Do not edit the generated release
-commit or add a fixup on top of a failed candidate; use the [recovery procedure](../recovery/).
+The workflow pushed the release commit, so start the next change only after fast-forwarding your
+clean local `main` to it. Then use the [Gitmoji convention](../gitmoji/) and pass your GitHub token
+when planning. From the second release onward, `plan` verifies that the previous GitHub Release
+completed:
+
+```console
+$ git switch main
+$ git pull --ff-only origin main
+$ # edit, stage, and commit the next change
+$ GITHUB_TOKEN="$(gh auth token)" nix run --inputs-from . presswerk -- plan
+$ git push
+```
+
+A `🐛` commit plans a patch release, while `✨` plans the next minor release. Do not edit the generated
+release commit or add a fixup on top of a failed candidate; use the
+[recovery procedure](../recovery/).

@@ -46,20 +46,55 @@ gitGraph
 
 1. Confirm that `origin/main` has no new `🔖 Release …` commit from the failed run.
 2. If the log says `main advanced`, do not revive the stale run. Inspect the newer push run instead.
-3. Fix a deterministic problem in an ordinary commit and push it. The resulting push run owns the
-   next preparation attempt.
-4. If the failure was transient and `main` still points to the original SHA, rerun that push workflow.
+3. If preparation reports an incomplete previous release, identify that tag and release commit, then
+   follow [partial publication](#partial-publication) to retry the exact earlier candidate. Preparation
+   cannot continue until that release chain is complete.
+4. Fix any deterministic declaration, lock-file, or code problem in an ordinary commit and push it.
+   The resulting push run owns the next preparation attempt.
+5. If the failure was transient and `main` still points to the original SHA, rerun that push workflow.
 
 Do not create a release commit by hand merely to bypass a preparation error. The workflow must still
 build the ordinary revision and run the same stale-main guard.
 
-## Failed candidate checks
+## Candidate CI did not complete
 
-A release commit may be pushed successfully and then fail its exact-candidate build or checks. With no
-tag, it is a **pending release**. Later commits that retain its version are blocked and cannot become
-replacement candidates.
+A release commit may be pushed successfully without completing exact-candidate CI. The phase 1
+workflow may fail to dispatch phase 2, a candidate run may be canceled or hit transient
+infrastructure trouble, or the candidate's contents may genuinely fail a build or check. With no tag,
+the commit is a **pending release** in every case. Later commits that retain its version are blocked
+and cannot become replacement candidates.
 
-```mermaid A failed untagged candidate is reverted, then the real fix is committed before a fresh candidate is prepared.
+Before choosing a recovery, verify that publication never started:
+
+```console
+$ git ls-remote --tags origin refs/tags/v0.3.0
+$ gh release view v0.3.0
+```
+
+Both should report no release state. If the tag or GitHub Release exists, treat the incident as
+[partial publication](#partial-publication).
+
+### Retry a candidate that has not failed its checks
+
+If phase 1 pushed the release commit but did not dispatch phase 2, dispatch the same full candidate
+SHA. If an existing candidate run was canceled or failed because of transient infrastructure, rerun
+that exact run or dispatch the same SHA again:
+
+```console
+$ gh workflow run ci.yml --ref main -f candidate=RELEASE_COMMIT_SHA
+```
+
+The candidate run checks out that SHA, repeats the build and checks, and publishes only if they pass.
+Do not revert a candidate merely because dispatch failed or infrastructure was unavailable. A
+successful exact-candidate retry completes the pending release without creating another commit.
+
+### Revert a confirmed broken candidate
+
+Reserve replacement for a candidate whose committed contents reproducibly fail a required build or
+check. Revert that exact untagged release commit, fix the cause, and let preparation create a fresh
+candidate.
+
+```mermaid A confirmed broken untagged candidate is reverted, then the real fix is committed before a fresh candidate is prepared.
 gitGraph
   commit id: "0.2.2" tag: "v0.2.2"
   commit id: "feature"
@@ -68,18 +103,6 @@ gitGraph
   commit id: "fix failure"
   commit id: "fresh 0.3.0" tag: "v0.3.0"
 ```
-
-Before reverting, verify that publication never started:
-
-```console
-$ git ls-remote --tags origin refs/tags/v0.3.0
-$ gh release view v0.3.0
-```
-
-Both should report no release state. If the tag or GitHub Release exists, treat the incident as
-[partial publication](#partial-publication), not as a failed candidate.
-
-Revert the exact untagged release commit, fix the cause, and only then push the repaired history:
 
 ```console
 $ git switch main

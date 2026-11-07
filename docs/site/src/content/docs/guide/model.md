@@ -99,9 +99,10 @@ gitGraph
   commit id: "fixup is blocked"
 ```
 
-Only `pending 0.3.0` can publish `0.3.0`. The fixup commit cannot. If candidate checks failed, revert
-the untagged release commit, fix the problem, and let preparation create a fresh candidate. See
-[Recovery](../recovery/#failed-candidate-checks).
+Only `pending 0.3.0` can publish `0.3.0`. The fixup commit cannot. Retry that exact commit when
+candidate CI did not establish a content failure. If its committed contents fail required checks,
+revert it, fix the problem, and let preparation create a fresh candidate. See
+[Recovery](../recovery/#candidate-ci-did-not-complete).
 
 ```mermaid Reverting a failed untagged candidate restores the previous version, after which a fix can lead to a fresh release commit.
 gitGraph
