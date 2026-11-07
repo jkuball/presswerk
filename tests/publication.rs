@@ -649,6 +649,13 @@ fn github_missing_is_distinct_from_inaccessible_or_unknown_state() {
             response: "{}",
             body_contains: None,
         },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases?per_page=100&page=1",
+            status: 200,
+            response: "[]",
+            body_contains: None,
+        },
     ]);
     let client = GithubClient::new(&url, "test-token").unwrap();
     assert_eq!(
@@ -696,7 +703,7 @@ fn github_missing_is_distinct_from_inaccessible_or_unknown_state() {
 }
 
 #[test]
-fn github_continues_an_existing_draft() {
+fn github_publishes_a_draft_found_only_in_the_release_listing() {
     let (url, server) = mock_github_api(vec![
         ExpectedRequest {
             method: "GET",
@@ -708,8 +715,15 @@ fn github_continues_an_existing_draft() {
         ExpectedRequest {
             method: "GET",
             path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 404,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases?per_page=100&page=1",
             status: 200,
-            response: r#"{"id":7,"draft":true,"prerelease":false}"#,
+            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#,
             body_contains: None,
         },
         ExpectedRequest {
@@ -746,6 +760,96 @@ fn github_continues_an_existing_draft() {
     server.join().unwrap();
 }
 
+fn tag_lookup_and_listing(pages: Vec<String>) -> Vec<ExpectedRequest> {
+    let mut requests = vec![
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project",
+            status: 200,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 404,
+            response: "{}",
+            body_contains: None,
+        },
+    ];
+    for (index, page) in pages.into_iter().enumerate() {
+        requests.push(ExpectedRequest {
+            method: "GET",
+            path: format!(
+                "/repos/owner/project/releases?per_page=100&page={}",
+                index + 1
+            )
+            .leak(),
+            status: 200,
+            response: page.leak(),
+            body_contains: None,
+        });
+    }
+    requests
+}
+
+fn published_releases(count: usize) -> String {
+    let releases: Vec<_> = (0..count)
+        .map(|index| {
+            format!(
+                r#"{{"id":{},"tag_name":"v0.0.{index}","draft":false,"prerelease":false}}"#,
+                100 + index
+            )
+        })
+        .collect();
+    format!("[{}]", releases.join(","))
+}
+
+#[test]
+fn github_finds_a_draft_on_a_later_listing_page_by_exact_tag() {
+    let (url, server) = mock_github_api(tag_lookup_and_listing(vec![
+        published_releases(100),
+        r#"[{"id":8,"tag_name":"v0.1.0-rc.1","draft":true,"prerelease":true},{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#.into(),
+    ]));
+    let client = GithubClient::new(&url, "test-token").unwrap();
+
+    assert_eq!(
+        client.release_state("owner/project", "v0.1.0").unwrap(),
+        GithubReleaseState::Draft { prerelease: false }
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn github_missing_release_reads_every_listing_page() {
+    let (url, server) = mock_github_api(tag_lookup_and_listing(vec![
+        published_releases(100),
+        "[]".into(),
+    ]));
+    let client = GithubClient::new(&url, "test-token").unwrap();
+
+    assert_eq!(
+        client.release_state("owner/project", "v0.1.0").unwrap(),
+        GithubReleaseState::Missing
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn github_rejects_several_drafts_for_one_tag() {
+    let (url, server) = mock_github_api(tag_lookup_and_listing(vec![
+        r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false},{"id":8,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#.into(),
+    ]));
+    let client = GithubClient::new(&url, "test-token").unwrap();
+
+    let error = client.release_state("owner/project", "v0.1.0").unwrap_err();
+    assert!(
+        error.to_string().contains("found 2 GitHub Releases"),
+        "{error}"
+    );
+    server.join().unwrap();
+}
+
 #[test]
 fn github_reinspects_ambiguous_post_and_patch_failures() {
     let (url, server) = mock_github_api(vec![
@@ -761,6 +865,13 @@ fn github_reinspects_ambiguous_post_and_patch_failures() {
             path: "/repos/owner/project/releases/tags/v0.1.0",
             status: 404,
             response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases?per_page=100&page=1",
+            status: 200,
+            response: "[]",
             body_contains: None,
         },
         ExpectedRequest {
@@ -780,8 +891,15 @@ fn github_reinspects_ambiguous_post_and_patch_failures() {
         ExpectedRequest {
             method: "GET",
             path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 404,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases?per_page=100&page=1",
             status: 200,
-            response: r#"{"id":7,"draft":true,"prerelease":false}"#,
+            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#,
             body_contains: None,
         },
         ExpectedRequest {
@@ -826,8 +944,15 @@ fn github_reinspects_ambiguous_post_and_patch_failures() {
         ExpectedRequest {
             method: "GET",
             path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 404,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases?per_page=100&page=1",
             status: 200,
-            response: r#"{"id":7,"draft":true,"prerelease":false}"#,
+            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#,
             body_contains: None,
         },
         ExpectedRequest {
@@ -889,8 +1014,15 @@ fn github_reinspection_rejects_a_still_draft_release() {
         ExpectedRequest {
             method: "GET",
             path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 404,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases?per_page=100&page=1",
             status: 200,
-            response: r#"{"id":7,"draft":true,"prerelease":false}"#,
+            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#,
             body_contains: None,
         },
         ExpectedRequest {
@@ -910,8 +1042,15 @@ fn github_reinspection_rejects_a_still_draft_release() {
         ExpectedRequest {
             method: "GET",
             path: "/repos/owner/project/releases/tags/v0.1.0",
+            status: 404,
+            response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases?per_page=100&page=1",
             status: 200,
-            response: r#"{"id":7,"draft":true,"prerelease":false}"#,
+            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#,
             body_contains: None,
         },
     ]);
@@ -943,6 +1082,13 @@ fn github_creates_a_draft_then_publishes_and_verifies_it() {
             path: "/repos/owner/project/releases/tags/v0.1.0",
             status: 404,
             response: "{}",
+            body_contains: None,
+        },
+        ExpectedRequest {
+            method: "GET",
+            path: "/repos/owner/project/releases?per_page=100&page=1",
+            status: 200,
+            response: "[]",
             body_contains: None,
         },
         ExpectedRequest {
