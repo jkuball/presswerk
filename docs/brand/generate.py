@@ -77,16 +77,20 @@ def flake(scale):
 
 
 def mark_geometry(full):
-    """The ink of the mark on a 100 x 100 canvas."""
-    record = 39 if full else 32
+    """The ink of the mark on a 100 x 100 canvas.
+
+    The hexagon's edges sit 41.6 units from the centre, so the record plus its
+    gap must stay well inside that, or the frame thins to nothing where the
+    circle meets the edges.
+    """
+    record = 35 if full else 32
     frame = hexagon(48).difference(box(0, 47.25, 100, 52.75)).difference(disc(record + 2.5))
-    vinyl = disc(record).difference(disc(17))
-    if full:
-        vinyl = vinyl.difference(ring(32.8, 2.2)).difference(ring(26.5, 2.2))
-    parts = [frame, vinyl, disc(3.4 if full else 5)]
-    if full:
-        parts.append(flake(17 / 45))
-    return unary_union(parts)
+    if not full:
+        return unary_union([frame, disc(record).difference(disc(17)), disc(5)])
+    s = record / 39  # the label, grooves and flake were drawn for a record of radius 39
+    vinyl = disc(record).difference(disc(17 * s))
+    vinyl = vinyl.difference(ring(32.8 * s, 2.2)).difference(ring(26.5 * s, 2.2))
+    return unary_union([frame, vinyl, disc(3.4 * s), flake(17 / 45 * s)])
 
 
 def to_path(geometry):
