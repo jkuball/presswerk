@@ -398,11 +398,11 @@ commits come first; equal-sized groups are ordered by Gitmoji shortcode. Each en
 least the commit subject; whether the default also includes the body is an implementation
 choice. Commits without a Gitmoji are not included in those notes.
 
-Release commits use `🔖`. The candidate's exact object ID is excluded from publication analysis;
-`bookmark` has no built-in meaning and ordinary commits using it still follow the declared
-catalog. A range contains at most one earlier release commit on its boundary, which the range
-excludes. A release commit cannot list itself either: its notes are rendered before it exists.
-How the template refers to the previous release, if at all, is up to the template.
+Release commits use `🔖`. The range base release is excluded by the Git range, and publication
+additionally excludes only the candidate's exact object ID. Every other reachable release commit
+follows the declared catalog like any other `bookmark` commit; `bookmark` has no built-in meaning.
+A release commit cannot list itself because its notes are rendered before it exists. How the
+template refers to the previous release, if at all, is up to the template.
 
 The exceptional pre-1.0 trusted-predecessor crossing adds a final
 `Presswerk-Trusted-Predecessor: <tag> <sha>` commit trailer. The trailer is part of the immutable

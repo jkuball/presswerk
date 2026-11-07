@@ -139,9 +139,17 @@ Before 1.0, an intentional schema break may require a one-time crossing:
 
 The flag and trailer are rejected for a supported predecessor, the first release, a different
 SHA or tag, a missing or moved remote tag, or a non-ancestor. They bypass only decoding and
-rechecking the old publishers, which step 1 performed with the old tool. After 1.0, schema
-evolution is expected to preserve backward compatibility. This mechanism remains an emergency
-fallback, not the normal upgrade procedure.
+rechecking the old publishers, which step 1 performed with the old tool.
+
+This crossing cannot land through the ordinary green path by itself. A pin-bump pull request's
+`plan` intentionally fails at the unsupported predecessor, while trusted `prepare` creates an
+untagged release commit that ordinary CI still recognizes as pending. The migration therefore
+needs an explicit landing workflow or a temporary, reviewed CI or branch-protection exception to
+land the pin update together with that generated release commit. Normal `publish` resumes from
+the committed trailer afterward.
+
+After 1.0, schema evolution is expected to preserve backward compatibility. This mechanism
+remains an emergency fallback, not the normal upgrade procedure.
 
 ### Extension shape
 
