@@ -24,23 +24,20 @@ the `contents: write` permission.
 ## Behavior
 
 `presswerk publish` pushes the release tag first and then completes every GitHub Release
-publisher. For each publisher it looks up the published release for the tag:
+publisher. For each publisher it looks up the release for the tag. GitHub finds only published
+releases by tag, so when there is none, Presswerk also searches every page of the repository's
+release listing for a draft with exactly that tag. Then it acts on what it finds:
 
 - **Missing:** it creates the release as a draft that targets the release commit, then
   publishes the draft, so the release never appears without its notes.
+- **Draft:** a previous run stopped between the two steps, so it publishes the existing draft
+  instead of creating another one.
 - **Published:** the release is complete, and it is left as it is.
 
 Before anything is written, Presswerk checks the state of the tag and of every publisher. A tag
-that is lightweight or points to another commit, or a release whose prerelease flag does not
-match the version, is *conflicting*: Presswerk stops and never overwrites it. An existing
-release is never edited.
+that is lightweight or points to another commit, a release whose prerelease flag does not match
+the version, or several releases for the same tag are *conflicting*: Presswerk stops and never
+overwrites them. An existing release is otherwise never edited, only a draft is published.
 
 So a retry of the same candidate completes missing state and keeps everything that already
 matches. After publishing, Presswerk reads every release back and fails unless it is published.
-
-:::caution[Interrupted runs can leave a draft]
-GitHub only finds published releases by tag, so Presswerk does not see a draft from an earlier
-run. If a run stops after creating the draft but before publishing it, a retry does not continue
-that draft: it tries to create another one. Delete the leftover draft on the repository's
-releases page before you retry.
-:::
