@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.2.1] - 2026-11-07
+
+### 📝 Add or update documentation
+
+- 📝 Align public entry points with project style
+- 📝 Use the locked CLI in README examples
+- 📝 Follow the relocated Gitmoji catalog
+- 📝 Add public repository guidance
+
+### 💚 Fix CI Build
+
+- 💚 Complete public Cachix workflow gating
+- 💚 Restore tokenless Cachix substitution
+- 💚 Authenticate read-only release plans
+
+### 👷 Add or update CI build system
+
+- 👷 Harden CI permissions for public pull requests
+
+### ♻️ Refactor code
+
+- ♻️ Restore the base release workflow
+
+### 🔧 Add or update configuration files
+
+- 🔧 Publish Nix package metadata
+
 ## [0.2.0] - 2026-11-07
 
 ### 🐛 Fix a bug
