@@ -16,6 +16,7 @@ let
   otherToml = builtins.baseNameOf otherTomlFixture;
   cargoLock = builtins.baseNameOf cargoLockFixture;
   presswerkVersion = (builtins.fromTOML (builtins.readFile (self.outPath + "/Cargo.toml"))).package.version;
+  vendoredCatalog = builtins.fromJSON (builtins.readFile ./gitmoji/catalog.json);
   succeeds = value: (builtins.tryEval (builtins.deepSeq value true)).success;
 
   publisher = {
@@ -44,7 +45,7 @@ in
     "test defaults normalize to plain declaration data" = {
       expr = defaults;
       expected = {
-        schemaVersion = 1;
+        schemaVersion = 2;
         version = presswerkVersion;
         versionFiles = [
           {
@@ -57,7 +58,10 @@ in
           }
         ];
         tag.format = "v{version}";
-        analyzer.convention = "gitmoji";
+        analyzer = {
+          convention = "gitmoji";
+          gitmoji.catalog = vendoredCatalog;
+        };
         changelog.path = "CHANGELOG.md";
         publishers.github-release.default = {
           apiUrl = "https://api.github.com";
@@ -113,8 +117,119 @@ in
     "test schemaVersion cannot be authored" = {
       expr = succeeds (mkRelease {
         inherit sourceRoot;
-        schemaVersion = 2;
+        schemaVersion = 3;
         version = "1.2.3";
+      });
+      expected = false;
+    };
+
+    "test Gitmoji catalog merges overrides and additions" = {
+      expr =
+        let
+          declaration = mkRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            analyzer.gitmoji.catalog = {
+              memo.semver = "patch";
+              flying_saucer = {
+                shortcode = "flying-saucer";
+                emoji = "🛸";
+                description = "Experimental feature behind a flag.";
+                semver = null;
+              };
+            };
+          };
+        in
+        {
+          memo = declaration.analyzer.gitmoji.catalog.memo;
+          flying_saucer = declaration.analyzer.gitmoji.catalog."flying-saucer";
+        };
+      expected = {
+        memo = vendoredCatalog.memo // { semver = "patch"; };
+        flying_saucer = {
+          emoji = "🛸";
+          description = "Experimental feature behind a flag.";
+          semver = null;
+        };
+      };
+    };
+
+    "test Gitmoji shortcode defaults to the entry identifier" = {
+      expr = (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.gitmoji.catalog.space_ship = {
+          emoji = "🛰️";
+          description = "Operate a satellite.";
+          semver = null;
+        };
+      }).analyzer.gitmoji.catalog.space_ship;
+      expected = {
+        emoji = "🛰️";
+        description = "Operate a satellite.";
+        semver = null;
+      };
+    };
+
+    "test duplicate resolved Gitmoji shortcodes fail" = {
+      expr = succeeds (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.gitmoji.catalog.other_memo = {
+          shortcode = "memo";
+          emoji = "📚";
+          description = "Duplicate the resolved memo shortcode.";
+          semver = null;
+        };
+      });
+      expected = false;
+    };
+
+    "test Gitmoji shortcodes must be non-empty and colon-free" = {
+      expr = map
+        (
+          shortcode:
+          succeeds (mkRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            analyzer.gitmoji.catalog.custom = {
+              inherit shortcode;
+              emoji = "🧿";
+              description = "Test invalid shortcode validation.";
+              semver = null;
+            };
+          })
+        )
+        [
+          ""
+          ":custom:"
+        ];
+      expected = [
+        false
+        false
+      ];
+    };
+
+    "test Gitmoji catalog can be replaced with mkForce" = {
+      expr = builtins.attrNames (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.gitmoji.catalog = lib.mkForce {
+          memo = vendoredCatalog.memo;
+        };
+      }).analyzer.gitmoji.catalog;
+      expected = [ "memo" ];
+    };
+
+    "test Gitmoji emojis must be unique without variation selectors" = {
+      expr = succeeds (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.gitmoji.catalog.custom_zap = {
+          emoji = "⚡";
+          description = "Duplicate the upstream zap without its variation selector.";
+          semver = null;
+        };
       });
       expected = false;
     };
@@ -278,13 +393,15 @@ in
       expected = defaults;
     };
 
-    "test Presswerk self declaration matches schema and Cargo version" = {
+    "test Presswerk self release pins its schema while the current library stays on schema 2" = {
       expr = {
-        schemaVersion = self.presswerk.default.schemaVersion;
+        selfSchemaVersion = self.presswerk.default.schemaVersion;
+        currentSchemaVersion = defaults.schemaVersion;
         versionMatches = self.presswerk.default.version == presswerkVersion;
       };
       expected = {
-        schemaVersion = 1;
+        selfSchemaVersion = 1;
+        currentSchemaVersion = 2;
         versionMatches = true;
       };
     };
@@ -301,6 +418,7 @@ in
         import-tree
         nix-unit
         nixpkgs
+        presswerk-release
         rust-flake
         treefmt-nix
         ;

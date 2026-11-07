@@ -7,6 +7,7 @@ use presswerk::publication::{
     PublicationError, Publisher, PublisherState, Release, RemoteState, TagPublisher,
     is_valid_successor, publish_ordered, validate_new_release, verify_predecessor_with,
 };
+use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
 use std::cell::RefCell;
 use std::io::{Read, Write};
@@ -19,11 +20,14 @@ use support::GitRepo;
 fn declaration(version: &str, repository: &str) -> ReleaseDeclaration {
     ReleaseDeclaration::from_json(&format!(
         r#"{{
-          "schemaVersion": 1,
+          "schemaVersion": 2,
           "version": "{version}",
           "versionFiles": [],
           "tag": {{ "format": "v{{version}}" }},
-          "analyzer": {{ "convention": "gitmoji" }},
+          "analyzer": {{
+            "convention": "gitmoji",
+            "gitmoji": {{ "catalog": {{}} }}
+          }},
           "changelog": {{ "path": "CHANGELOG.md" }},
           "publishers": {{
             "github-release": {{
@@ -346,6 +350,7 @@ fn predecessor_verification_uses_the_tagged_commits_own_publishers() {
         &Version::new(0, 1, 0),
         &current_declaration,
         &tag,
+        None,
         |commit| {
             assert_eq!(commit.to_string(), predecessor);
             Ok(previous_declaration.clone())
@@ -360,6 +365,160 @@ fn predecessor_verification_uses_the_tagged_commits_own_publishers() {
 
     assert_eq!(verified.commit.to_string(), predecessor);
     assert_eq!(*repositories.borrow(), ["old/project"]);
+}
+
+#[test]
+fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() {
+    let repository = GitRepo::new();
+    let predecessor = repository.commit_version("0.1.0", "🔖 Prepare predecessor");
+    repository.annotated_tag("v0.1.0");
+    repository.write("feature", "implemented\n");
+    let candidate = repository.commit("✨ Add a feature");
+    let predecessor = predecessor.parse().unwrap();
+    let candidate = candidate.parse().unwrap();
+    let current_declaration = declaration("0.1.0", "new/project");
+    let unsupported = PublicationError::unsupported_predecessor("v0.1.0", predecessor, 1);
+
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        writes: Rc::new(RefCell::new(Vec::new())),
+    };
+    let error = verify_predecessor_with(
+        repository.path(),
+        candidate,
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &tag,
+        None,
+        |_| Err(unsupported.clone()),
+        |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.as_unsupported_predecessor().unwrap().commit,
+        predecessor
+    );
+
+    let forged = TrustedPredecessor {
+        tag: "v0.1.0".into(),
+        commit: candidate,
+    };
+    let error = verify_predecessor_with(
+        repository.path(),
+        candidate,
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &tag,
+        Some(&forged),
+        |_| Err(unsupported.clone()),
+        |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("does not match expected"));
+
+    let trusted = TrustedPredecessor {
+        tag: "v0.1.0".into(),
+        commit: predecessor,
+    };
+    *tag.state.borrow_mut() = RemoteState::Missing;
+    let error = verify_predecessor_with(
+        repository.path(),
+        candidate,
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &tag,
+        Some(&trusted),
+        |_| Err(unsupported.clone()),
+        |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("missing from the remote"));
+
+    *tag.state.borrow_mut() = RemoteState::Matching;
+    let verified = verify_predecessor_with(
+        repository.path(),
+        candidate,
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &tag,
+        Some(&trusted),
+        |_| Err(unsupported.clone()),
+        |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(verified.commit, predecessor);
+}
+
+#[test]
+fn trusted_predecessor_must_be_an_ancestor() {
+    let repository = GitRepo::new();
+    let root = repository.commit_version("0.1.0", "🎉 Begin project");
+    repository.git(["checkout", "--quiet", "-b", "released"]);
+    repository.write("release", "prepared\n");
+    let predecessor = repository.commit("🔖 Prepare predecessor");
+    repository.annotated_tag("v0.1.0");
+    repository.git(["checkout", "--quiet", "-b", "candidate", &root]);
+    repository.write("feature", "implemented\n");
+    let candidate = repository.commit("✨ Add a feature");
+    let predecessor = predecessor.parse().unwrap();
+    let trusted = TrustedPredecessor {
+        tag: "v0.1.0".into(),
+        commit: predecessor,
+    };
+    let current_declaration = declaration("0.1.0", "new/project");
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        writes: Rc::new(RefCell::new(Vec::new())),
+    };
+
+    let error = verify_predecessor_with(
+        repository.path(),
+        candidate.parse().unwrap(),
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &tag,
+        Some(&trusted),
+        |_| unreachable!("ancestry is checked before decoding"),
+        |_, _, _| unreachable!("ancestry is checked before publishers"),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("not an ancestor"));
+}
+
+#[test]
+fn supported_predecessors_reject_unnecessary_trust() {
+    let repository = GitRepo::new();
+    let predecessor = repository.commit_version("0.1.0", "🔖 Prepare predecessor");
+    repository.annotated_tag("v0.1.0");
+    repository.write("feature", "implemented\n");
+    let candidate = repository.commit("✨ Add a feature");
+    let predecessor = predecessor.parse().unwrap();
+    let current_declaration = declaration("0.1.0", "new/project");
+    let previous_declaration = declaration("0.1.0", "old/project");
+    let trusted = TrustedPredecessor {
+        tag: "v0.1.0".into(),
+        commit: predecessor,
+    };
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        writes: Rc::new(RefCell::new(Vec::new())),
+    };
+
+    let error = verify_predecessor_with(
+        repository.path(),
+        candidate.parse().unwrap(),
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &tag,
+        Some(&trusted),
+        |_| Ok(previous_declaration.clone()),
+        |_, _, _| Ok(GithubReleaseState::Published { prerelease: false }),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("unnecessary"));
 }
 
 #[test]
@@ -383,6 +542,7 @@ fn predecessor_verification_rejects_an_empty_tagged_publisher_set() {
         &Version::new(0, 1, 0),
         &current_declaration,
         &tag,
+        None,
         |_commit| Ok(previous_declaration.clone()),
         |_publisher, _tag, _version| Ok(GithubReleaseState::Published { prerelease: false }),
     )

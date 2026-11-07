@@ -217,7 +217,8 @@ lookup is:
    release is [pending](#pending-releases); a tag pointing elsewhere is a conflict;
 1. verify that the previous release is fully published. For the first milestone, its GitHub
    Release must exist and be published, not missing or a draft. A network or authentication
-   error must not be mistaken for a complete release;
+   error must not be mistaken for a complete release. The tag format and destinations come from
+   that tagged release's declaration, so a later publisher change cannot rewrite its identity;
 1. analyze the applicable commit range, such as `v1.3.0..HEAD`, using Git history. For the first
    release there is no physical tag, so the range includes the root commit.
 
@@ -383,18 +384,30 @@ This keeps Presswerk from being married to git-cliff. Useful conventions are:
 
 For the self-release, the [Gitmoji specification](https://gitmoji.dev/specification) and its
 [catalog](https://github.com/carloscuesta/gitmoji/blob/master/packages/gitmojis/src/gitmojis.json)
-are the reference. The catalog contains SemVer levels for some Gitmojis and `null` for others;
-the specification accepts Unicode and shortcode spellings. For Presswerk's self-release, notes
-include commits with a Gitmoji even when that emoji does not trigger a version bump. Notes group
+are the reference. Authoring keys identify catalog entries and each entry's shortcode defaults to
+its key; the release declaration rekeys the resolved catalog by shortcode without surrounding
+colons. Presswerk's release module starts with a vendored upstream catalog, while ordinary module
+merging lets a project change shortcodes or SemVer levels and add entries. The CLI has no
+built-in catalog and matches Unicode and shortcode subjects only against the catalog declared at
+the exact commit being analyzed.
+
+The catalog contains SemVer levels for some Gitmojis and `null` for others; the specification
+accepts Unicode and shortcode spellings. For Presswerk's self-release, notes include commits with
+a Gitmoji even when that emoji does not trigger a version bump. Notes group
 commits by emoji, with Unicode and shortcode spellings in the same group. Groups with more
 commits come first; equal-sized groups are ordered by Gitmoji shortcode. Each entry includes at
 least the commit subject; whether the default also includes the body is an implementation
 choice. Commits without a Gitmoji are not included in those notes.
 
-Release commits use `🔖`. A range contains at most one release commit, its previous release's,
-on its boundary; it is never grouped as an ordinary `🔖` entry. A release commit cannot list
-itself either: its notes are rendered before it exists. How the template refers to the
-previous release, if at all, is up to the template.
+Release commits use `🔖`. The range base release is excluded by the Git range, and publication
+additionally excludes only the candidate's exact object ID. Every other reachable release commit
+follows the declared catalog like any other `bookmark` commit; `bookmark` has no built-in meaning.
+A release commit cannot list itself because its notes are rendered before it exists. How the
+template refers to the previous release, if at all, is up to the template.
+
+The exceptional pre-1.0 trusted-predecessor crossing adds a final
+`Presswerk-Trusted-Predecessor: <tag> <sha>` commit trailer. The trailer is part of the immutable
+candidate and is consumed by `publish`; ordinary release commits do not contain it.
 
 Analysis uses the commits actually reachable in Git history, not forge pull-request metadata.
 After a squash merge the squash commit is analyzed, not the original commits that were not
