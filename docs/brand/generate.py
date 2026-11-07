@@ -4,15 +4,18 @@ The mark is a monochrome split die: a hexagonal pressing tool, split at the
 height of the record's centre, holding a record with a lambda-flake label and a
 round spindle hole. It comes in two detail levels: the full mark with grooves
 and flake for large sizes (from about 64 px), and the reduced icon for headers
-and favicons. Every shape is cut out with an SVG mask, so the assets have one
-fill colour and a transparent background.
+and favicons.
+
+Every asset is a single filled path with one colour and a transparent
+background. The shapes are combined as geometry instead of SVG masks, because
+WebKit rasterises masked SVG images at low resolution and they turn blurry.
 
 The wordmark is set in Archivo (SIL Open Font License) at width 62 and weight
 800 and converted to outlines, so the assets need no font at runtime.
 
 Usage, from the repository root:
 
-    nix shell --impure --expr 'with import <nixpkgs> {}; python3.withPackages (p: [p.fonttools])' \\
+    nix shell --impure --expr 'with import <nixpkgs> {}; python3.withPackages (p: [p.fonttools p.shapely])' \\
       -c python3 docs/brand/generate.py path/to/Archivo[wdth,wght].ttf
 
 The variable Archivo font is available from https://github.com/google/fonts/tree/main/ofl/archivo.
@@ -26,6 +29,9 @@ from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
+from shapely import affinity
+from shapely.geometry import LineString, Point, Polygon, box
+from shapely.ops import unary_union
 
 INK_LIGHT = "#111111"  # ink on the light theme
 INK_DARK = "#ECECEA"  # ink on the dark theme
@@ -34,63 +40,70 @@ REPO = Path(__file__).resolve().parents[2]
 ASSETS = REPO / "docs/site/src/assets/brand"
 PUBLIC = REPO / "docs/site/public"
 
+CENTRE = (50, 50)
+SEGMENTS = 96  # per quarter circle; smooth even at hero size
 
-def hex_points(r, cx=50, cy=50, offset=0):
-    return " ".join(
-        f"{cx + r * math.cos(math.radians(offset + 60 * k)):.2f},{cy + r * math.sin(math.radians(offset + 60 * k)):.2f}"
+
+def disc(r):
+    return Point(CENTRE).buffer(r, quad_segs=SEGMENTS)
+
+
+def ring(r, width):
+    return disc(r + width / 2).difference(disc(r - width / 2))
+
+
+def hexagon(r):
+    return Polygon(
+        (CENTRE[0] + r * math.cos(math.radians(60 * k)), CENTRE[1] + r * math.sin(math.radians(60 * k)))
         for k in range(6)
     )
 
 
-def lambda_path(length):
-    """One lambda: a long leg at 60 degrees and a short leg branching from its middle."""
-    a = math.radians(60)
-    bx, by = length * math.cos(a), length * math.sin(a)
-    mx, my = bx / 2, by / 2
-    cx, cy = mx - length / 2 * math.cos(a), my + length / 2 * math.sin(a)
-    return f"M0,0 L{bx:.2f},{by:.2f} M{mx:.2f},{my:.2f} L{cx:.2f},{cy:.2f}"
-
-
-def flake(scale, colour):
-    """Six lambdas rotated around the centre; drawn small enough to sit on the label."""
-    arm = lambda_path(34)
-    arms = "".join(
-        f'<g transform="rotate({k * 60}) translate(0,-8) rotate(90)">'
-        f'<path d="{arm}" stroke="{colour}" stroke-width="6.5" fill="none"/></g>'
-        for k in range(6)
-    )
-    return f'<g transform="translate(50,50) scale({scale:.4f})">{arms}</g>'
-
-
-def mark_mask(full):
-    """White keeps ink, black cuts it away."""
-    disc = 39 if full else 32
-    parts = [
-        f'<polygon points="{hex_points(48)}" fill="white"/>',
-        '<rect x="0" y="47.25" width="100" height="5.5" fill="black"/>',
-        f'<circle cx="50" cy="50" r="{disc + 2.5}" fill="black"/>',
-        f'<circle cx="50" cy="50" r="{disc}" fill="white"/>',
-    ]
-    if full:
-        parts += [
-            f'<circle cx="50" cy="50" r="{r}" fill="none" stroke="black" stroke-width="2.2"/>'
-            for r in (32.8, 26.5)
+def flake(scale):
+    """Six lambdas around the centre: a long leg at 60 degrees and a short leg from its middle."""
+    length, width, a = 34, 6.5, math.radians(60)
+    b = (length * math.cos(a), length * math.sin(a))
+    m = (b[0] / 2, b[1] / 2)
+    c = (m[0] - length / 2 * math.cos(a), m[1] + length / 2 * math.sin(a))
+    arm = unary_union(
+        [
+            LineString([(0, 0), b]).buffer(width / 2, cap_style="flat", join_style="mitre"),
+            LineString([m, c]).buffer(width / 2, cap_style="flat", join_style="mitre"),
         ]
-    parts.append('<circle cx="50" cy="50" r="17" fill="black"/>')
-    if full:
-        parts.append(flake(17 / 45, "white"))
-    parts.append(f'<circle cx="50" cy="50" r="{3.4 if full else 5}" fill="white"/>')
-    return "".join(parts)
-
-
-def mark_body(full, fill, mask_id, css_class=""):
-    return (
-        f'<mask id="{mask_id}" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">'
-        f'<rect width="100" height="100" fill="black"/>{mark_mask(full)}</mask>'
-        f'<rect width="100" height="100" fill="{fill}" mask="url(#{mask_id})"'
-        + (f' class="{css_class}"' if css_class else "")
-        + "/>"
     )
+    arm = affinity.translate(affinity.rotate(arm, 90, origin=(0, 0)), 0, -8)
+    arms = unary_union([affinity.rotate(arm, 60 * k, origin=(0, 0)) for k in range(6)])
+    return affinity.translate(affinity.scale(arms, scale, scale, origin=(0, 0)), *CENTRE)
+
+
+def mark_geometry(full):
+    """The ink of the mark on a 100 x 100 canvas."""
+    record = 39 if full else 32
+    frame = hexagon(48).difference(box(0, 47.25, 100, 52.75)).difference(disc(record + 2.5))
+    vinyl = disc(record).difference(disc(17))
+    if full:
+        vinyl = vinyl.difference(ring(32.8, 2.2)).difference(ring(26.5, 2.2))
+    parts = [frame, vinyl, disc(3.4 if full else 5)]
+    if full:
+        parts.append(flake(17 / 45))
+    return unary_union(parts)
+
+
+def to_path(geometry):
+    """SVG path data; holes become subpaths, drawn with fill-rule evenodd."""
+    polygons = getattr(geometry, "geoms", [geometry])
+
+    def ring_data(coords):
+        points = list(coords)[:-1]
+        return "M" + "L".join(f"{x:.2f},{y:.2f}" for x, y in points) + "Z"
+
+    return "".join(
+        ring_data(p.exterior.coords) + "".join(ring_data(i.coords) for i in p.interiors) for p in polygons
+    )
+
+
+def mark_path(full, fill, attrs=""):
+    return f'<path d="{to_path(mark_geometry(full))}" fill="{fill}" fill-rule="evenodd"{attrs}/>'
 
 
 def svg(width, height, body, title):
@@ -114,15 +127,15 @@ def wordmark(font, text="PRESSWERK", tracking=0.03):
     return pen.getCommands(), x, cap
 
 
-def lockup(font, fill, mask_id):
+def lockup(font, fill):
     """Icon left, wordmark right; the icon is a little taller than the capitals."""
     path, width, cap = wordmark(font)
     icon = cap * 1.4
     gap = icon * 0.32
     top = (icon - cap) / 2
     body = (
-        f'<g transform="scale({icon / 100:.4f})">{mark_body(False, fill, mask_id)}</g>'
-        f'<path d="{path}" fill="{fill}" transform="translate({icon + gap:.2f},{top:.2f})"/>'
+        mark_path(False, fill, f' transform="scale({icon / 100:.4f})"')
+        + f'<path d="{path}" fill="{fill}" transform="translate({icon + gap:.2f},{top:.2f})"/>'
     )
     return svg(icon + gap + width, icon, body, "Presswerk")
 
@@ -133,18 +146,17 @@ def favicon():
         f"<style>.ink{{fill:{INK_LIGHT}}}"
         f"@media (prefers-color-scheme: dark){{.ink{{fill:{INK_DARK}}}}}</style>"
     )
-    return svg(100, 100, style + mark_body(False, INK_LIGHT, "m", "ink"), "Presswerk")
+    return svg(100, 100, style + mark_path(False, INK_LIGHT, ' class="ink"'), "Presswerk")
 
 
 def main(archivo_path):
-    font = TTFont(archivo_path)
-    font = instantiateVariableFont(font, {"wdth": 62, "wght": 800})
+    font = instantiateVariableFont(TTFont(archivo_path), {"wdth": 62, "wght": 800})
     ASSETS.mkdir(parents=True, exist_ok=True)
     PUBLIC.mkdir(parents=True, exist_ok=True)
     for theme, ink in (("light", INK_LIGHT), ("dark", INK_DARK)):
-        (ASSETS / f"mark-{theme}.svg").write_text(svg(100, 100, mark_body(True, ink, "m"), "Presswerk"))
-        (ASSETS / f"icon-{theme}.svg").write_text(svg(100, 100, mark_body(False, ink, "m"), "Presswerk"))
-        (ASSETS / f"lockup-{theme}.svg").write_text(lockup(font, ink, "m"))
+        (ASSETS / f"mark-{theme}.svg").write_text(svg(100, 100, mark_path(True, ink), "Presswerk"))
+        (ASSETS / f"icon-{theme}.svg").write_text(svg(100, 100, mark_path(False, ink), "Presswerk"))
+        (ASSETS / f"lockup-{theme}.svg").write_text(lockup(font, ink))
     (PUBLIC / "favicon.svg").write_text(favicon())
 
 
