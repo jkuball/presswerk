@@ -156,11 +156,21 @@
           pkgs.prek
         ];
 
+        env = [
+          {
+            name = "ASTRO_TELEMETRY_DISABLED";
+            value = "1";
+          }
+        ];
+
         commands = [
           {
             name = "docs-preview";
             help = "Preview the documentation site";
-            command = "pnpm --dir docs/site install --frozen-lockfile && pnpm --dir docs/site dev";
+            command = ''
+              pnpm --dir "$PRJ_ROOT/docs/site" install --frozen-lockfile \
+                && pnpm --dir "$PRJ_ROOT/docs/site" dev
+            '';
           }
         ];
 
