@@ -1,6 +1,60 @@
 ---
 title: Presswerk
-description: Documentation for Presswerk release tooling.
+description: Release tooling for projects whose artifacts are built with Nix flakes.
+template: splash
+hero:
+  title: PRESSWERK
+  tagline: Bringing controlled outside world mutation into your immutable software builds.
+  image:
+    light: ../../assets/brand/mark-light.svg
+    dark: ../../assets/brand/mark-dark.svg
+    alt: The Presswerk mark, a record held in a split hexagonal die.
 ---
 
-Presswerk turns repository release declarations into repeatable release work.
+Presswerk turns repository release declarations into repeatable release work. One immutable
+master record, the flake at an exact commit, is pressed into every published release.
+
+:::caution
+Presswerk is early, work-in-progress software. Commands, the release declaration, and output may
+change in any version.
+:::
+
+A release is declared with `lib.mkRelease`, which evaluates a Nix module and produces plain data
+at the `presswerk.default` flake output:
+
+```nix
+# flake.nix
+{
+  inputs.presswerk.url = "github:jkuball/presswerk";
+
+  outputs = { self, presswerk, ... }: {
+    presswerk.default = presswerk.lib.mkRelease {
+      sourceRoot = self.outPath;
+      versionFiles.cargo.my-crate = { };
+      publishers.github-release.default.repository = "owner/project";
+    };
+  };
+}
+```
+
+The CLI then works on the committed state of the repository:
+
+```console
+$ nix run github:jkuball/presswerk -- plan      # show the next release, write nothing
+$ nix run github:jkuball/presswerk -- prepare   # create the release commit
+$ nix run github:jkuball/presswerk -- publish   # tag and publish an exact candidate
+```
+
+The release commit carries the new version and frozen release notes, so CI builds and checks
+the exact candidate before anything is published:
+
+```mermaid
+gitGraph
+  commit id: "a1f3c2e"
+  branch fix/tag-lookup
+  commit id: "4e21c09"
+  checkout main
+  merge fix/tag-lookup
+  commit id: "release 0.2.0" tag: "v0.2.0"
+  commit id: "c7d1e88"
+```

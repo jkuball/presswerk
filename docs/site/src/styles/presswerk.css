@@ -1,0 +1,160 @@
+/*
+ * Presswerk theme for Starlight: near-binary "noir" with a single Zinnober accent.
+ * Decided in https://github.com/jkuball/presswerk/issues/31.
+ *
+ * Rules: the mark never carries the accent; never place a dark symbol on a light
+ * disc on a red field. Every text colour reaches at least 4.5:1 on ground and surface.
+ */
+
+/* Dark theme (Starlight's default) */
+:root {
+  --pw-ground: #111111;
+  --pw-surface: #1b1b1b;
+  --pw-ink: #ececea;
+  --pw-muted: #9a9a97;
+  --pw-faint: #969693;
+  --pw-rule: #2c2c2c;
+  --pw-accent: #f0705f;
+  --pw-accent-wash: #2a1612;
+
+  --sl-color-white: var(--pw-ink);
+  --sl-color-gray-1: #e0e0dd;
+  --sl-color-gray-2: #d4d4d1;
+  --sl-color-gray-3: var(--pw-muted);
+  --sl-color-gray-4: #6a6a67;
+  --sl-color-gray-5: var(--pw-rule);
+  --sl-color-gray-6: var(--pw-surface);
+  --sl-color-black: var(--pw-ground);
+
+  --sl-color-accent-low: var(--pw-accent-wash);
+  --sl-color-accent: var(--pw-accent);
+  --sl-color-accent-high: #f7a598;
+  --sl-color-text-accent: var(--pw-accent);
+  --sl-color-text-invert: var(--pw-ground);
+
+  --sl-color-bg-nav: var(--pw-ground);
+  --sl-color-bg-sidebar: var(--pw-ground);
+  --sl-color-bg-inline-code: var(--pw-surface);
+  --sl-color-hairline: var(--pw-rule);
+  --sl-color-hairline-light: var(--pw-rule);
+
+  --sl-font: 'Archivo Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --sl-font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Git graphs rendered by Pele */
+  --pele-bg: var(--pw-ground);
+  --pele-fg: var(--pw-ink);
+  --pele-muted: var(--pw-muted);
+  --pele-line: var(--pw-ink);
+  --pele-surface: var(--pw-surface);
+  --pele-surface-alt: var(--pw-rule);
+  --pele-border: var(--pw-rule);
+  --pele-accent: var(--pw-accent);
+  --pele-series-1: var(--pw-ink);
+  --pele-series-2: var(--pw-accent);
+  --pele-series-3: var(--pw-muted);
+  --pele-font: var(--sl-font);
+  --pele-font-mono: var(--sl-font-mono);
+  --pele-radius: 2px;
+}
+
+/* Light theme */
+:root[data-theme='light'] {
+  --pw-ground: #f0f0ee;
+  --pw-surface: #e6e6e3;
+  --pw-ink: #111111;
+  --pw-muted: #5c5c5a;
+  --pw-faint: #666663;
+  --pw-rule: #d3d3cf;
+  --pw-accent: #b82e1c;
+  --pw-accent-wash: #f3dcd7;
+
+  --sl-color-white: var(--pw-ink);
+  --sl-color-gray-1: #1e1e1e;
+  --sl-color-gray-2: #262625;
+  --sl-color-gray-3: var(--pw-muted);
+  --sl-color-gray-4: #8e8e8a;
+  --sl-color-gray-5: var(--pw-rule);
+  --sl-color-gray-6: var(--pw-surface);
+  --sl-color-gray-7: #ebebe8;
+  --sl-color-black: var(--pw-ground);
+
+  --sl-color-accent-low: var(--pw-accent-wash);
+  --sl-color-accent: var(--pw-accent);
+  --sl-color-accent-high: #8e2416;
+  --sl-color-text-accent: var(--pw-accent);
+  --sl-color-text-invert: var(--pw-ground);
+
+  --sl-color-bg-nav: var(--pw-ground);
+  --sl-color-bg-sidebar: var(--pw-ground);
+  --sl-color-bg-inline-code: var(--pw-surface);
+  --sl-color-hairline: var(--pw-rule);
+  --sl-color-hairline-light: var(--pw-rule);
+  --sl-color-hairline-shade: var(--pw-rule);
+}
+
+/* Headings: Archivo condensed and heavy, like the wordmark, but in sentence case */
+:is(h1, h2, h3, h4, h5, h6) {
+  font-stretch: 75%;
+  font-weight: 800;
+  letter-spacing: 0.005em;
+  text-wrap: balance;
+}
+
+/* Links carry the accent and an underline, so meaning never depends on colour alone */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--pw-accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+/* Sidebar: the current page gets weight and an accent rule instead of a filled pill */
+nav.sidebar a[aria-current='page'],
+nav.sidebar a[aria-current='page']:hover,
+nav.sidebar a[aria-current='page']:focus {
+  color: var(--pw-ink);
+  background-color: transparent;
+  box-shadow: inset 2px 0 0 var(--pw-accent);
+}
+
+/* Asides: surface with an accent rule; caution and danger keep their own meaning through icon and title */
+.starlight-aside {
+  background-color: var(--pw-surface);
+  border-radius: 0 3px 3px 0;
+}
+.starlight-aside--note,
+.starlight-aside--tip {
+  --sl-color-asides-text-accent: var(--pw-accent);
+  --sl-color-asides-border: var(--pw-accent);
+}
+.starlight-aside--caution,
+.starlight-aside--danger {
+  --sl-color-asides-text-accent: var(--pw-ink);
+  --sl-color-asides-border: var(--pw-ink);
+}
+.starlight-aside__title {
+  font-family: var(--sl-font-mono);
+  font-size: var(--sl-text-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* Inline code */
+.sl-markdown-content :not(pre) > code {
+  border-radius: 2px;
+}
+
+/* Git graphs */
+.pw-graph {
+  overflow-x: auto;
+  border: 1px solid var(--pw-rule);
+  border-radius: 3px;
+  padding: 0.75rem;
+}
+.pw-graph svg {
+  width: min(100%, 32rem);
+  height: auto;
+}
+.pw-graph .pele-commits {
+  fill: var(--pw-ink);
+}
