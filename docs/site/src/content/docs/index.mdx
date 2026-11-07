@@ -15,8 +15,8 @@ Presswerk turns repository release declarations into repeatable release work. On
 master record, the flake at an exact commit, is pressed into every published release.
 
 :::caution
-Presswerk is early, work-in-progress software. Commands, the release declaration, and output may
-change in any version.
+Presswerk is early, work-in-progress software. It releases itself, but its commands,
+configuration, and output are not stable yet. Do not rely on it for production releases.
 :::
 
 A release is declared with `lib.mkRelease`, which evaluates a Nix module and produces plain data
@@ -37,12 +37,12 @@ at the `presswerk.default` flake output:
 }
 ```
 
-The CLI then works on the committed state of the repository:
+Run the CLI from the Presswerk input locked in your flake, so it matches your `mkRelease`:
 
 ```console
-$ nix run github:jkuball/presswerk -- plan      # show the next release, write nothing
-$ nix run github:jkuball/presswerk -- prepare   # create the release commit
-$ nix run github:jkuball/presswerk -- publish   # tag and publish an exact candidate
+$ nix run --inputs-from . presswerk -- plan           # show the next release, write nothing
+$ nix run --inputs-from . presswerk -- prepare        # create the release commit
+$ nix run --inputs-from . presswerk -- publish HEAD   # tag and publish an exact candidate
 ```
 
 The release commit carries the new version and frozen release notes, so CI builds and checks

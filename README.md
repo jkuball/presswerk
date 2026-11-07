@@ -10,9 +10,9 @@
 </p>
 
 <p align="center">
+  <a href="https://jkuball.github.io/presswerk/">Documentation</a> ·
   <a href="https://github.com/jkuball/presswerk/releases">Releases</a> ·
-  <a href="CHANGELOG.md">Changelog</a> ·
-  <a href="docs/conception/README.md">Conception</a>
+  <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 > [!WARNING]
