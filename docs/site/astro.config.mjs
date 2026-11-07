@@ -23,7 +23,19 @@ export default defineConfig({
         '@fontsource-variable/jetbrains-mono/wght-italic.css',
         './src/styles/presswerk.css',
       ],
-      sidebar: [{ label: 'Documentation', items: [{ label: 'Overview', slug: 'index' }] }],
+      sidebar: [
+        { label: 'Documentation', items: [{ label: 'Overview', slug: 'index' }] },
+        {
+          label: 'Reference',
+          items: [
+            { label: 'Release options', link: '/reference/options/' },
+            { slug: 'reference/declaration-schema' },
+            { slug: 'reference/cli' },
+            { label: 'Publishers', items: [{ label: 'GitHub Release', slug: 'reference/publishers/github-release' }] },
+            { slug: 'reference/gitmoji-catalog' },
+          ],
+        },
+      ],
     }),
   ],
 });
