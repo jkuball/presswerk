@@ -11,7 +11,9 @@ on:
         required: false
         type: string
 
-permissions: {}
+permissions:
+  actions: write
+  contents: write
 
 concurrency:
   group: ${{ github.event_name == 'pull_request' && github.ref || 'presswerk-release' }}
@@ -19,14 +21,11 @@ concurrency:
 
 jobs:
   ci:
-    permissions:
-      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          persist-credentials: false
           ref: ${{ inputs.candidate || github.sha }}
 
       - name: Configure Presswerk deploy key
@@ -45,42 +44,24 @@ jobs:
           EOF
 
       - uses: DeterminateSystems/determinate-nix-action@v3
-
-      - name: Detect Cachix push credentials
-        id: cachix
-        if: github.event_name != 'pull_request'
-        env:
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: |
-          if test -n "$CACHIX_AUTH_TOKEN"; then
-            echo 'push=true' >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: cachix/cachix-action@v17
         with:
           name: jkuball
-          authToken: ${{ steps.cachix.outputs.push == 'true' && secrets.CACHIX_AUTH_TOKEN || '' }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
 
       - name: Build flake
-        env:
-          CACHIX_PUSH: ${{ steps.cachix.outputs.push == 'true' }}
-        run: |
-          cache_args=()
-          if test "$CACHIX_PUSH" = true; then
-            cache_args=(--push-build-closure --cachix-cache jkuball)
-          fi
-          nix run --inputs-from . nixpkgs#nix-fast-build -- \
-            --flake ".#" --select 'flake: { inherit (flake) packages checks; }' \
-            --no-nom --skip-cached "${cache_args[@]}"
+        run: >
+          nix run --inputs-from . nixpkgs#nix-fast-build --
+          --flake ".#" --select 'flake: { inherit (flake) packages checks; }'
+          --no-nom --skip-cached --push-build-closure
+          ${{ secrets.CACHIX_AUTH_TOKEN != '' && '--cachix-cache jkuball' || '' }}
 
       - name: Plan release
         if: github.event_name == 'pull_request'
         env:
-          GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          gh auth setup-git
           plan="$RUNNER_TEMP/presswerk-plan.txt"
           status=0
           nix run .#presswerk-release -- plan > "$plan" 2>&1 || status=$?
@@ -94,39 +75,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
-  prepare-release:
-    if: github.event_name == 'push'
-    needs: ci
-    permissions:
-      actions: write
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Configure Presswerk deploy key
-        env:
-          PRESSWERK_DEPLOY_KEY: ${{ secrets.PRESSWERK_DEPLOY_KEY }}
-        run: |
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$PRESSWERK_DEPLOY_KEY" > ~/.ssh/presswerk
-          chmod 600 ~/.ssh/presswerk
-          ssh-keyscan github.com > ~/.ssh/known_hosts
-          cat > ~/.ssh/config <<'EOF'
-          Host github.com
-            IdentityFile ~/.ssh/presswerk
-            IdentitiesOnly yes
-          EOF
-
-      - uses: DeterminateSystems/determinate-nix-action@v3
-      - uses: cachix/cachix-action@v17
-        with:
-          name: jkuball
-          skipPush: true
-
       - name: Prepare release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -150,44 +100,12 @@ jobs:
           git push origin HEAD:main
           gh workflow run ci.yml --ref main -f candidate="$candidate"
 
-  publish-release:
-    if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
-    needs: ci
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          ref: ${{ inputs.candidate }}
-
-      - name: Configure Presswerk deploy key
-        env:
-          PRESSWERK_DEPLOY_KEY: ${{ secrets.PRESSWERK_DEPLOY_KEY }}
-        run: |
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$PRESSWERK_DEPLOY_KEY" > ~/.ssh/presswerk
-          chmod 600 ~/.ssh/presswerk
-          ssh-keyscan github.com > ~/.ssh/known_hosts
-          cat > ~/.ssh/config <<'EOF'
-          Host github.com
-            IdentityFile ~/.ssh/presswerk
-            IdentitiesOnly yes
-          EOF
-
-      - uses: DeterminateSystems/determinate-nix-action@v3
-      - uses: cachix/cachix-action@v17
-        with:
-          name: jkuball
-          skipPush: true
-
       - name: Publish release
+        if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
         env:
-          CANDIDATE: ${{ inputs.candidate }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+          test "$(git rev-parse HEAD)" = "${{ inputs.candidate }}"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           nix run .#presswerk-release -- publish HEAD
