@@ -108,5 +108,5 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without
 any additional terms or conditions.
 
-The vendored [Gitmoji catalog](src/gitmoji/README.md) is licensed under the MIT license by its
+The vendored [Gitmoji catalog](modules/release/gitmoji/README.md) is licensed under the MIT license by its
 upstream authors.
