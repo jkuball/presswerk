@@ -1,7 +1,9 @@
+{ self, ... }:
 {
   perSystem =
     { lib
     , pkgs
+    , self'
     , ...
     }:
     let
@@ -13,7 +15,7 @@
     {
       packages.docs = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         pname = "presswerk-docs";
-        version = "0.1.0";
+        version = self.presswerk.default.version;
         src = site;
         ASTRO_TELEMETRY_DISABLED = "1";
 
@@ -42,5 +44,11 @@
           runHook postInstall
         '';
       });
+
+      checks.docs-version =
+        assert lib.assertMsg
+          (self'.packages.docs.version == self.presswerk.default.version)
+          "packages.docs.version must match presswerk.default.version";
+        pkgs.runCommand "docs-version-check" { } "touch $out";
     };
 }
