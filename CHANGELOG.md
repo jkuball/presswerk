@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.2.2] - 2026-11-07
+
+### 💄 Add or update the UI and style files
+
+- 💄 (docs): Give the full mark's frame room at the edges
+- 💄 (docs): Colour the shell prompt with the accent
+- 💄 (docs): Escalate callouts with the accent
+- 💄 Put the Presswerk lockup on the README
+- 💄 (docs): Theme the docs site
+
+### 🐛 Fix a bug
+
+- 🐛 (docs): Draw brand assets as paths instead of masks
+- 🐛 (docs): Keep the theme picker on narrow splash pages
+
+### 🍱 Add or update assets
+
+- 🍱 (docs): Add brand assets
+
+### 🔨 Add or update development scripts
+
+- 🔨 (docs): Run the brand asset generator through the flake
+
+### 📝 Add or update documentation
+
+- 📝 (docs): Follow the README's locked CLI usage on the landing page
+
 ## [0.2.1] - 2026-11-07
 
 ### 📝 Add or update documentation
