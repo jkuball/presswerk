@@ -87,7 +87,7 @@ provide a flake-parts-specific release adapter.
 
 - [Release model](./model/) defines master records, pressings, candidates, release commits, and
   pending releases.
-- [Quickstart](./quickstart/) releases a small Rust flake project through GitHub Actions.
+- [Walkthrough](./walkthrough/) releases a small Rust flake project through GitHub Actions.
 - [GitHub Actions](./github-actions/) explains preparation, exact-candidate dispatch, serialization,
   and stale-run protection.
 - [Gitmoji](../reference/analyzers/gitmoji/) covers commit subjects, version levels, overrides, and custom

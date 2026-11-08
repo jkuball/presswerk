@@ -131,11 +131,6 @@ nav.sidebar a[aria-current='page']:focus {
   border-radius: 0;
   box-shadow: inset 3px 0 0 var(--pw-accent);
 }
-nav.sidebar a[href$='/guide/quickstart/'] > .sl-badge {
-  color: var(--pw-accent);
-  background-color: var(--pw-accent-wash);
-  border-color: var(--pw-accent);
-}
 
 /*
  * Asides escalate with one colour: tip is neutral, note carries the accent rule,

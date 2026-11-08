@@ -5,7 +5,7 @@ description: Wire preparation and publication as two serialized runs around one 
 
 Presswerk's GitHub Actions integration is runtime wiring, not code inside the CLI. The workflow must
 keep ordinary branch preparation separate from exact-candidate publication. The complete working
-file is in the [quickstart](../quickstart/#3-add-the-two-phase-workflow), and the
+file is in the [walkthrough](../walkthrough/#3-add-the-two-phase-workflow), and the
 [CLI reference](/presswerk/reference/cli/) documents the invoked commands.
 
 ## Trigger matrix

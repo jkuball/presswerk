@@ -1,13 +1,11 @@
 ---
-title: "Quickstart: release a Rust flake"
+title: "Walkthrough: release a Rust flake"
 sidebar:
-  badge:
-    text: Start here
-    variant: tip
+  label: Walkthrough
 description: Configure a small Cargo project, run a release plan, and publish its first GitHub Release through exact-candidate CI.
 ---
 
-This quickstart starts a new Cargo package at Presswerk's implicit `0.0.0` baseline. A Gitmoji feature
+This walkthrough starts a new Cargo package at Presswerk's implicit `0.0.0` baseline. A Gitmoji feature
 commit makes the first planned version `0.1.0`. GitHub Actions then prepares the release commit,
 checks that exact commit, and publishes its tag and GitHub Release.
 

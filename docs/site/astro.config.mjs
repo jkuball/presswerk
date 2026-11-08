@@ -30,7 +30,7 @@ export default defineConfig({
           items: [
             { label: 'Why Presswerk', slug: 'guide' },
             { label: 'Release model', slug: 'guide/model' },
-            { label: 'Quickstart', slug: 'guide/quickstart' },
+            { label: 'Walkthrough', slug: 'guide/walkthrough' },
             { label: 'GitHub Actions', slug: 'guide/github-actions' },
             { label: 'Recovery', slug: 'guide/recovery' },
           ],
