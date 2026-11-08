@@ -19,10 +19,10 @@ gitGraph
   commit id: "🔖 release 0.3.0" tag: "v0.3.0"
 ```
 
-:::note
+:::caution[GitHub is required for now]
 Every release currently needs a [GitHub Release publisher](/presswerk/reference/publishers/github-release/),
 so publication talks to GitHub. That is a limitation of the publishers available today, not of the
-release model.
+release model, and it will go away.
 :::
 
 ## Automatic releases
