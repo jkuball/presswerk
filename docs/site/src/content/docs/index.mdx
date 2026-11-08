@@ -10,18 +10,19 @@ hero:
     alt: The Presswerk mark, a record held in a split hexagonal die.
 ---
 
-Releasing a Nix flake still means changing the outside world: bump the version, write release
-notes, tag, publish. Presswerk ties all of it to one exact commit. It creates a release commit
-with the new version and frozen notes, lets your checks run on that candidate, and then tags and
-publishes exactly that commit.
+Nix makes building your software reproducible, but not releasing it. Version bumps, release notes,
+tags, and published releases change the outside world, and they easily drift apart from what was
+actually built and tested. Presswerk keeps them together: it records the new version and
+frozen notes in a release commit, lets your checks run on it, and publishes exactly what they
+tested.
 
 :::caution
 Presswerk is early, work-in-progress software. It releases itself, but its commands,
 configuration, and output are not stable yet. Do not rely on it for production releases.
 :::
 
-Declare the release in your flake with `lib.mkRelease`: which files carry the version, and where
-the release is published:
+To use Presswerk, add a release declaration to the flake that already builds your software.
+`lib.mkRelease` describes which files carry the version and where the release is published:
 
 ```nix
 # flake.nix
@@ -29,40 +30,63 @@ the release is published:
   inputs.presswerk.url = "github:jkuball/presswerk";
 
   outputs = { self, presswerk, ... }: {
+    # your software, built as before
+    packages = { … };
+
     presswerk.default = presswerk.lib.mkRelease {
       sourceRoot = self.outPath;
-      versionFiles.cargo.my-crate = { }; # the version lives in this crate's Cargo.toml
-      publishers.github-release.default.repository = "owner/project"; # publish a GitHub Release here
+      # the version lives in this crate's Cargo.toml
+      versionFiles.cargo.my-crate = { };
+      # publish a GitHub Release here
+      publishers.github-release.default.repository = "owner/project";
     };
   };
 }
 ```
 
-Then release with the `presswerk` CLI; the [walkthrough](./guide/walkthrough/) shows how to run it:
+Every release then takes the same steps, whether you run them yourself or let CI run them on every
+push. Plan the release, prepare the release commit, and push it to run your checks on it:
 
 ```console
-$ presswerk plan           # show the next release, write nothing
-$ presswerk prepare        # create the release commit
-$ presswerk publish HEAD   # tag and publish an exact candidate
+$ presswerk plan
+commit             4e21c09b7a5d3f18e6c2a90b1d47f8e35c6a0b92
+previous release   v0.2.2 (a1f3c2e8d4b6970f5e1c3a28b7d9046f2e8c1d53)
+analyzed commits   1
+  4e21c09  ✨ Look up tags by prefix
+next version       0.3.0
+
+version files
+  Cargo.toml  0.2.2 -> 0.3.0
+
+notes
+  ### ✨ Introduce new features
+
+  - Look up tags by prefix
+
+Nothing written. Run `presswerk prepare` to commit 0.3.0.
+
+$ presswerk prepare
+committed  7b3e5f1  🔖 Release v0.3.0
+
+$ git push
 ```
 
-Run these commands yourself to release manually, or from CI to release automatically whenever a
-release-worthy change lands. Presswerk needs only a flake and a Git repository; see
-[Release modes](./guide/release-modes/).
+Once the checks pass on that commit, publish exactly it:
 
-The release commit carries the new version and frozen release notes, so your checks run on the
-exact candidate before anything is published:
+```console
+$ presswerk publish HEAD
+Released.
+```
 
-```mermaid A feature branch merges into main, then Presswerk creates and tags a dedicated release commit before development continues.
+```mermaid After publish: the previous release, the planned feature commit, and the release commit on top, tagged v0.3.0.
 gitGraph
-  commit id: "a1f3c2e"
-  branch fix/tag-lookup
-  commit id: "4e21c09"
-  checkout main
-  merge fix/tag-lookup
-  commit id: "release 0.2.0" tag: "v0.2.0"
-  commit id: "c7d1e88"
+  commit id: "🔖 a1f3c2e" tag: "v0.2.2"
+  commit id: "✨ 4e21c09"
+  commit id: "🔖 7b3e5f1" tag: "v0.3.0"
 ```
+
+Presswerk needs only a flake and a Git repository. [Release modes](./guide/release-modes/) shows both
+ways to run it, and the [walkthrough](./guide/walkthrough/) sets up a project from scratch.
 
 ## Guide
 

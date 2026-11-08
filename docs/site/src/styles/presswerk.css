@@ -199,6 +199,14 @@ nav.sidebar a[aria-current='page']:focus {
 .pw-graph .pele-commits {
   fill: var(--pw-ink);
 }
+/* Tags mark published releases, so they carry the accent; their text keeps the ink. */
+.pw-graph .pele-tag path {
+  fill: var(--pw-accent-wash);
+  stroke: var(--pw-accent);
+}
+.pw-graph .pele-tag circle {
+  fill: var(--pw-accent);
+}
 
 /*
  * On narrow screens Starlight moves the theme picker into the sidebar's mobile menu.
