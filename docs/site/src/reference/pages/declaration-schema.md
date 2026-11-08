@@ -54,7 +54,7 @@ The release tag format, containing `{version}` exactly once, such as `"v{version
 - `gitmoji.catalog`: the Gitmoji catalog keyed by shortcode, without colons. Each entry has an
   `emoji`, a `description` used as the release-note group, and a `semver` level of `"major"`,
   `"minor"`, `"patch"`, or `null` for no release. See the
-  [default catalog](/reference/gitmoji-catalog/).
+  [default catalog](/reference/analyzers/gitmoji/#default-catalog).
 
 ### `changelog.path`
 

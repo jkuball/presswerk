@@ -162,7 +162,7 @@ in
 
       checks.docs-reference = pkgs.runCommand "docs-reference-check" { nativeBuildInputs = [ pkgs.gnugrep ]; } ''
         site=${self'.packages.docs}
-        for page in options declaration-schema cli publishers/github-release gitmoji-catalog; do
+        for page in options declaration-schema cli publishers/github-release analyzers/gitmoji; do
           test -s "$site/reference/$page/index.html" || { echo "missing reference page $page" >&2; exit 1; }
           test -s "$site/reference/$page.md" || { echo "missing plain-text reference page $page.md" >&2; exit 1; }
         done
@@ -170,9 +170,9 @@ in
         grep -q 'id="publishers.github-release.name.token.secret"' "$site/reference/options/index.html"
         grep -q '^### `tag.format`$' "$site/reference/options.md"
         grep -q '^### presswerk publish$' "$site/reference/cli.md"
-        grep -q '`:sparkles:`.*| minor |$' "$site/reference/gitmoji-catalog.md"
+        grep -q '`:sparkles:`.*| minor |$' "$site/reference/analyzers/gitmoji.md"
         # The vendored catalog is MIT licensed; its notice must travel with the published copy.
-        for copy in "$site/reference/gitmoji-catalog.md" "$site/reference/gitmoji-catalog/index.html"; do
+        for copy in "$site/reference/analyzers/gitmoji.md" "$site/reference/analyzers/gitmoji/index.html"; do
           grep -q 'Copyright (c) 2016-2022 Carlos Cuesta' "$copy"
           grep -q 'copies or substantial portions of the Software' "$copy"
         done

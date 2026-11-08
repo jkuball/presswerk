@@ -90,7 +90,7 @@ provide a flake-parts-specific release adapter.
 - [Quickstart](./quickstart/) releases a small Rust flake project through GitHub Actions.
 - [GitHub Actions](./github-actions/) explains preparation, exact-candidate dispatch, serialization,
   and stale-run protection.
-- [Gitmoji and the catalog](./gitmoji/) covers commit subjects, version levels, overrides, and custom
+- [Gitmoji](../reference/analyzers/gitmoji/) covers commit subjects, version levels, overrides, and custom
   entries.
 - [Recovery](./recovery/) handles failed preparation, failed candidate checks, and partial
   publication without moving or deleting release state.

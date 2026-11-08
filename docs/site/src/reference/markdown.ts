@@ -1,7 +1,7 @@
 import cliPage from './pages/cli.md?raw';
 import declarationSchemaPage from './pages/declaration-schema.md?raw';
 import githubReleasePage from './pages/github-release.md?raw';
-import gitmojiCatalogPage from './pages/gitmoji-catalog.md?raw';
+import gitmojiPage from './pages/gitmoji.md?raw';
 import type { CliArgument, CliCommand, Literal, ReferenceData, ReleaseOption } from './data';
 
 /**
@@ -155,11 +155,11 @@ export const referencePages: ReferencePage[] = [
       }),
   },
   {
-    slug: 'reference/gitmoji-catalog',
-    title: 'Gitmoji catalog',
-    description: 'The default Gitmoji catalog and the release level of each Gitmoji.',
+    slug: 'reference/analyzers/gitmoji',
+    title: 'Gitmoji',
+    description: 'Write analyzable commit subjects, configure which Gitmojis change versions, and the default catalog.',
     markdown: ({ gitmoji, gitmojiLicense }, base) =>
-      fill(gitmojiCatalogPage, base, {
+      fill(gitmojiPage, base, {
         catalog: [
           '| Gitmoji | Shortcode | Description | Release |',
           '| --- | --- | --- | --- |',

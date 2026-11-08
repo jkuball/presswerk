@@ -1,12 +1,7 @@
----
-title: Gitmoji and the catalog
-description: Write analyzable commit subjects and configure which Gitmojis change versions or appear in release notes.
----
-
 Presswerk's implemented analyzer uses Gitmoji. The release declaration contains the complete catalog
 used for matching, grouping notes, and choosing a SemVer level. The CLI has no hidden Gitmoji table,
 so analysis is pinned to the exact commit like the rest of the release declaration. The
-[generated catalog reference](/presswerk/reference/gitmoji-catalog/) lists every default entry.
+[default catalog](#default-catalog) at the end of this page lists every entry.
 
 ## Commit subject shape
 
@@ -88,7 +83,10 @@ own declaration.
 
 ## Add a project-specific entry
 
-Add an attribute with an emoji that is not already in the catalog. Its attribute name becomes the
+Add an attribute with an emoji that is not already in the catalog. A new entry has no catalog values
+to fall back on, so it must set [`emoji`](/reference/options/#analyzer.gitmoji.catalog.name.emoji),
+[`description`](/reference/options/#analyzer.gitmoji.catalog.name.description), and
+[`semver`](/reference/options/#analyzer.gitmoji.catalog.name.semver). Its attribute name becomes the
 shortcode unless you set `shortcode` explicitly:
 
 ```nix
@@ -165,3 +163,21 @@ the notes are rendered before that commit exists. The exact candidate object is 
 publication analysis. Do not assign a release level to `bookmark` merely to make release commits
 trigger more releases; keep the release boundary driven by the actual changes since the previous
 release.
+
+## Default catalog
+
+The default for [`analyzer.gitmoji.catalog`](/reference/options/#analyzer.gitmoji.catalog) has
+<!-- reference:catalog-size --> entries. It is vendored from the upstream Gitmoji project, so analysis
+is deterministic and works offline. A commit's Gitmoji may be written as the emoji or as its
+`:shortcode:`. The release level is the semantic-version bump the commit triggers; `none` means the
+commit does not cause a release on its own.
+
+<!-- reference:catalog -->
+
+## License
+
+The catalog entries come from the
+[Gitmoji project](https://github.com/carloscuesta/gitmoji) and are published here under its MIT
+license:
+
+<!-- reference:license -->

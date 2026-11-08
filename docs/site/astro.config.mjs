@@ -41,13 +41,7 @@ export default defineConfig({
             { label: 'Release options', link: '/reference/options/' },
             { slug: 'reference/declaration-schema' },
             { slug: 'reference/cli' },
-            {
-              label: 'Analyzers',
-              items: [
-                { label: 'Gitmoji and the catalog', slug: 'guide/gitmoji' },
-                { slug: 'reference/gitmoji-catalog' },
-              ],
-            },
+            { label: 'Analyzers', items: [{ slug: 'reference/analyzers/gitmoji' }] },
             { label: 'Publishers', items: [{ label: 'GitHub Release', slug: 'reference/publishers/github-release' }] },
           ],
         },

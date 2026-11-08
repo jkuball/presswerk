@@ -146,7 +146,7 @@
           gitmoji.catalog = mkOption {
             type = types.attrsOf (types.submodule gitmojiModule);
             default = { };
-            defaultText = lib.literalMD "the [default Gitmoji catalog](https://jkuball.github.io/presswerk/reference/gitmoji-catalog/)";
+            defaultText = lib.literalMD "the [default Gitmoji catalog](https://jkuball.github.io/presswerk/reference/analyzers/gitmoji/#default-catalog)";
             example = lib.literalExpression ''
               {
                 # Release CI changes as patches.
