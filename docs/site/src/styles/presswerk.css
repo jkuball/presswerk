@@ -122,12 +122,13 @@
     no-repeat center / contain;
 }
 
-/* Sidebar: the current page gets weight and a square accent bar, like the asides, instead of a pill */
+/* Sidebar: the current page gets a square accent bar, like the asides, and a light wash instead of a pill */
 nav.sidebar a[aria-current='page'],
 nav.sidebar a[aria-current='page']:hover,
 nav.sidebar a[aria-current='page']:focus {
   color: var(--pw-ink);
-  background-color: transparent;
+  font-weight: inherit;
+  background-color: var(--pw-accent-wash);
   border-radius: 0;
   box-shadow: inset 3px 0 0 var(--pw-accent);
 }

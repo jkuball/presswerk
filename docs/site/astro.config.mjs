@@ -32,7 +32,6 @@ export default defineConfig({
             { label: 'Release model', slug: 'guide/model' },
             { label: 'Release modes', slug: 'guide/release-modes' },
             { label: 'Walkthrough', slug: 'guide/walkthrough' },
-            { label: 'Recovery', slug: 'guide/recovery' },
             {
               label: 'CI integration',
               items: [
@@ -46,7 +45,6 @@ export default defineConfig({
           label: 'Reference',
           items: [
             { label: 'Release options', link: '/reference/options/' },
-            { slug: 'reference/declaration-schema' },
             { slug: 'reference/cli' },
             { label: 'Version files', items: [{ slug: 'reference/version-files/build-your-own' }] },
             {
@@ -60,6 +58,13 @@ export default defineConfig({
                 { slug: 'reference/publishers/build-your-own' },
               ],
             },
+          ],
+        },
+        {
+          label: 'More',
+          items: [
+            { label: 'Recovery', slug: 'guide/recovery' },
+            { slug: 'reference/declaration-schema' },
           ],
         },
       ],

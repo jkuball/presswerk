@@ -70,7 +70,6 @@ gitGraph
 - [Release model](./guide/model/) defines candidates, release commits, pressings, and pending releases.
 - [Release modes](./guide/release-modes/) compares automatic releases from CI with manual releases from any machine.
 - [Walkthrough](./guide/walkthrough/) releases a small Rust flake through the two-phase workflow.
-- [Recovery](./guide/recovery/) handles failed preparation, failed candidates, and partial publication.
 - CI integration
   - [GitHub Actions](./guide/github-actions/) covers serialization, stale-run protection, and exact-candidate dispatch.
   - [NixCI](./guide/nixci/) releases from a single deploy job; not yet tested.
@@ -78,7 +77,6 @@ gitGraph
 ## Reference
 
 - [Release options](./reference/options/) lists every option of `lib.mkRelease`, generated from the module.
-- [Declaration schema](./reference/declaration-schema/) documents the plain declaration the CLI reads.
 - [CLI](./reference/cli/) documents `plan`, `prepare`, and `publish`, generated from the CLI.
 - Version files
   - [Build your own](./reference/version-files/build-your-own/) is still to be written.
@@ -88,3 +86,8 @@ gitGraph
 - Publishers
   - [GitHub Release](./reference/publishers/github-release/) describes publication, retries, and the token.
   - [Build your own](./reference/publishers/build-your-own/) is still to be written.
+
+## More
+
+- [Recovery](./guide/recovery/) handles failed preparation, failed candidates, and partial publication.
+- [Declaration schema](./reference/declaration-schema/) documents the plain declaration the CLI reads.
