@@ -22,6 +22,10 @@ may attach directly to the closing parenthesis of a scope, as in `✨ (cli): Add
 A subject that does not match an entry in the declared catalog does not contribute a bump or release
 note. Keep one clear Gitmoji intention at the start of each commit subject.
 
+The release notes group commits under a heading with the entry's emoji and description, such as
+`### ✨ Introduce new features`. Each line below it shows the subject without its emoji or
+shortcode, so `✨ (cli): Add search` becomes `- (cli): Add search`.
+
 ## Version levels
 
 Every catalog entry has `emoji`, `description`, and `semver`. `semver` is one of `"major"`,

@@ -497,7 +497,7 @@ fn gitmoji_reverts_of_released_commits_become_revert_entries() {
     assert_eq!(entry.gitmoji.shortcode, ":rewind:");
     assert_eq!(
         render_release_notes(&analysis).unwrap(),
-        "### ⏪️ Revert changes\n\n- ⏪️ 💥 Remove the feature again\n"
+        "### ⏪️ Revert changes\n\n- 💥 Remove the feature again\n"
     );
 }
 

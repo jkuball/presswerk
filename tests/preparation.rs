@@ -141,8 +141,8 @@ fn plans_and_prepares_the_full_range_after_a_completed_release() {
     );
     let changelog = repository.git(["show", &format!("{release}:CHANGELOG.md")]);
     assert!(changelog.contains("## [0.2.0] - 2026-11-05"));
-    assert!(changelog.contains("✨ Add full-range planning"));
-    assert!(changelog.contains("📝 Document the feature"));
+    assert!(changelog.contains("\n- Add full-range planning"));
+    assert!(changelog.contains("\n- Document the feature"));
 }
 
 #[test]

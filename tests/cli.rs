@@ -211,10 +211,10 @@ fn plan_reads_head_and_prepare_creates_the_first_release_commit() {
             .git(["show", &format!("{release}:Cargo.lock")])
             .contains("version = \"0.1.0\"")
     );
+    let changelog = repository.git(["show", &format!("{release}:CHANGELOG.md")]);
     assert!(
-        repository
-            .git(["show", &format!("{release}:CHANGELOG.md")])
-            .contains("✨ Add the first feature")
+        changelog.contains("### ✨ Introduce new features\n\n- Add the first feature"),
+        "{changelog}"
     );
 }
 
