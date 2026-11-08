@@ -10,16 +10,18 @@ hero:
     alt: The Presswerk mark, a record held in a split hexagonal die.
 ---
 
-Presswerk turns repository release declarations into repeatable release work. One immutable
-master record, the flake at an exact commit, is pressed into every published release.
+Releasing a Nix flake still means changing the outside world: bump the version, write release
+notes, tag, publish. Presswerk ties all of it to one exact commit. It creates a release commit
+with the new version and frozen notes, lets CI build and check that candidate, and then tags and
+publishes exactly that commit.
 
 :::caution
 Presswerk is early, work-in-progress software. It releases itself, but its commands,
 configuration, and output are not stable yet. Do not rely on it for production releases.
 :::
 
-A release is declared with `lib.mkRelease`, which evaluates a Nix module and produces plain data
-at the `presswerk.default` flake output:
+Declare the release in your flake with `lib.mkRelease`: which files carry the version, and where
+the release is published:
 
 ```nix
 # flake.nix
@@ -29,19 +31,19 @@ at the `presswerk.default` flake output:
   outputs = { self, presswerk, ... }: {
     presswerk.default = presswerk.lib.mkRelease {
       sourceRoot = self.outPath;
-      versionFiles.cargo.my-crate = { };
-      publishers.github-release.default.repository = "owner/project";
+      versionFiles.cargo.my-crate = { }; # the version lives in this crate's Cargo.toml
+      publishers.github-release.default.repository = "owner/project"; # publish a GitHub Release here
     };
   };
 }
 ```
 
-Run the CLI from the Presswerk input locked in your flake, so it matches your `mkRelease`:
+Then release with the `presswerk` CLI; the [quickstart](./guide/quickstart/) shows how to run it:
 
 ```console
-$ nix run --inputs-from . presswerk -- plan           # show the next release, write nothing
-$ nix run --inputs-from . presswerk -- prepare        # create the release commit
-$ nix run --inputs-from . presswerk -- publish HEAD   # tag and publish an exact candidate
+$ presswerk plan           # show the next release, write nothing
+$ presswerk prepare        # create the release commit
+$ presswerk publish HEAD   # tag and publish an exact candidate
 ```
 
 The release commit carries the new version and frozen release notes, so CI builds and checks
