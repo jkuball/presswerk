@@ -56,7 +56,7 @@
   --pele-series-3: var(--pw-muted);
   --pele-font: var(--sl-font);
   --pele-font-mono: var(--sl-font-mono);
-  --pele-radius: 2px;
+  --pele-radius: 0;
 }
 
 /* Light theme */
@@ -206,6 +206,28 @@ nav.sidebar a[aria-current='page']:focus {
 }
 .pw-graph .pele-tag circle {
   fill: var(--pw-accent);
+}
+/* Pages that are still to be written carry a badge in the accent, so open work stands out. */
+nav.sidebar .sl-badge {
+  color: var(--pw-accent);
+  background-color: var(--pw-accent-wash);
+  border-color: var(--pw-accent);
+  border-radius: 0;
+}
+
+/* Diagrams use the hard edges of the rest of the design. */
+.pw-graph svg rect {
+  rx: 0;
+  ry: 0;
+}
+/* States are outlined in ink like the edges between them, so they stand out from the ground. */
+.pw-graph .pele-node.pele-state rect {
+  stroke: var(--pw-ink);
+}
+/* The published state is what a release is for, so it carries the accent like a tag. */
+.pw-graph .pele-node.pele-state[data-id='Published'] rect {
+  fill: var(--pw-accent-wash);
+  stroke: var(--pw-accent);
 }
 
 /*

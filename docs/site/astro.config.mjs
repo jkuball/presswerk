@@ -33,6 +33,7 @@ export default defineConfig({
             { label: 'Release model', slug: 'guide/model' },
             { label: 'Release modes', slug: 'guide/release-modes' },
             { label: 'Walkthrough', slug: 'guide/walkthrough' },
+            { label: 'Adopt an existing project', slug: 'guide/adoption' },
             {
               label: 'CI integration',
               items: [

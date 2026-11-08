@@ -4,6 +4,7 @@ description: Teach Presswerk where your project keeps its version. Still to be w
 editUrl: false
 sidebar:
   label: Build your own
+  badge: TBD
 ---
 
 :::note[Still to be written]

@@ -4,6 +4,7 @@ description: Publish releases somewhere other than GitHub. Still to be written.
 editUrl: false
 sidebar:
   label: Build your own
+  badge: TBD
 ---
 
 :::note[Still to be written]
