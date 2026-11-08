@@ -8,14 +8,14 @@ its notes, its tag, and its GitHub Release all identify the same source.
 
 ## Master record and pressings
 
-A **master record** is the flake at one exact Git commit. It includes the committed version,
-`flake.lock`, release declaration, and frozen changelog section. Uncommitted changes are never part
-of it.
+A **master record** is the flake at one exact Git commit; for a release, that is the
+[release commit](#candidate-and-release-commit). It includes the committed version, `flake.lock`,
+release declaration, and frozen changelog section. Uncommitted changes are never part of it.
 
 A **pressing** is published state made from that master record. Today Presswerk creates an annotated
 Git tag and one or more GitHub Releases. See the
 [GitHub Release publisher reference](/presswerk/reference/publishers/github-release/) for its exact
-fields. Other pressing types described in design documents are not implemented.
+fields. Other pressing types are not implemented yet.
 
 ```mermaid Every pressing for version 0.3.0 points back to its one release commit, never to a later commit on main.
 gitGraph
@@ -110,7 +110,7 @@ gitGraph
   commit id: "feature"
   commit id: "failed 0.3.0"
   commit id: "revert candidate"
-  commit id: "CI fix"
+  commit id: "fix"
   commit id: "fresh 0.3.0" tag: "v0.3.0"
 ```
 
