@@ -32,7 +32,6 @@ export default defineConfig({
             { label: 'Release model', slug: 'guide/model' },
             { label: 'Quickstart', slug: 'guide/quickstart' },
             { label: 'GitHub Actions', slug: 'guide/github-actions' },
-            { label: 'Gitmoji and the catalog', slug: 'guide/gitmoji' },
             { label: 'Recovery', slug: 'guide/recovery' },
           ],
         },
@@ -42,8 +41,14 @@ export default defineConfig({
             { label: 'Release options', link: '/reference/options/' },
             { slug: 'reference/declaration-schema' },
             { slug: 'reference/cli' },
+            {
+              label: 'Analyzers',
+              items: [
+                { label: 'Gitmoji and the catalog', slug: 'guide/gitmoji' },
+                { slug: 'reference/gitmoji-catalog' },
+              ],
+            },
             { label: 'Publishers', items: [{ label: 'GitHub Release', slug: 'reference/publishers/github-release' }] },
-            { slug: 'reference/gitmoji-catalog' },
           ],
         },
       ],
