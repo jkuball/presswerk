@@ -38,7 +38,7 @@ from that commit.
   the release is published, and even the Presswerk version, through `flake.lock`.
 - `publish` tags and publishes that exact commit. Run it again, and it compares the outside world
   with the commit: matching state is kept, missing state is created again, and conflicting state
-  stops the run.
+  fails the run.
 
 ## What Presswerk is not
 
