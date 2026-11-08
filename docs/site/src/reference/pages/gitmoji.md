@@ -167,10 +167,11 @@ release.
 ## Default catalog
 
 The default for [`analyzer.gitmoji.catalog`](/reference/options/#analyzer.gitmoji.catalog) has
-<!-- reference:catalog-size --> entries. It is vendored from the upstream Gitmoji project, so analysis
+<!-- reference:catalog-size --> entries. It is vendored from the
+[upstream Gitmoji project](https://github.com/carloscuesta/gitmoji), so analysis
 is deterministic and works offline. A commit's Gitmoji may be written as the emoji or as its
-`:shortcode:`. The release level is the semantic-version bump the commit triggers; `none` means the
-commit does not cause a release on its own.
+`:shortcode:`. The entries are grouped by the semantic-version bump a commit triggers; entries under
+No release do not cause a release on their own.
 
 <!-- reference:catalog -->
 

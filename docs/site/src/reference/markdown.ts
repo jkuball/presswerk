@@ -160,16 +160,26 @@ export const referencePages: ReferencePage[] = [
     description: 'Write analyzable commit subjects, configure which Gitmojis change versions, and the default catalog.',
     markdown: ({ gitmoji, gitmojiLicense }, base) =>
       fill(gitmojiPage, base, {
-        catalog: [
-          '| Gitmoji | Shortcode | Description | Release |',
-          '| --- | --- | --- | --- |',
-          ...Object.entries(gitmoji)
-            .sort(([left], [right]) => left.localeCompare(right))
-            .map(
-              ([shortcode, entry]) =>
-                `| ${entry.emoji} | ${code(`:${shortcode}:`)} | ${cell(entry.description)} | ${entry.semver ?? 'none'} |`,
-            ),
-        ].join('\n'),
+        // One list per release level instead of a wide table, so the catalog reads on a phone too.
+        catalog: (
+          [
+            ['major', 'Major'],
+            ['minor', 'Minor'],
+            ['patch', 'Patch'],
+            [null, 'No release'],
+          ] as const
+        )
+          .map(([level, heading]) => {
+            const entries = Object.entries(gitmoji)
+              .filter(([, entry]) => entry.semver === level)
+              .sort(([left], [right]) => left.localeCompare(right));
+            return [
+              `### ${heading}`,
+              '',
+              ...entries.map(([shortcode, entry]) => `- ${entry.emoji} ${code(`:${shortcode}:`)}\\\n  ${plain(entry.description)}`),
+            ].join('\n');
+          })
+          .join('\n\n'),
         'catalog-size': String(Object.keys(gitmoji).length),
         license: fence('text', gitmojiLicense),
       }),

@@ -110,13 +110,14 @@
   text-underline-offset: 0.2em;
 }
 
-/* Sidebar: the current page gets weight and an accent rule instead of a filled pill */
+/* Sidebar: the current page gets weight and a square accent bar, like the asides, instead of a pill */
 nav.sidebar a[aria-current='page'],
 nav.sidebar a[aria-current='page']:hover,
 nav.sidebar a[aria-current='page']:focus {
   color: var(--pw-ink);
   background-color: transparent;
-  box-shadow: inset 2px 0 0 var(--pw-accent);
+  border-radius: 0;
+  box-shadow: inset 3px 0 0 var(--pw-accent);
 }
 nav.sidebar a[href$='/guide/quickstart/'] > .sl-badge {
   color: var(--pw-accent);

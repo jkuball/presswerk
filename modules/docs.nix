@@ -170,7 +170,7 @@ in
         grep -q 'id="publishers.github-release.name.token.secret"' "$site/reference/options/index.html"
         grep -q '^### `tag.format`$' "$site/reference/options.md"
         grep -q '^### presswerk publish$' "$site/reference/cli.md"
-        grep -q '`:sparkles:`.*| minor |$' "$site/reference/analyzers/gitmoji.md"
+        grep -A20 '^### Minor$' "$site/reference/analyzers/gitmoji.md" | grep -q '`:sparkles:`'
         # The vendored catalog is MIT licensed; its notice must travel with the published copy.
         for copy in "$site/reference/analyzers/gitmoji.md" "$site/reference/analyzers/gitmoji/index.html"; do
           grep -q 'Copyright (c) 2016-2022 Carlos Cuesta' "$copy"
