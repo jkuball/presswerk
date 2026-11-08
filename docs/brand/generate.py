@@ -92,7 +92,8 @@ def mark_geometry(full):
     s = record / 39  # the label, grooves and flake were drawn for a record of radius 39
     vinyl = disc(record).difference(disc(17 * s))
     vinyl = vinyl.difference(ring(32.8 * s, 2.2)).difference(ring(26.5 * s, 2.2))
-    return unary_union([frame, vinyl, disc(3.4 * s), flake(17 / 45 * s)])
+    # A small round hole in the middle of the flake, like the spindle hole of a record.
+    return unary_union([frame, vinyl, disc(3.4 * s), flake(17 / 45 * s)]).difference(disc(1.4))
 
 
 def to_path(geometry):
