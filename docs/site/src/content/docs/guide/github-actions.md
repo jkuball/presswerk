@@ -29,11 +29,11 @@ A push run first builds and checks the ordinary commit. Immediately before prepa
 run.
 
 ```sh
- git fetch origin main --tags
- if test "$(git rev-parse origin/main)" != "$GITHUB_SHA"; then
-   echo "main advanced; leaving release work to the newer run"
-   exit 0
- fi
+git fetch origin main --tags
+if test "$(git rev-parse origin/main)" != "$GITHUB_SHA"; then
+  echo "main advanced; leaving release work to the newer run"
+  exit 0
+fi
 ```
 
 If `main` moved, this run performs no release mutation. The newer push has its own run and owns the

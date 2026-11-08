@@ -83,12 +83,12 @@ Presswerk follows SemVer. Before `1.0.0`, commit analysis maps catalog levels th
 | `major` | `0.5.0` |
 
 Presswerk never selects `1.0.0` automatically. The current CLI also has no general version-override
-interface, so the automated flow remains on `0.x`.
+interface, so releases currently stay on `0.x`.
 
 ## Pending releases and the strict boundary
 
-A **pending release** is an untagged release commit. It may still be running through CI or its checks
-may have failed. Presswerk cannot infer which state applies, so it reports the pending commit and
+A **pending release** is an untagged release commit. Its checks may still be running, or they may
+have failed. Presswerk cannot infer which state applies, so it reports the pending commit and
 stops later release work.
 
 ```mermaid A fixup after an untagged release commit inherits a pending version and is not a new candidate.
@@ -99,10 +99,10 @@ gitGraph
   commit id: "fixup is blocked"
 ```
 
-Only `pending 0.3.0` can publish `0.3.0`. The fixup commit cannot. Retry that exact commit when
-candidate CI did not establish a content failure. If its committed contents fail required checks,
+Only `pending 0.3.0` can publish `0.3.0`. The fixup commit cannot. Retry that exact commit when its
+checks did not show that its contents are broken. If its committed contents fail required checks,
 revert it, fix the problem, and let preparation create a fresh candidate. See
-[Recovery](../recovery/#candidate-ci-did-not-complete).
+[Recovery](../recovery/#candidate-checks-did-not-complete).
 
 ```mermaid Reverting a failed untagged candidate restores the previous version, after which a fix can lead to a fresh release commit.
 gitGraph

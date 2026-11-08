@@ -61,9 +61,9 @@ Do not write a release commit yourself to bypass a preparation error; fix the ca
 `prepare` again. In the workflow, that rerun still builds the ordinary revision and runs the same
 stale-main guard.
 
-## Candidate CI did not complete
+## Candidate checks did not complete
 
-A release commit may be pushed successfully without completing exact-candidate CI. The phase 1
+A release commit may be pushed successfully without its checks completing. The phase 1
 workflow may fail to dispatch phase 2, a candidate run may be canceled or hit transient
 infrastructure trouble, or the candidate's contents may genuinely fail a build or check. With no tag,
 the commit is a **pending release** in every case. Later commits that retain its version are blocked
