@@ -24,10 +24,10 @@ export default defineConfig({
         './src/styles/presswerk.css',
       ],
       sidebar: [
-        { label: 'Documentation', items: [{ label: 'Overview', slug: 'index' }] },
         {
-          label: 'Guide',
+          label: 'Documentation',
           items: [
+            { label: 'Overview', slug: 'index' },
             { label: 'Why Presswerk', slug: 'guide' },
             { label: 'Release model', slug: 'guide/model' },
             { label: 'Release modes', slug: 'guide/release-modes' },
