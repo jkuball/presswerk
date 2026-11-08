@@ -214,3 +214,10 @@ nav.sidebar a[aria-current='page']:focus {
     display: none;
   }
 }
+
+/* Nested sidebar groups (CI integration, Version files, …) read as quiet labels, not as headings */
+nav.sidebar ul ul .group-label .large {
+  font-size: var(--sl-text-sm);
+  font-weight: inherit;
+  color: var(--pw-muted);
+}
