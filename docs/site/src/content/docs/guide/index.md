@@ -69,11 +69,6 @@ references.
 
 ## Current scope
 
-:::caution
-Presswerk is early, work-in-progress software. It releases itself, but its commands,
-configuration, and output are not stable yet. Do not rely on it for production releases.
-:::
-
 The implemented path updates Cargo versions, generates Gitmoji-based notes, pushes an annotated Git
 tag, and publishes GitHub Releases. Presswerk does not depend on a CI system: run it from CI to
 release automatically, or from any machine to release manually (see [Release modes](./release-modes/)).

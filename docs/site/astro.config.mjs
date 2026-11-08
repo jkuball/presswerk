@@ -2,12 +2,13 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { satteri } from '@astrojs/markdown-satteri';
 import pelePlugin from './src/plugins/pele.mjs';
+import versionPlugin from './src/plugins/version.mjs';
 
 export default defineConfig({
   site: 'https://jkuball.github.io',
   base: '/presswerk/',
   markdown: {
-    processor: satteri({ mdastPlugins: [pelePlugin()] }),
+    processor: satteri({ mdastPlugins: [versionPlugin(), pelePlugin()] }),
   },
   integrations: [
     starlight({

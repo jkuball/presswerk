@@ -117,7 +117,8 @@ in
       );
     in
     {
-      # Generated data behind the reference pages; the site reads it from $PRESSWERK_REFERENCE.
+      # Generated data behind the reference pages and the documented version; the site reads it from
+      # $PRESSWERK_REFERENCE.
       packages.docs-reference = pkgs.runCommand "presswerk-docs-reference" { } ''
         mkdir -p $out
         cp ${cliReference}/cli.json $out/cli.json
@@ -125,6 +126,7 @@ in
         cp ${pkgs.writeText "declaration.json" (builtins.toJSON schemaExample)} $out/declaration.json
         cp ${./release/gitmoji/catalog.json} $out/gitmoji.json
         cp ${./release/gitmoji/LICENSE} $out/gitmoji-license.txt
+        printf '%s' ${lib.escapeShellArg self.presswerk.default.version} > $out/version
       '';
 
       packages.docs = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {

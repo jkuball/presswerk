@@ -188,3 +188,23 @@ For every release, retain evidence of:
 6. the published GitHub Release for that tag.
 
 The [recovery guide](../recovery/) starts from those identities when a phase fails.
+
+## Recovery
+
+The recovery guide describes each case with Git and the Presswerk CLI. In this workflow, its steps
+map to runs:
+
+- **Checking and publishing a candidate again.** Rerun the candidate's dispatched run, or dispatch the
+  same full SHA again. The run checks out that commit, repeats the build and checks, and publishes
+  only if they pass:
+
+  ```console
+  $ gh workflow run ci.yml --ref main -f candidate=RELEASE_COMMIT_SHA
+  ```
+
+- **Preparing again after a transient failure.** Rerun the push run if `main` still points to its
+  commit. If the log says `main advanced`, the newer push run owns preparation; do not revive the
+  stale one.
+
+`gh run list --workflow=ci.yml` lists the runs and their events, and `gh release view v0.3.0` shows
+the GitHub Release state for the evidence.

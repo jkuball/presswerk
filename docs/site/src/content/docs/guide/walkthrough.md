@@ -2,7 +2,7 @@
 title: "Walkthrough: release a Rust flake"
 sidebar:
   label: Walkthrough
-description: Configure a small Cargo project, run a release plan, and publish its first GitHub Release through exact-candidate CI.
+description: Configure a small Cargo project, run a release plan, and let GitHub Actions publish its first GitHub Release.
 ---
 
 This walkthrough starts a new Cargo package at Presswerk's implicit `0.0.0` baseline. A Gitmoji feature
@@ -56,8 +56,7 @@ Your generated `src/main.rs` is enough for the exercise.
 
 ## 2. Declare the package and release
 
-Create `flake.nix`. Replace `YOUR-OWNER/pktest` with the repository you created. The Presswerk input
-is pinned by `flake.lock`; the tag below is the v0.3.0 release toolchain this guide documents.
+Create `flake.nix`. Replace `YOUR-OWNER/pktest` with the repository you created.
 
 ```nix title="flake.nix"
 {
@@ -67,7 +66,7 @@ is pinned by `flake.lock`; the tag below is the v0.3.0 release toolchain this gu
     flake-parts.url = "github:hercules-ci/flake-parts";
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
 
-    presswerk.url = "github:jkuball/presswerk/v0.3.0";
+    presswerk.url = "github:jkuball/presswerk/v{{presswerk.version}}";
     presswerk.inputs.presswerk-release.url = "github:jkuball/presswerk/v0.1.0";
   };
 
