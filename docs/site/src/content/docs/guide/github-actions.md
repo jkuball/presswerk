@@ -3,7 +3,8 @@ title: GitHub Actions
 description: Wire preparation and publication as two serialized runs around one exact release candidate.
 ---
 
-Presswerk's GitHub Actions integration is runtime wiring, not code inside the CLI. The workflow must
+This page shows one way to run Presswerk from CI: [automatic releases](../release-modes/#automatic-releases)
+from GitHub Actions. The integration is runtime wiring, not code inside the CLI. The workflow must
 keep ordinary branch preparation separate from exact-candidate publication. The complete working
 file is in the [walkthrough](../walkthrough/#3-add-the-two-phase-workflow), and the
 [CLI reference](/presswerk/reference/cli/) documents the invoked commands.
@@ -62,8 +63,8 @@ git push origin HEAD:main
 gh workflow run ci.yml --ref main -f candidate="$candidate"
 ```
 
-This is not a local push mode. It is the supported CI-driven preparation path. Branch protection must
-permit the workflow's push or use repository policy that provides an equivalent trusted path.
+Branch protection must permit the workflow's push or use repository policy that provides an
+equivalent trusted path.
 
 ## Why explicit dispatch is required
 
@@ -129,6 +130,21 @@ GitHub concurrency retains at most one pending run for a group and may replace a
 with a newer one. The stale-main guard makes superseded push work harmless, but it does not make the
 queue a release scheduler. After a failed run or recovery, an operator may need to rerun or dispatch
 the appropriate revision. Never make an old run follow `main` to compensate.
+
+## Release on demand
+
+For [manual releases](../release-modes/#manual-releases) from CI, prepare only when someone starts the
+workflow by hand without a candidate, instead of on every push. Change the condition of the
+**Prepare release** step:
+
+```yaml
+      - name: Prepare release
+        if: github.event_name == 'workflow_dispatch' && inputs.candidate == ''
+```
+
+Start a release with **Run workflow** and an empty candidate, or with
+`gh workflow run ci.yml --ref main`. The run checks out the branch tip, prepares, pushes the release
+commit, and dispatches the candidate run as before. Pushes to `main` then only build and check.
 
 ## Permissions and secrets
 

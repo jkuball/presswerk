@@ -30,9 +30,10 @@ export default defineConfig({
           items: [
             { label: 'Why Presswerk', slug: 'guide' },
             { label: 'Release model', slug: 'guide/model' },
+            { label: 'Release modes', slug: 'guide/release-modes' },
             { label: 'Walkthrough', slug: 'guide/walkthrough' },
-            { label: 'GitHub Actions', slug: 'guide/github-actions' },
             { label: 'Recovery', slug: 'guide/recovery' },
+            { label: 'CI integration', items: [{ label: 'GitHub Actions', slug: 'guide/github-actions' }] },
           ],
         },
         {
@@ -41,8 +42,18 @@ export default defineConfig({
             { label: 'Release options', link: '/reference/options/' },
             { slug: 'reference/declaration-schema' },
             { slug: 'reference/cli' },
-            { label: 'Analyzers', items: [{ slug: 'reference/analyzers/gitmoji' }] },
-            { label: 'Publishers', items: [{ label: 'GitHub Release', slug: 'reference/publishers/github-release' }] },
+            { label: 'Version files', items: [{ slug: 'reference/version-files/build-your-own' }] },
+            {
+              label: 'Analyzers',
+              items: [{ slug: 'reference/analyzers/gitmoji' }, { slug: 'reference/analyzers/build-your-own' }],
+            },
+            {
+              label: 'Publishers',
+              items: [
+                { label: 'GitHub Release', slug: 'reference/publishers/github-release' },
+                { slug: 'reference/publishers/build-your-own' },
+              ],
+            },
           ],
         },
       ],

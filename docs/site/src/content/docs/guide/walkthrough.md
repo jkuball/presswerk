@@ -293,3 +293,6 @@ $ git push
 A `🐛` commit plans a patch release, while `✨` plans the next minor release. Do not edit the generated
 release commit or add a fixup on top of a failed candidate; use the
 [recovery procedure](../recovery/).
+
+This workflow releases automatically. To decide yourself when to release, prepare on demand from
+CI or run the same commands from your machine; see [Release modes](../release-modes/#manual-releases).

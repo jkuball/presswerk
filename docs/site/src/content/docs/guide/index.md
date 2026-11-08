@@ -75,11 +75,11 @@ configuration, and output are not stable yet. Do not rely on it for production r
 :::
 
 The implemented path updates Cargo versions, generates Gitmoji-based notes, pushes an annotated Git
-tag, and publishes GitHub Releases. The supported automated runtime is the documented two-phase
-GitHub Actions workflow.
+tag, and publishes GitHub Releases. Presswerk does not depend on a CI system: run it from CI to
+release automatically, or from any machine to release manually (see [Release modes](./release-modes/)).
 
-Design notes discuss more destinations, assets, artifact generators, `check`, `revert`, a dedicated
-flake-parts adapter, and local push workflows. Those are not available features. A project may use
+Design notes discuss more destinations, assets, artifact generators, `check`, `revert`, and a
+dedicated flake-parts adapter. Those are not available features. A project may use
 flake-parts normally and place `presswerk.default` in its flake outputs, but Presswerk does not yet
 provide a flake-parts-specific release adapter.
 
@@ -87,6 +87,8 @@ provide a flake-parts-specific release adapter.
 
 - [Release model](./model/) defines master records, pressings, candidates, release commits, and
   pending releases.
+- [Release modes](./release-modes/) compares automatic releases from CI with manual releases from any
+  machine.
 - [Walkthrough](./walkthrough/) releases a small Rust flake project through GitHub Actions.
 - [GitHub Actions](./github-actions/) explains preparation, exact-candidate dispatch, serialization,
   and stale-run protection.

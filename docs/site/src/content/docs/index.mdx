@@ -12,7 +12,7 @@ hero:
 
 Releasing a Nix flake still means changing the outside world: bump the version, write release
 notes, tag, publish. Presswerk ties all of it to one exact commit. It creates a release commit
-with the new version and frozen notes, lets CI build and check that candidate, and then tags and
+with the new version and frozen notes, lets your checks run on that candidate, and then tags and
 publishes exactly that commit.
 
 :::caution
@@ -46,8 +46,12 @@ $ presswerk prepare        # create the release commit
 $ presswerk publish HEAD   # tag and publish an exact candidate
 ```
 
-The release commit carries the new version and frozen release notes, so CI builds and checks
-the exact candidate before anything is published:
+Run these commands yourself to release manually, or from CI to release automatically whenever a
+release-worthy change lands. Presswerk needs only a flake and a Git repository; see
+[Release modes](./guide/release-modes/).
+
+The release commit carries the new version and frozen release notes, so your checks run on the
+exact candidate before anything is published:
 
 ```mermaid A feature branch merges into main, then Presswerk creates and tags a dedicated release commit before development continues.
 gitGraph
@@ -64,16 +68,22 @@ gitGraph
 
 - [Why Presswerk](./guide/) explains the exact-commit release boundary and current scope.
 - [Release model](./guide/model/) defines candidates, release commits, pressings, and pending releases.
+- [Release modes](./guide/release-modes/) compares automatic releases from CI with manual releases from any machine.
 - [Walkthrough](./guide/walkthrough/) releases a small Rust flake through the two-phase workflow.
-- [GitHub Actions](./guide/github-actions/) covers serialization, stale-run protection, and exact-candidate dispatch.
 - [Recovery](./guide/recovery/) handles failed preparation, failed candidates, and partial publication.
+- CI integration
+  - [GitHub Actions](./guide/github-actions/) covers serialization, stale-run protection, and exact-candidate dispatch.
 
 ## Reference
 
 - [Release options](./reference/options/) lists every option of `lib.mkRelease`, generated from the module.
 - [Declaration schema](./reference/declaration-schema/) documents the plain declaration the CLI reads.
 - [CLI](./reference/cli/) documents `plan`, `prepare`, and `publish`, generated from the CLI.
+- Version files
+  - [Build your own](./reference/version-files/build-your-own/) is still to be written.
 - Analyzers
   - [Gitmoji](./reference/analyzers/gitmoji/) shows how commits select versions and release-note groups, and lists the default catalog.
+  - [Build your own](./reference/analyzers/build-your-own/) is still to be written.
 - Publishers
   - [GitHub Release](./reference/publishers/github-release/) describes publication, retries, and the token.
+  - [Build your own](./reference/publishers/build-your-own/) is still to be written.

@@ -7,6 +7,10 @@ Recovery starts by identifying the exact ordinary commit, release commit, tag, a
 Presswerk does not follow `main` to a replacement candidate and does not overwrite conflicting remote
 state.
 
+The commands below assume the GitHub Actions workflow from the [walkthrough](../walkthrough/). When
+you [release manually](../release-modes/#manual-releases), run the same Presswerk commands yourself
+where this page reruns a workflow.
+
 Use these invariants throughout:
 
 - one version belongs to one release commit;
@@ -53,8 +57,9 @@ gitGraph
    The resulting push run owns the next preparation attempt.
 5. If the failure was transient and `main` still points to the original SHA, rerun that push workflow.
 
-Do not create a release commit by hand merely to bypass a preparation error. The workflow must still
-build the ordinary revision and run the same stale-main guard.
+Do not write a release commit yourself to bypass a preparation error; fix the cause and run
+`prepare` again. In the workflow, that rerun still builds the ordinary revision and runs the same
+stale-main guard.
 
 ## Candidate CI did not complete
 
