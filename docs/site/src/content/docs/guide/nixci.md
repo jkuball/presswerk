@@ -46,33 +46,34 @@ perSystem = { pkgs, ... }: {
   packages.presswerk-deploy = pkgs.writeShellApplication {
     name = "presswerk-deploy";
     runtimeInputs = [ pkgs.git pkgs.openssh ];
-    text = ''
-      # Commit analysis needs the full history and the release tags.
-      if test "$(git rev-parse --is-shallow-repository)" = true; then
-        git fetch --unshallow --tags origin
-      fi
-      git fetch --tags origin main
+    text = # bash
+      ''
+        # Commit analysis needs the full history and the release tags.
+        if test "$(git rev-parse --is-shallow-repository)" = true; then
+          git fetch --unshallow --tags origin
+        fi
+        git fetch --tags origin main
 
-      # Push the release commit and its tag with the deploy key.
-      export GIT_SSH_COMMAND="ssh -i $PRESSWERK_DEPLOY_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-      git remote set-url --push origin git@github.com:YOUR-OWNER/pktest.git
-      git config user.name "Presswerk on NixCI"
-      git config user.email "presswerk@users.noreply.github.com"
+        # Push the release commit and its tag with the deploy key.
+        export GIT_SSH_COMMAND="ssh -i $PRESSWERK_DEPLOY_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+        git remote set-url --push origin git@github.com:YOUR-OWNER/pktest.git
+        git config user.name "Presswerk on NixCI"
+        git config user.email "presswerk@users.noreply.github.com"
 
-      # A release commit whose suite succeeded: tag and publish it.
-      nix run --inputs-from . presswerk -- publish HEAD
+        # A release commit whose suite succeeded: tag and publish it.
+        nix run --inputs-from . presswerk -- publish HEAD
 
-      if test "$(git rev-parse origin/main)" != "$NIX_CI_GIT_COMMIT_SHA"; then
-        echo "main advanced; leaving release work to the newer suite"
-        exit 0
-      fi
+        if test "$(git rev-parse origin/main)" != "$NIX_CI_GIT_COMMIT_SHA"; then
+          echo "main advanced; leaving release work to the newer suite"
+          exit 0
+        fi
 
-      before=$(git rev-parse HEAD)
-      nix run --inputs-from . presswerk -- prepare
-      if test "$(git rev-parse HEAD)" != "$before"; then
-        git push origin HEAD:main
-      fi
-    '';
+        before=$(git rev-parse HEAD)
+        nix run --inputs-from . presswerk -- prepare
+        if test "$(git rev-parse HEAD)" != "$before"; then
+          git push origin HEAD:main
+        fi
+      '';
   };
 };
 ```

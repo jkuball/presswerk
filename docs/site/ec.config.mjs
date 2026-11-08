@@ -115,8 +115,45 @@ function actionsExpressions() {
   };
 }
 
+/**
+ * Highlight a Nix indented string as shell when a `# bash` comment precedes it, the way editors
+ * with tree-sitter injections do:
+ *
+ *   text = # bash
+ *     ''
+ *       echo hello
+ *     '';
+ *
+ * The closing `''` must start its own line, so the shell grammar cannot swallow it.
+ */
+const nixShellInjection = {
+  name: 'nix-shell-injection',
+  scopeName: 'source.nix.shell-injection',
+  injectTo: ['source.nix'],
+  injectionSelector: 'L:source.nix -comment -string',
+  embeddedLangsLazy: ['shellscript'],
+  patterns: [
+    {
+      begin: '#\\s*(?:bash|sh|shell)\\s*$',
+      beginCaptures: { 0: { name: 'comment.line.number-sign.nix' } },
+      end: "(?<='')",
+      patterns: [
+        {
+          begin: "''",
+          beginCaptures: { 0: { name: 'string.quoted.other.nix punctuation.definition.string.other.start.nix' } },
+          end: "^\\s*''(?![$'\\\\])",
+          endCaptures: { 0: { name: 'string.quoted.other.nix punctuation.definition.string.other.end.nix' } },
+          contentName: 'meta.embedded.block.shell',
+          patterns: [{ include: 'source.shell' }],
+        },
+      ],
+    },
+  ],
+};
+
 export default defineEcConfig({
   plugins: [shellPrompt(), actionsExpressions()],
+  shiki: { langs: [nixShellInjection] },
   themes: [
     noir({ name: 'presswerk-noir-dark', type: 'dark', ground: '#1b1b1b', ink: '#ececea', faint: '#969693', accent: ACCENT.dark }),
     noir({ name: 'presswerk-noir-light', type: 'light', ground: '#e6e6e3', ink: '#111111', faint: '#666663', accent: ACCENT.light }),
