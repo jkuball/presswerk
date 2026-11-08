@@ -92,6 +92,7 @@ provide a flake-parts-specific release adapter.
 - [Walkthrough](./walkthrough/) releases a small Rust flake project through GitHub Actions.
 - [GitHub Actions](./github-actions/) explains preparation, exact-candidate dispatch, serialization,
   and stale-run protection.
+- [NixCI](./nixci/) releases from a single deploy job; it has not been tested yet.
 - [Gitmoji](../reference/analyzers/gitmoji/) covers commit subjects, version levels, overrides, and custom
   entries.
 - [Recovery](./recovery/) handles failed preparation, failed candidate checks, and partial

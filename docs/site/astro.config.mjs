@@ -33,7 +33,13 @@ export default defineConfig({
             { label: 'Release modes', slug: 'guide/release-modes' },
             { label: 'Walkthrough', slug: 'guide/walkthrough' },
             { label: 'Recovery', slug: 'guide/recovery' },
-            { label: 'CI integration', items: [{ label: 'GitHub Actions', slug: 'guide/github-actions' }] },
+            {
+              label: 'CI integration',
+              items: [
+                { label: 'GitHub Actions', slug: 'guide/github-actions' },
+                { label: 'NixCI', slug: 'guide/nixci' },
+              ],
+            },
           ],
         },
         {

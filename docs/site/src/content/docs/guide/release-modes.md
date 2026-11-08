@@ -75,10 +75,11 @@ Presswerk enforces its part, and whatever runs it provides the rest:
 
 ## CI integration
 
-Automating Presswerk means running these two steps from a CI system. The guide includes one
-complete example:
+Automating Presswerk means running these two steps from a CI system. The guide includes these
+examples:
 
 - [GitHub Actions](../github-actions/)
+- [NixCI](../nixci/), not yet tested
 
 Other systems follow the same pattern: prepare on the release branch, push the release commit,
 check it, and publish that exact commit.
