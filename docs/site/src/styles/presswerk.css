@@ -172,8 +172,7 @@ nav.sidebar a[aria-current='page']:focus {
 }
 .pw-graph svg {
   display: block;
-  width: max(100%, 36rem);
-  max-width: none !important;
+  width: 100%;
   height: auto;
 }
 .pw-graph figcaption {
