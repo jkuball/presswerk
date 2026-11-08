@@ -6,7 +6,7 @@ use presswerk::preparation::{
     build_head_release_plan, build_head_release_plan_with_trust, is_worktree_dirty,
     prepare_release, render_plan,
 };
-use presswerk::publication::{PublishOutcome, publish};
+use presswerk::publication::{PublishOutcome, PublisherStep, TagStep, publish};
 use presswerk::release_commit::TrustedPredecessor;
 
 fn main() {
@@ -47,20 +47,88 @@ fn run() -> Result<()> {
             let plan =
                 build_head_release_plan_with_trust(".", &GitCliffAnalyzer, trusted_predecessor)?;
             match prepare_release(&plan)? {
-                Some(commit) => println!(
-                    "committed  {}  🔖 Release v{}",
-                    short_commit(&commit.to_string()),
-                    plan.next_version.as_ref().expect("release version exists")
-                ),
+                Some(commit) => {
+                    let version = plan.next_version.as_ref().expect("release version exists");
+                    println!(
+                        "Preparing v{version} on {}",
+                        short_commit(&plan.commit.to_string())
+                    );
+                    let mut rows: Vec<[String; 3]> = plan
+                        .version_files
+                        .iter()
+                        .map(|file| {
+                            [
+                                "version".into(),
+                                file.path.clone(),
+                                format!("{} -> {}", file.current, file.next),
+                            ]
+                        })
+                        .collect();
+                    rows.push([
+                        "notes".into(),
+                        plan.changelog_path.clone(),
+                        format!("added {version}"),
+                    ]);
+                    rows.push([
+                        "commit".into(),
+                        short_commit(&commit.to_string()).into(),
+                        format!("🔖 Release v{version}"),
+                    ]);
+                    print!("{}", render_steps(&rows));
+                }
                 None => println!("Nothing to prepare."),
             }
         }
         Command::Publish { revision } => match publish(".", &revision)? {
-            PublishOutcome::NothingToDo => println!("Nothing to do."),
-            PublishOutcome::Published => println!("Released."),
+            PublishOutcome::NothingToDo { commit } => println!(
+                "Nothing to publish: {} is not a release commit.",
+                short_commit(&commit)
+            ),
+            PublishOutcome::Published(report) => {
+                let commit = short_commit(&report.commit);
+                println!("Publishing {} from {commit}", report.tag);
+                let tag_status = match report.tag_step {
+                    TagStep::Pushed => "pushed",
+                    TagStep::AlreadyPushed => "already pushed",
+                };
+                let mut rows = vec![["tag".into(), report.tag.clone(), tag_status.into()]];
+                rows.extend(report.publisher_steps.iter().map(|(name, step)| {
+                    let status = match step {
+                        PublisherStep::Published => "published",
+                        PublisherStep::DraftCompleted => "draft completed",
+                        PublisherStep::AlreadyPublished => "already published",
+                    };
+                    ["release".into(), name.clone(), status.into()]
+                }));
+                print!("{}", render_steps(&rows));
+                if report.changed_nothing() {
+                    println!(
+                        "{} from {commit} was already released; nothing changed.",
+                        report.tag
+                    );
+                } else {
+                    println!("Released {} from {commit}.", report.tag);
+                }
+            }
         },
     }
     Ok(())
+}
+
+/// Renders one indented line per step with aligned kind and target columns.
+fn render_steps(rows: &[[String; 3]]) -> String {
+    let width = |column: usize| {
+        rows.iter()
+            .map(|row| row[column].chars().count())
+            .max()
+            .unwrap_or(0)
+    };
+    let (kind_width, target_width) = (width(0), width(1));
+    rows.iter()
+        .map(|[kind, target, status]| {
+            format!("  {kind:<kind_width$}  {target:<target_width$}  {status}\n")
+        })
+        .collect()
 }
 
 fn short_commit(commit: &str) -> &str {

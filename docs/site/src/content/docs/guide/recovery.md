@@ -139,10 +139,15 @@ Publish the exact release commit again:
 
 ```console
 $ presswerk publish RELEASE_COMMIT_SHA
+Publishing v0.3.0 from 7b3e5f1
+  tag      v0.3.0                  already pushed
+  release  github-release.default  draft completed
+Released v0.3.0 from 7b3e5f1.
 ```
 
 Presswerk keeps a matching tag, continues matching publisher state, creates what is missing, and
-verifies the final result.
+verifies the final result. Each line reports whether that step was already complete. When all of
+them were, the last line says that nothing changed.
 
 Never:
 

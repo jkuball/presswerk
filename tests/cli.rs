@@ -163,7 +163,14 @@ fn publish_defaults_to_head_and_exits_for_an_ordinary_commit() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "Nothing to do.\n");
+    let head = repository.head();
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!(
+            "Nothing to publish: {} is not a release commit.\n",
+            &head[..7]
+        )
+    );
 }
 
 #[test]
@@ -199,7 +206,11 @@ fn plan_reads_head_and_prepare_creates_the_first_release_commit() {
         "{}",
         String::from_utf8_lossy(&prepared.stderr)
     );
-    assert!(String::from_utf8_lossy(&prepared.stdout).contains("Release v0.1.0"));
+    let stdout = String::from_utf8_lossy(&prepared.stdout);
+    assert!(stdout.starts_with("Preparing v0.1.0 on "), "{stdout}");
+    assert!(stdout.contains("Cargo.toml"), "{stdout}");
+    assert!(stdout.contains("0.0.0 -> 0.1.0"), "{stdout}");
+    assert!(stdout.contains("added 0.1.0"), "{stdout}");
     let release = repository.head();
     assert!(
         repository

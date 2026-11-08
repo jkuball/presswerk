@@ -27,6 +27,7 @@ pub struct ReleasePlan {
     pub next_version: Option<Version>,
     pub version_files: Vec<VersionFileChange>,
     pub notes: String,
+    pub changelog_path: String,
     release_files: Vec<ReleaseFile>,
     trusted_predecessor: Option<TrustedPredecessor>,
 }
@@ -152,6 +153,7 @@ pub fn build_release_plan(
         next_version,
         version_files,
         notes,
+        changelog_path: declaration.changelog.path,
         release_files,
         trusted_predecessor: None,
     })

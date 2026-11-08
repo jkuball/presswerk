@@ -4,8 +4,8 @@ use presswerk::analysis::{Analysis, Bump};
 use presswerk::declaration::ReleaseDeclaration;
 use presswerk::publication::{
     GitTagPublisher, GithubClient, GithubPublisher, GithubReleaseReader, GithubReleaseState,
-    PublicationError, Publisher, PublisherState, Release, RemoteState, TagPublisher,
-    is_valid_successor, publish_ordered, validate_new_release, verify_predecessor_with,
+    PublicationError, Publisher, PublisherState, PublisherStep, Release, RemoteState, TagPublisher,
+    TagStep, is_valid_successor, publish_ordered, validate_new_release, verify_predecessor_with,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
@@ -100,7 +100,7 @@ fn publishes_the_tag_before_completing_missing_publishers() {
         writes: writes.clone(),
     };
 
-    publish_ordered(
+    let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
         &[Box::new(publisher)],
@@ -108,6 +108,39 @@ fn publishes_the_tag_before_completing_missing_publishers() {
     .unwrap();
 
     assert_eq!(*writes.borrow(), ["tag", "release"]);
+    assert_eq!(
+        steps,
+        (TagStep::Pushed, vec![PublisherStep::DraftCompleted])
+    );
+}
+
+#[test]
+fn reports_complete_publication_without_writing_again() {
+    let writes = Rc::new(RefCell::new(Vec::new()));
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        writes: writes.clone(),
+    };
+    let publisher = FakePublisher {
+        state: Rc::new(RefCell::new(PublisherState::Published)),
+        writes: writes.clone(),
+    };
+
+    let steps = publish_ordered(
+        &tag,
+        &release("0123456789012345678901234567890123456789".into()),
+        &[Box::new(publisher)],
+    )
+    .unwrap();
+
+    assert_eq!(
+        steps,
+        (
+            TagStep::AlreadyPushed,
+            vec![PublisherStep::AlreadyPublished]
+        )
+    );
+    assert_eq!(*writes.borrow(), ["tag"]);
 }
 
 #[test]

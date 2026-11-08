@@ -21,7 +21,7 @@ by default. The token never enters the declaration or the Nix store; Presswerk r
 time and stops if the variable is unset or empty.
 
 `presswerk publish` needs the token whenever it publishes or retries a release commit. On an
-ordinary commit it exits with "Nothing to do." before reading it. Once a previous release exists,
+ordinary commit it reports that there is nothing to publish before reading it. Once a previous release exists,
 `presswerk plan` and `presswerk prepare` need it too: they check that the previous release's
 GitHub Release is complete before planning the next one. Only the very first release can be
 planned and prepared without it. In GitHub Actions, the token needs the `contents: write` permission to publish.
@@ -34,10 +34,10 @@ releases by tag, so when there is none, Presswerk also searches every page of th
 release listing for a draft with exactly that tag. Then it acts on what it finds:
 
 - **Missing:** it creates the release as a draft that targets the release commit, then
-  publishes the draft, so the release never appears without its notes.
+  publishes the draft, so the release never appears without its notes. It reports `published`.
 - **Draft:** a previous run stopped between the two steps, so it publishes the existing draft
-  instead of creating another one.
-- **Published:** the release is complete, and it is left as it is.
+  instead of creating another one. It reports `draft completed`.
+- **Published:** the release is complete, and it is left as it is. It reports `already published`.
 
 Before anything is written, Presswerk checks the state of the tag and of every publisher. A tag
 that is lightweight or points to another commit, a release whose prerelease flag does not match

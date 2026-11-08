@@ -57,6 +57,7 @@ next version       0.3.0
 
 version files
   Cargo.toml  0.2.2 -> 0.3.0
+  Cargo.lock  0.2.2 -> 0.3.0
 
 notes
   ### ✨ Introduce new features
@@ -66,7 +67,11 @@ notes
 Nothing written. Run `presswerk prepare` to commit 0.3.0.
 
 $ presswerk prepare
-committed  7b3e5f1  🔖 Release v0.3.0
+Preparing v0.3.0 on 4e21c09
+  version  Cargo.toml    0.2.2 -> 0.3.0
+  version  Cargo.lock    0.2.2 -> 0.3.0
+  notes    CHANGELOG.md  added 0.3.0
+  commit   7b3e5f1       🔖 Release v0.3.0
 
 $ git push
 ```
@@ -75,7 +80,10 @@ Once the checks pass on that commit, publish exactly it:
 
 ```console
 $ presswerk publish HEAD
-Released.
+Publishing v0.3.0 from 7b3e5f1
+  tag      v0.3.0                  pushed
+  release  github-release.default  published
+Released v0.3.0 from 7b3e5f1.
 ```
 
 ```mermaid After publish: the previous release, the planned feature commit, and the release commit on top, tagged v0.3.0.
