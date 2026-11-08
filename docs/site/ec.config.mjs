@@ -1,7 +1,9 @@
 import { defineEcConfig, ExpressiveCodeTheme, InlineStyleAnnotation } from '@astrojs/starlight/expressive-code';
 
 /**
- * Noir code themes: structure through greys and weight, colour only for strings.
+ * Noir code themes: structure through greys and weight, colour only for quoted strings and paths.
+ * Unquoted scalars (YAML values and keys, shell arguments) and object keys stay ink, so
+ * mostly-string languages like YAML and JSON are not drawn in the accent.
  * Attribute names, keywords and functions are bold; punctuation and comments are grey;
  * only comments are italic. The greys and the accent match src/styles/presswerk.css.
  */
@@ -24,6 +26,7 @@ function noir({ name, type, ground, ink, faint, accent }) {
         settings: { foreground: faint },
       },
       { scope: ['string', 'string.quoted', 'string.unquoted.path'], settings: { foreground: accent } },
+      { scope: ['string.unquoted', 'support.type.property-name', 'entity.name.tag'], settings: { foreground: ink } },
       {
         scope: [
           'keyword',
