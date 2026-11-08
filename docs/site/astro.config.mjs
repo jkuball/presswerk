@@ -49,11 +49,11 @@ export default defineConfig({
             { slug: 'reference/cli' },
             { label: 'Version files', items: [{ slug: 'reference/version-files/build-your-own' }] },
             {
-              label: 'Analyzers',
+              label: 'Commit analyzers',
               items: [{ slug: 'reference/analyzers/gitmoji' }, { slug: 'reference/analyzers/build-your-own' }],
             },
             {
-              label: 'Publishers',
+              label: 'Release publishers',
               items: [
                 { label: 'GitHub Release', slug: 'reference/publishers/github-release' },
                 { slug: 'reference/publishers/build-your-own' },

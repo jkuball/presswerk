@@ -1,5 +1,5 @@
 ---
-title: Build your own analyzer
+title: Build your own commit analyzer
 description: Choose versions and release notes with your own commit convention. Still to be written.
 editUrl: false
 sidebar:

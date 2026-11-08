@@ -1,5 +1,5 @@
 ---
-title: Build your own publisher
+title: Build your own release publisher
 description: Publish releases somewhere other than GitHub. Still to be written.
 editUrl: false
 sidebar:
