@@ -64,21 +64,28 @@ function noir({ name, type, ground, ink, faint, accent }) {
 }
 
 const ACCENT = { dark: '#f0705f', light: '#b82e1c' };
+const INK = { dark: '#ececea', light: '#111111' };
 const SHELL_LANGUAGES = new Set(['console', 'sh', 'bash', 'shell', 'shellsession', 'zsh']);
 
-/** Paint a column range of a line with the accent, in every theme. */
-function accent(line, columnStart, columnEnd) {
+/** Paint a column range of a line in one of the colours above, in every theme. */
+function paint(line, colors, columnStart, columnEnd, style = {}) {
   // Style variants follow the order of `themes` below: dark first, then light.
-  [ACCENT.dark, ACCENT.light].forEach((color, styleVariantIndex) =>
+  [colors.dark, colors.light].forEach((color, styleVariantIndex) =>
     line.addAnnotation(
       new InlineStyleAnnotation({
         color,
+        ...style,
         styleVariantIndex,
         inlineRange: { columnStart, columnEnd },
         renderPhase: 'latest',
       }),
     ),
   );
+}
+
+/** Paint a column range of a line with the accent, in every theme. */
+function accent(line, columnStart, columnEnd) {
+  paint(line, ACCENT, columnStart, columnEnd);
 }
 
 /** Colour the `$` prompt at the start of shell lines with the accent. */
@@ -98,7 +105,8 @@ function shellPrompt() {
 
 /**
  * Mark GitHub Actions expressions in YAML: every `${{ … }}` expression and every `if:` condition,
- * which is an expression without the delimiters.
+ * which is an expression without the delimiters. The workflow's `on:` key is drawn as a key, not as
+ * the YAML 1.1 boolean the grammar takes it for.
  */
 function actionsExpressions() {
   return {
@@ -107,6 +115,7 @@ function actionsExpressions() {
       postprocessAnnotations: ({ codeBlock }) => {
         if (!['yaml', 'yml'].includes(codeBlock.language)) return;
         for (const line of codeBlock.getLines()) {
+          if (/^on:/.test(line.text)) paint(line, INK, 0, 2, { bold: true });
           const condition = /^(\s*(?:-\s+)?if:\s*)(.+)$/.exec(line.text);
           if (condition) accent(line, condition[1].length, line.text.length);
           for (const expression of line.text.matchAll(/\$\{\{.*?\}\}/g)) {
