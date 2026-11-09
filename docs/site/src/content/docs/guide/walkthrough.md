@@ -1,13 +1,19 @@
 ---
-title: "Walkthrough: release a Rust flake"
+title: "Walkthrough: release automatically from GitHub Actions"
 sidebar:
   label: Walkthrough
-description: Configure a small Cargo project, run a release plan, and let GitHub Actions publish its first GitHub Release.
+description: Set up automatic releases with GitHub Actions, from an empty repository to the first GitHub Release.
 ---
 
-This walkthrough starts a new Cargo package at Presswerk's implicit `0.0.0` baseline. A Gitmoji feature
-commit makes the first planned version `0.1.0`. GitHub Actions then prepares the release commit,
-checks that exact commit, and publishes its tag and GitHub Release.
+This walkthrough sets up [automatic releases](../release-modes/#automatic-releases) with GitHub
+Actions, from an empty repository to its first GitHub Release. Every push to `main` may prepare a
+release, and CI publishes the release commit once it has built and checked it.
+
+The example project is a minimal Cargo package, only because Cargo is the version file Presswerk
+supports today. Nothing else here is specific to Rust.
+
+The package starts at Presswerk's implicit `0.0.0` baseline, and a Gitmoji feature commit makes
+the first version `0.1.0`.
 
 :::caution
 Use a throwaway repository. Presswerk is early software, and this flow writes a commit, an annotated
@@ -67,7 +73,6 @@ Create `flake.nix`. Replace `YOUR-OWNER/pktest` with the repository you created.
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
 
     presswerk.url = "github:jkuball/presswerk/v{{presswerk.version}}";
-    presswerk.inputs.presswerk-release.url = "github:jkuball/presswerk/v0.1.0";
   };
 
   outputs = inputs@{ self, flake-parts, presswerk, ... }:
@@ -99,9 +104,6 @@ Create `flake.nix`. Replace `YOUR-OWNER/pktest` with the repository you created.
 }
 ```
 
-The nested `presswerk-release` override keeps Presswerk's current self-release pin on the public
-GitHub transport, so a consumer does not need an SSH key merely to lock the input.
-
 `mkRelease` reads the version from `Cargo.toml`, updates that file and the matching `Cargo.lock`
 package during preparation, uses the default Gitmoji catalog, writes `CHANGELOG.md`, and configures
 the default `GITHUB_TOKEN` secret for publication. The [options reference](/presswerk/reference/options/)
@@ -118,10 +120,7 @@ $ nix flake check
 `--no-link` prevents `nix build` from leaving an untracked `result` symlink. `prepare` requires a
 clean worktree.
 
-A project may use flake-parts as shown here, but this is ordinary flake output composition. A
-Presswerk-specific flake-parts adapter is not implemented.
-
-## 3. Add the two-phase workflow
+## 3. Add the workflow
 
 Create `.github/workflows/ci.yml`:
 
@@ -129,84 +128,63 @@ Create `.github/workflows/ci.yml`:
 name: CI
 
 on:
-  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
     inputs:
       candidate:
-        description: Exact release commit to test and publish
-        required: false
         type: string
 
 permissions:
   actions: write
   contents: write
 
-concurrency:
-  group: ${{ github.event_name == 'pull_request' && github.ref || 'presswerk-release' }}
-  cancel-in-progress: false
+concurrency: presswerk-release
 
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ inputs.candidate || github.sha }}
-
       - uses: DeterminateSystems/determinate-nix-action@v3
+      - run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
 
       - name: Build and check
         run: |
-          nix build .# --no-link --print-build-logs
-          nix flake check --print-build-logs
-
-      - name: Plan release
-        if: github.event_name == 'pull_request'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: nix run --inputs-from . presswerk -- plan
+          nix build --no-link
+          nix flake check
 
       - name: Prepare release
         if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          git fetch origin main --tags
-          if test "$(git rev-parse origin/main)" != "$GITHUB_SHA"; then
-            echo "main advanced; leaving release work to the newer run"
-            exit 0
-          fi
-
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-
-          before=$(git rev-parse HEAD)
           nix run --inputs-from . presswerk -- prepare
-          candidate=$(git rev-parse HEAD)
-          if test "$candidate" = "$before"; then
-            exit 0
+          if test "$(git rev-parse HEAD)" != "$GITHUB_SHA"; then
+            git push origin HEAD:main
+            gh workflow run ci.yml --ref main -f candidate="$(git rev-parse HEAD)"
           fi
-
-          git push origin HEAD:main
-          gh workflow run ci.yml --ref main -f candidate="$candidate"
 
       - name: Publish release
-        if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          test "$(git rev-parse HEAD)" = "${{ inputs.candidate }}"
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          nix run --inputs-from . presswerk -- publish HEAD
+        if: inputs.candidate
+        run: nix run --inputs-from . presswerk -- publish HEAD
 ```
 
-[GitHub Actions](../github-actions/) explains why the stale-main guard, explicit dispatch, and
-shared concurrency group are required.
+Every run builds and checks its commit first. After that:
+
+- A push to `main` runs `prepare`. If it creates a release commit, the run pushes it and starts
+  the workflow again with that commit as `candidate`.
+- A run with a `candidate` checks out exactly that commit, builds and checks it, and publishes it.
+- The shared concurrency group lets only one release run at a time.
+
+[GitHub Actions](../github-actions/) explains why the workflow dispatches itself and how to extend
+it, for example with release plans on pull requests.
 
 ## 4. Plan the first release
 
@@ -237,10 +215,10 @@ Push the ordinary commit:
 $ git push -u origin main
 ```
 
-The push run builds the ordinary commit, invokes `prepare`, and pushes a new `🔖 Release v0.1.0`
-commit. Because pushes made with `GITHUB_TOKEN` do not start another push workflow, the run explicitly
-dispatches CI with the release commit's full SHA. The dispatched run checks out that exact candidate,
-builds it, and calls `publish HEAD` only after its checks pass.
+The push run builds and checks the ordinary commit, runs `prepare`, and pushes a new
+`🔖 Release v0.1.0` commit. Because pushes made with `GITHUB_TOKEN` do not start another push
+workflow, the run dispatches CI with the release commit's full SHA. In the dispatched run, CI
+builds and checks that exact commit and only then calls `publish HEAD`.
 
 ```mermaid The first push creates a release commit, then an explicit dispatch validates and publishes that exact commit.
 gitGraph
@@ -248,8 +226,10 @@ gitGraph
   commit id: "🔖 0.1.0" tag: "v0.1.0"
 ```
 
-The tag appears only after candidate CI succeeds. If preparation finds no release-worthy commit, it
-creates no release commit and dispatches nothing.
+The tag appears only after CI succeeded on the release commit. If preparation finds no
+release-worthy commit, it creates no release commit and dispatches nothing. If `main` moved on in
+the meantime, the push of the release commit is rejected, nothing is released, and the newer run
+takes over.
 
 ## 6. Verify the evidence
 

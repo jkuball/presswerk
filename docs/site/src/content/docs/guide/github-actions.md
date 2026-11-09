@@ -5,8 +5,8 @@ description: Wire preparation and publication as two serialized runs around one 
 
 This page shows one way to run Presswerk from CI: [automatic releases](../release-modes/#automatic-releases)
 from GitHub Actions. The integration is runtime wiring, not code inside the CLI. The workflow must
-keep ordinary branch preparation separate from exact-candidate publication. The complete working
-file is in the [walkthrough](../walkthrough/#3-add-the-two-phase-workflow), and the
+keep ordinary branch preparation separate from exact-candidate publication. A minimal working
+file is in the [walkthrough](../walkthrough/#3-add-the-workflow), and the
 [CLI reference](/presswerk/reference/cli/) documents the invoked commands.
 
 ## Trigger matrix
