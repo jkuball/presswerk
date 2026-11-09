@@ -12,14 +12,22 @@ function nestedGroupOf(entries: SidebarEntry[], href: string, depth = 0): string
   }
 }
 
-// The landing page of a nested group is labelled "Overview" in the sidebar, under the group's name.
-// Previous and next links show that label without the group, so they take the group's name instead.
+/** A pagination label that names the group, for sidebar labels that only make sense under it. */
+function labelWithGroup(label: string, group: string): string | undefined {
+  if (label === 'Overview') return group;
+  // "Commit analyzers" → "Build your own commit analyzer"
+  if (label === 'Build your own') return `${label} ${group.toLowerCase().replace(/s$/, '')}`;
+}
+
+// Nested groups label their pages "Overview" and "Build your own" in the sidebar, under the group's
+// name. Previous and next links show those labels without the group, so they name it themselves.
 export const onRequest = defineRouteMiddleware((context) => {
   const { sidebar, pagination } = context.locals.starlightRoute;
   for (const key of ['prev', 'next'] as const) {
     const link = pagination[key];
-    if (link?.label !== 'Overview') continue;
+    if (!link) continue;
     const group = nestedGroupOf(sidebar, link.href);
-    if (group) pagination[key] = { ...link, label: group };
+    const label = group && labelWithGroup(link.label, group);
+    if (label) pagination[key] = { ...link, label };
   }
 });
