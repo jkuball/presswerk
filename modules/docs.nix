@@ -169,6 +169,8 @@ in
           test -s "$site/reference/$page.md" || { echo "missing plain-text reference page $page.md" >&2; exit 1; }
         done
         grep -q 'id="tag.format"' "$site/reference/options/index.html"
+        # Release options in Nix examples link to their reference entries.
+        grep -q 'href="/presswerk/reference/options/#versionFiles.cargo" class="pw-code-link"' "$site/index.html"
         grep -q 'id="publishers.github-release.name.token.secret"' "$site/reference/options/index.html"
         grep -q '^### `tag.format`$' "$site/reference/options.md"
         grep -q '^### presswerk publish$' "$site/reference/cli.md"

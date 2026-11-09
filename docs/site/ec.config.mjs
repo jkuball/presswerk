@@ -1,4 +1,7 @@
-import { defineEcConfig, ExpressiveCodeTheme, InlineStyleAnnotation } from '@astrojs/starlight/expressive-code';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { defineEcConfig, ExpressiveCodeAnnotation, ExpressiveCodeTheme, InlineStyleAnnotation } from '@astrojs/starlight/expressive-code';
+import { h } from '@astrojs/starlight/expressive-code/hast';
 
 /**
  * Noir code themes, after vim-256noir (https://github.com/andreasvc/vim-256noir): code is drawn in
@@ -115,6 +118,95 @@ function actionsExpressions() {
   };
 }
 
+const OPTIONS_PAGE = '/presswerk/reference/options/';
+
+/** Wrap a column range of a line in a link. */
+class LinkAnnotation extends ExpressiveCodeAnnotation {
+  constructor({ href, ...options }) {
+    super(options);
+    this.href = href;
+  }
+
+  render({ nodesToTransform }) {
+    const last = nodesToTransform.length - 1;
+    return nodesToTransform.map((node, index) =>
+      h('a', { href: this.href, class: 'pw-code-link' }, index === last ? [node, h('span', { class: 'pw-code-link-icon', 'aria-hidden': 'true' })] : [node]),
+    );
+  }
+}
+
+/** The documented release options from the generated reference data, if the build provides it. */
+function releaseOptions() {
+  const directory = process.env.PRESSWERK_REFERENCE;
+  if (!directory) return [];
+  const options = JSON.parse(readFileSync(join(directory, 'options.json'), 'utf8'));
+  return options.map((option) => ({ path: option.loc, anchor: option.anchor }));
+}
+
+/** The longest documented option that the attribute path starts with; `<name>` matches any name. */
+function matchOption(options, path) {
+  let best;
+  for (const option of options) {
+    if (option.path.length > path.length) continue;
+    if (!option.path.every((part, index) => part === '<name>' || part === path[index])) continue;
+    if (!best || option.path.length > best.path.length) best = option;
+  }
+  return best;
+}
+
+/**
+ * Link release options in Nix code to the options reference. Only attributes set inside a
+ * `mkRelease { … }` call are linked, with the paths of enclosing attribute sets taken into
+ * account, so a `version` attribute of a package elsewhere in the flake stays plain.
+ */
+function optionLinks() {
+  const options = releaseOptions();
+  return {
+    name: 'presswerk-option-links',
+    hooks: {
+      postprocessAnnotations: ({ codeBlock }) => {
+        if (codeBlock.language !== 'nix' || options.length === 0) return;
+        // The attribute set paths currently open inside the release declaration; null outside it.
+        let scopes = null;
+        for (const line of codeBlock.getLines()) {
+          const text = line.text;
+          if (scopes === null) {
+            const call = /\bmkRelease\b/.exec(text);
+            if (!call) continue;
+            line.addAnnotation(
+              new LinkAnnotation({ href: OPTIONS_PAGE, inlineRange: { columnStart: call.index, columnEnd: call.index + call[0].length } }),
+            );
+            if (/\{\s*$/.test(text)) scopes = [[]];
+            continue;
+          }
+          const definition = /^(\s*)([A-Za-z_][\w'-]*(?:\.[A-Za-z_][\w'-]*)*)\s*=(?!=)/.exec(text);
+          if (definition) {
+            const parts = definition[2].split('.');
+            const prefix = scopes[scopes.length - 1];
+            const option = matchOption(options, [...prefix, ...parts]);
+            if (option) {
+              // Link the part of the written path that belongs to the option.
+              const own = parts.slice(0, Math.max(0, option.path.length - prefix.length)).join('.');
+              if (own) {
+                const start = definition[1].length;
+                line.addAnnotation(
+                  new LinkAnnotation({ href: `${OPTIONS_PAGE}#${option.anchor}`, inlineRange: { columnStart: start, columnEnd: start + own.length } }),
+                );
+              }
+            }
+            if (/=\s*\{\s*$/.test(text)) scopes.push([...prefix, ...parts]);
+            continue;
+          }
+          if (/^\s*\}/.test(text)) {
+            scopes.pop();
+            if (scopes.length === 0) scopes = null;
+          }
+        }
+      },
+    },
+  };
+}
+
 /**
  * Highlight a Nix indented string as shell when a `# bash` comment precedes it, the way editors
  * with tree-sitter injections do:
@@ -152,7 +244,7 @@ const nixShellInjection = {
 };
 
 export default defineEcConfig({
-  plugins: [shellPrompt(), actionsExpressions()],
+  plugins: [shellPrompt(), actionsExpressions(), optionLinks()],
   shiki: { langs: [nixShellInjection] },
   themes: [
     noir({ name: 'presswerk-noir-dark', type: 'dark', ground: '#1b1b1b', ink: '#ececea', faint: '#969693', accent: ACCENT.dark }),
