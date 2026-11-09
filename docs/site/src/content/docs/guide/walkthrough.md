@@ -179,6 +179,8 @@ Every run builds and checks its commit first. After that:
   the workflow again with that commit as `candidate`.
 - A run with a `candidate` checks out exactly that commit, builds and checks it, and publishes it.
 - The shared concurrency group lets only one release run at a time.
+- `nix run --inputs-from . presswerk` runs the CLI from your flake's `presswerk` input, so it is
+  always the version locked in `flake.lock`, the same one that provides `mkRelease`.
 
 [GitHub Actions](../github-actions/) explains why the workflow dispatches itself and how to extend
 it, for example with release plans on pull requests.
