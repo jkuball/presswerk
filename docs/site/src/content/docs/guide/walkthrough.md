@@ -38,16 +38,16 @@ binary cache.
 Create a Cargo binary and set its committed version to `0.0.0`:
 
 ```console
-$ mkdir pktest && cd pktest
+$ mkdir YOUR-REPO && cd YOUR-REPO
 $ git init -b main
-$ cargo init --name pktest .
+$ cargo init --name YOUR-REPO .
 ```
 
 Edit `Cargo.toml`:
 
 ```toml
 [package]
-name = "pktest"
+name = "YOUR-REPO"
 version = "0.0.0"
 edition = "2024"
 ```
@@ -62,7 +62,7 @@ Your generated `src/main.rs` is enough for the exercise.
 
 ## 2. Declare the package and release
 
-Create `flake.nix`. Replace `YOUR-OWNER/pktest` with the repository you created.
+Create `flake.nix`. Replace `YOUR-OWNER/YOUR-REPO` with the repository you created.
 
 ```nix title="flake.nix"
 {
@@ -84,8 +84,8 @@ Create `flake.nix`. Replace `YOUR-OWNER/pktest` with the repository you created.
 
       flake.presswerk.default = presswerk.lib.mkRelease {
         sourceRoot = self.outPath;
-        versionFiles.cargo.pktest = { };
-        publishers.github-release.default.repository = "YOUR-OWNER/pktest";
+        versionFiles.cargo.YOUR-REPO = { };
+        publishers.github-release.default.repository = "YOUR-OWNER/YOUR-REPO";
       };
 
       perSystem = { pkgs, ... }:
@@ -191,7 +191,7 @@ it, for example with release plans on pull requests.
 Add your repository remote, then commit the complete project with a release-worthy Gitmoji subject:
 
 ```console
-$ git remote add origin git@github.com:YOUR-OWNER/pktest.git
+$ git remote add origin git@github.com:YOUR-OWNER/YOUR-REPO.git
 $ git add .gitignore Cargo.toml Cargo.lock src flake.nix flake.lock .github/workflows/ci.yml
 $ git commit -m "✨ Add the first command"
 $ nix run --inputs-from . presswerk -- plan

@@ -56,7 +56,7 @@ perSystem = { pkgs, ... }: {
 
         # Push the release commit and its tag with the deploy key.
         export GIT_SSH_COMMAND="ssh -i $PRESSWERK_DEPLOY_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-        git remote set-url --push origin git@github.com:YOUR-OWNER/pktest.git
+        git remote set-url --push origin git@github.com:YOUR-OWNER/YOUR-REPO.git
         git config user.name "Presswerk on NixCI"
         git config user.email "presswerk@users.noreply.github.com"
 
@@ -79,7 +79,7 @@ perSystem = { pkgs, ... }: {
 ```
 
 `nix run --inputs-from . presswerk` uses the Presswerk input locked in the flake, so the CLI matches
-the declaration. Replace `YOUR-OWNER/pktest` with the repository.
+the declaration. Replace `YOUR-OWNER/YOUR-REPO` with the repository.
 
 ## The NixCI configuration
 
