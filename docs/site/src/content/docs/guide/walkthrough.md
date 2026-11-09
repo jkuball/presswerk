@@ -83,7 +83,6 @@ Create `flake.nix`. Replace `YOUR-OWNER/YOUR-REPO` with the repository you creat
     {
       presswerk.default = presswerk.lib.mkRelease {
         sourceRoot = self.outPath;
-        # the package name from Cargo.toml
         versionFiles.cargo.YOUR-CRATE = { };
         publishers.github-release.default.repository = "YOUR-OWNER/YOUR-REPO";
       };
