@@ -51,10 +51,7 @@ export default defineConfig({
           items: [
             { label: 'Release options', link: '/reference/options/' },
             { slug: 'reference/cli' },
-            {
-              label: 'Version files',
-              items: [{ slug: 'reference/version-files' }, { slug: 'reference/version-files/build-your-own' }],
-            },
+            { slug: 'reference/version-files' },
             {
               label: 'Commit analyzers',
               items: [
