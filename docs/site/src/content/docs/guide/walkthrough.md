@@ -68,38 +68,36 @@ Create `flake.nix`. Replace `YOUR-OWNER/YOUR-REPO` with the repository you creat
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
-    flake-parts.url = "github:hercules-ci/flake-parts";
-    flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
-
     presswerk.url = "github:jkuball/presswerk/v{{presswerk.version}}";
   };
 
-  outputs = inputs@{ self, flake-parts, presswerk, ... }:
-    flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = [
+  outputs = { self, nixpkgs, presswerk }:
+    let
+      eachSystem = nixpkgs.lib.genAttrs [
         "aarch64-darwin"
         "x86_64-linux"
       ];
-
-      flake.presswerk.default = presswerk.lib.mkRelease {
+    in
+    {
+      presswerk.default = presswerk.lib.mkRelease {
         sourceRoot = self.outPath;
         versionFiles.cargo.YOUR-REPO = { };
         publishers.github-release.default.repository = "YOUR-OWNER/YOUR-REPO";
       };
 
-      perSystem = { pkgs, ... }:
+      packages = eachSystem (system:
         let
+          pkgs = nixpkgs.legacyPackages.${system};
           cargoPackage = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package;
         in
         {
-          packages.default = pkgs.rustPlatform.buildRustPackage {
+          default = pkgs.rustPlatform.buildRustPackage {
             inherit (cargoPackage) version;
             pname = cargoPackage.name;
             src = self;
             cargoLock.lockFile = ./Cargo.lock;
           };
-        };
+        });
     };
 }
 ```
@@ -195,14 +193,23 @@ $ git remote add origin git@github.com:YOUR-OWNER/YOUR-REPO.git
 $ git add .gitignore Cargo.toml Cargo.lock src flake.nix flake.lock .github/workflows/ci.yml
 $ git commit -m "✨ Add the first command"
 $ nix run --inputs-from . presswerk -- plan
+commit             3f621b7d7e693013a68f2849465f43193f474967
+previous release   none (implicit 0.0.0 baseline)
+analyzed commits   1
+  3f621b7  ✨ Add the first command
+next version       0.1.0
+
+version files
+  Cargo.toml  0.0.0 -> 0.1.0
+  Cargo.lock  0.0.0 -> 0.1.0
+
+notes
+  ### ✨ Introduce new features
+
+  - Add the first command
+
+Nothing written. Run `presswerk prepare` to commit 0.1.0.
 ```
-
-The plan should report:
-
-- no previous release, using the implicit `0.0.0` baseline;
-- the `✨` commit in the analyzed range;
-- `0.1.0` as the next version;
-- pending updates to `Cargo.toml`, `Cargo.lock`, and `CHANGELOG.md`.
 
 `plan` reads committed `HEAD`. If the working tree is dirty, it warns and still excludes those local
 changes. See the [CLI reference](/presswerk/reference/cli/) for command arguments and defaults.

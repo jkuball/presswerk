@@ -38,44 +38,50 @@ its own token start no new runs. With NixCI, every push starts a suite.
 
 ## The deploy package
 
-Add a package to the flake that runs the script. This example extends the flake from the
-[walkthrough](../walkthrough/#2-declare-the-package-and-release):
+Add a package to the flake that runs the script. This example extends the `packages` of the flake
+from the [walkthrough](../walkthrough/#2-declare-the-package-and-release):
 
 ```nix title="flake.nix"
-perSystem = { pkgs, ... }: {
-  packages.presswerk-deploy = pkgs.writeShellApplication {
-    name = "presswerk-deploy";
-    runtimeInputs = [ pkgs.git pkgs.openssh ];
-    text = # bash
-      ''
-        # Commit analysis needs the full history and the release tags.
-        if test "$(git rev-parse --is-shallow-repository)" = true; then
-          git fetch --unshallow --tags origin
-        fi
-        git fetch --tags origin main
+packages = eachSystem (system:
+  let
+    pkgs = nixpkgs.legacyPackages.${system};
+  in
+  {
+    # default = … as in the walkthrough
 
-        # Push the release commit and its tag with the deploy key.
-        export GIT_SSH_COMMAND="ssh -i $PRESSWERK_DEPLOY_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-        git remote set-url --push origin git@github.com:YOUR-OWNER/YOUR-REPO.git
-        git config user.name "Presswerk on NixCI"
-        git config user.email "presswerk@users.noreply.github.com"
+    presswerk-deploy = pkgs.writeShellApplication {
+      name = "presswerk-deploy";
+      runtimeInputs = [ pkgs.git pkgs.openssh ];
+      text = # bash
+        ''
+          # Commit analysis needs the full history and the release tags.
+          if test "$(git rev-parse --is-shallow-repository)" = true; then
+            git fetch --unshallow --tags origin
+          fi
+          git fetch --tags origin main
 
-        # A release commit whose suite succeeded: tag and publish it.
-        nix run --inputs-from . presswerk -- publish HEAD
+          # Push the release commit and its tag with the deploy key.
+          export GIT_SSH_COMMAND="ssh -i $PRESSWERK_DEPLOY_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git remote set-url --push origin git@github.com:YOUR-OWNER/YOUR-REPO.git
+          git config user.name "Presswerk on NixCI"
+          git config user.email "presswerk@users.noreply.github.com"
 
-        if test "$(git rev-parse origin/main)" != "$NIX_CI_GIT_COMMIT_SHA"; then
-          echo "main advanced; leaving release work to the newer suite"
-          exit 0
-        fi
+          # A release commit whose suite succeeded: tag and publish it.
+          nix run --inputs-from . presswerk -- publish HEAD
 
-        before=$(git rev-parse HEAD)
-        nix run --inputs-from . presswerk -- prepare
-        if test "$(git rev-parse HEAD)" != "$before"; then
-          git push origin HEAD:main
-        fi
-      '';
-  };
-};
+          if test "$(git rev-parse origin/main)" != "$NIX_CI_GIT_COMMIT_SHA"; then
+            echo "main advanced; leaving release work to the newer suite"
+            exit 0
+          fi
+
+          before=$(git rev-parse HEAD)
+          nix run --inputs-from . presswerk -- prepare
+          if test "$(git rev-parse HEAD)" != "$before"; then
+            git push origin HEAD:main
+          fi
+        '';
+    };
+  });
 ```
 
 `nix run --inputs-from . presswerk` uses the Presswerk input locked in the flake, so the CLI matches
