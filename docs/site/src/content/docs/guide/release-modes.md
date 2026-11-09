@@ -38,13 +38,8 @@ CI runs `prepare` on every push to the release branch, the branch you release fr
 it, and CI publishes it. Nobody decides when to release; the commit history does. Presswerk
 releases itself this way.
 
-The guide shows complete setups for this mode:
-
-- [GitHub Actions](../github-actions/)
-- [NixCI](../nixci/), not yet tested
-
-Other systems follow the same pattern: prepare on the release branch, push the release commit,
-check it, and publish that exact commit.
+[CI integration](../ci-integration/) lists what a CI setup has to provide and shows complete setups
+for GitHub Actions and NixCI.
 
 ## Manual releases
 

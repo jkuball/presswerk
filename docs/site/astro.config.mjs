@@ -37,6 +37,7 @@ export default defineConfig({
             {
               label: 'CI integration',
               items: [
+                { slug: 'guide/ci-integration' },
                 { label: 'GitHub Actions', slug: 'guide/github-actions' },
                 { label: 'NixCI', slug: 'guide/nixci' },
               ],
@@ -48,14 +49,22 @@ export default defineConfig({
           items: [
             { label: 'Release options', link: '/reference/options/' },
             { slug: 'reference/cli' },
-            { label: 'Version files', items: [{ slug: 'reference/version-files/build-your-own' }] },
+            {
+              label: 'Version files',
+              items: [{ slug: 'reference/version-files' }, { slug: 'reference/version-files/build-your-own' }],
+            },
             {
               label: 'Commit analyzers',
-              items: [{ slug: 'reference/analyzers/gitmoji' }, { slug: 'reference/analyzers/build-your-own' }],
+              items: [
+                { slug: 'reference/analyzers' },
+                { slug: 'reference/analyzers/gitmoji' },
+                { slug: 'reference/analyzers/build-your-own' },
+              ],
             },
             {
               label: 'Release publishers',
               items: [
+                { slug: 'reference/publishers' },
                 { label: 'GitHub Release', slug: 'reference/publishers/github-release' },
                 { slug: 'reference/publishers/build-your-own' },
               ],
