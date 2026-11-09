@@ -88,7 +88,11 @@ function accent(line, columnStart, columnEnd) {
   paint(line, ACCENT, columnStart, columnEnd);
 }
 
-/** Colour the `$` prompt at the start of shell lines with the accent. */
+/**
+ * Colour the `$` prompt at the start of shell lines with the accent, and draw the command after it
+ * in bold. The grammar finds the command only after an environment assignment, so the command is
+ * taken from the text: the first word after the prompt and any `NAME=value` assignments.
+ */
 function shellPrompt() {
   return {
     name: 'presswerk-shell-prompt',
@@ -96,7 +100,13 @@ function shellPrompt() {
       postprocessAnnotations: ({ codeBlock }) => {
         if (!SHELL_LANGUAGES.has(codeBlock.language)) return;
         for (const line of codeBlock.getLines()) {
-          if (/^\$(\s|$)/.test(line.text)) accent(line, 0, 1);
+          if (!/^\$(\s|$)/.test(line.text)) continue;
+          accent(line, 0, 1);
+          const command = /^\$\s+(?:\w+=(?:"[^"]*"|'[^']*'|\S*)\s+)*([^\s#]\S*)/.exec(line.text);
+          if (command) {
+            const end = command[0].length;
+            paint(line, INK, end - command[1].length, end, { bold: true });
+          }
         }
       },
     },
