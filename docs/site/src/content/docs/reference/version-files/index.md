@@ -18,6 +18,13 @@ A version file is a file in your repository that carries the project's version, 
 Because the version comes from committed files, it is an ordinary input of your flake, and your
 build can use it like any other value.
 
+:::caution[Every release rebuilds what reads the version]
+A derivation that reads the version is rebuilt for every release, and so is everything that depends
+on it. Where an artifact carries the version, such as `--version` output or package metadata, that
+rebuild is what makes it match the release. Elsewhere, keep the version out, especially out of
+derivations that much of your build depends on.
+:::
+
 ## Available version files
 
 | Version file | Option | Reads | Writes |
