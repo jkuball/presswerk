@@ -35,7 +35,7 @@ binary cache.
 
 ## 1. Create the project
 
-Create a Cargo binary and set its committed version to `0.0.0`:
+Create a Cargo binary:
 
 ```console
 $ mkdir YOUR-REPO && cd YOUR-REPO
@@ -43,13 +43,15 @@ $ git init -b main
 $ cargo init --name YOUR-REPO .
 ```
 
-Edit `Cargo.toml`:
+Cargo starts the package at `0.1.0`. Set it to `0.0.0` instead: nothing has been released yet,
+and the first release is the one that gives the project its first version.
 
-```toml
-[package]
-name = "YOUR-REPO"
-version = "0.0.0"
-edition = "2024"
+```diff lang="toml" title="Cargo.toml"
+ [package]
+ name = "YOUR-REPO"
+-version = "0.1.0"
++version = "0.0.0"
+ edition = "2024"
 ```
 
 Regenerate `Cargo.lock` after changing the package version:
