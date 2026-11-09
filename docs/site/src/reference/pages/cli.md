@@ -1,5 +1,6 @@
-Run the CLI from the Presswerk input locked in your flake, so it matches the `lib.mkRelease`
-that evaluates your declaration:
+Any build of the CLI can run these commands, as long as it reads the schema version of your
+declaration. We recommend running it from the Presswerk input locked in your flake, so it always
+matches the `lib.mkRelease` that evaluates your declaration:
 
 ```console
 $ nix run --inputs-from . presswerk -- plan
