@@ -24,7 +24,7 @@ options.sort((left, right) => left.option.name.localeCompare(right.option.name))
   headings={options.map(({ option }) => ({ depth: 2, slug: option.anchor, text: option.name }))}
 >
   <p>
-    Options of <code>presswerk.lib.mkRelease</code>. It evaluates them into the
+    Options of <code>presswerk.lib.mkRelease</code>. It evaluates them into the{' '}
     <a href={`${import.meta.env.BASE_URL}reference/declaration-schema/`}>plain declaration</a> that the CLI reads.
     <code>&lt;name&gt;</code> stands for a name of your choice.
   </p>
@@ -142,9 +142,18 @@ options.sort((left, right) => left.option.name.localeCompare(right.option.name))
     color: var(--sl-color-gray-3);
     font-size: var(--sl-text-sm);
   }
+  .pw-option {
+    margin-top: 2.5rem;
+  }
   .pw-option h2 {
     font-size: var(--sl-text-h4);
     overflow-wrap: anywhere;
+    border-left: 4px solid var(--pw-accent);
+    padding-left: 0.75rem;
+  }
+  .pw-option h2 code {
+    padding: 0;
+    background: none;
   }
   .pw-option dl {
     display: grid;
@@ -154,7 +163,7 @@ options.sort((left, right) => left.option.name.localeCompare(right.option.name))
   .pw-option dt {
     font-weight: 600;
   }
-  .pw-option dd {
+  .pw-option :is(dt, dd) {
     margin: 0;
   }
   .pw-option dd > :global(*) {
