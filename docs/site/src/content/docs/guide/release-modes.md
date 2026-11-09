@@ -23,23 +23,23 @@ release model, and it will go away.
 
 ## What every mode must ensure
 
-Presswerk enforces its part, and whatever runs it provides the rest:
+Presswerk takes care of the release itself; whatever runs it takes care of the surroundings.
 
-- **Presswerk** refuses to prepare while the previous release is incomplete, publishes only the
-  exact commit it is given, and on a retry keeps matching state and fails the run on conflicts.
-- **You or your CI** run the checks on the release commit before `publish`, run one release at a
-  time, provide the publisher's token, and allow the release commit to be pushed to the release
-  branch.
+- **Presswerk** prepares only once the previous release is complete, publishes exactly the commit
+  it is given, and can safely run again: matching state is kept, and conflicting state fails the
+  run.
+- **You or your CI** run one release at a time, provide the publishers' credentials, may push the
+  release commit to the release branch, and decide what has to pass before `publish`.
 
 ## Automatic releases
 
-CI runs `prepare` on every push to the release branch, the branch you release from, usually
-`main`. When the new commits contain a release-worthy change, a release commit appears, CI checks
-it, and CI publishes it. Nobody decides when to release; the commit history does. Presswerk
+With Presswerk, releasing can be a side effect of merging: no decision, no ceremony, no release
+day. CI runs `prepare` on every push to the release branch, the branch you release from, usually
+`main`. When the new commits contain a release-worthy change, a release commit appears, and once it
+is green, CI publishes it. Nobody decides when to release; the commit history does. Presswerk
 releases itself this way.
 
-[CI integration](../ci-integration/) lists what a CI setup has to provide and shows complete setups
-for GitHub Actions and NixCI.
+[CI integration](../ci-integration/) describes what a CI setup has to provide and how to build one.
 
 ## Manual releases
 
@@ -48,22 +48,18 @@ A person decides when to release. The steps are the same; only the trigger chang
 ### On demand from CI
 
 Keep the workflow, but run preparation only when someone asks for it, for example from a
-`workflow_dispatch` button. [GitHub Actions](../github-actions/#release-on-demand) shows the change.
+`workflow_dispatch` button. [GitHub Actions](../github-actions/#release-on-demand) shows how.
 
 ### From your machine
 
-Run the CLI from the Presswerk input locked in your flake, so it matches your declaration, with
-the publisher's token in the environment:
+Run the commands yourself, with the publisher's token in the environment:
 
 ```console
-$ alias presswerk='nix run --inputs-from . presswerk --'
 $ export GITHUB_TOKEN="$(gh auth token)"
-$ git switch main
-$ git pull --ff-only origin main
-$ presswerk plan                 # check the version and notes
-$ presswerk prepare              # create the release commit
-$ git push origin main           # push the release commit for your checks
-$ presswerk publish HEAD         # after the checks passed: tag and publish it
+$ presswerk plan            # check the version and notes
+$ presswerk prepare         # create the release commit
+$ git push                  # push it to the release branch
+$ presswerk publish HEAD    # tag and publish it
 ```
 
 `publish HEAD` publishes the commit you prepared, as long as you have not moved `HEAD` since. You
