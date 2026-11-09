@@ -14,9 +14,9 @@ Every release takes the same two steps, whatever runs them:
 
 ```mermaid Prepare adds the release commit; publish tags that same commit after its checks, whether CI or a person runs the commands.
 gitGraph
-  commit id: "0.2.2" tag: "v0.2.2"
+  commit id: "🔖 0.2.2" tag: "v0.2.2"
   commit id: "✨ feature"
-  commit id: "🔖 release 0.3.0" tag: "v0.3.0"
+  commit id: "🔖 0.3.0" tag: "v0.3.0"
 ```
 
 :::caution[GitHub is required for now]
@@ -27,9 +27,9 @@ release model, and it will go away.
 
 ## Automatic releases
 
-CI runs `prepare` on every push to the release branch. When the new commits contain a
-release-worthy change, a release commit appears, CI checks it, and CI publishes it. Nobody decides
-when to release; the commit history does. Presswerk releases itself this way.
+CI runs `prepare` on every push to the release branch, the branch you release from, usually
+`main`. When the new commits contain a release-worthy change, a release commit appears, CI checks
+it, and CI publishes it. Nobody decides when to release; the commit history does. Presswerk releases itself this way.
 
 [GitHub Actions](../github-actions/) shows a complete workflow for this mode.
 
@@ -60,15 +60,15 @@ $ presswerk publish HEAD         # after the checks passed: tag and publish it
 ```
 
 `publish HEAD` publishes the commit you prepared, as long as you have not moved `HEAD` since. You
-can also pass its SHA. If the push is rejected because the branch moved, the release commit was
-never published: drop it and prepare again on the new tip.
+can also pass its SHA. If the push is rejected because the branch moved, nothing has been
+released yet: drop the release commit and prepare again on the new tip.
 
 ## What every mode must ensure
 
 Presswerk enforces its part, and whatever runs it provides the rest:
 
 - **Presswerk** refuses to prepare while the previous release is incomplete, publishes only the
-  exact commit it is given, and on a retry keeps matching state and stops on conflicts.
+  exact commit it is given, and on a retry keeps matching state and fails the run on conflicts.
 - **You or your CI** run the checks on the release commit before `publish`, run one release at a
   time, provide the publisher's token, and allow the release commit to be pushed to the release
   branch.
