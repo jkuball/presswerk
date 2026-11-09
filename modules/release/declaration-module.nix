@@ -100,7 +100,7 @@
             type = types.nonEmptyStr;
             default = "GITHUB_TOKEN";
             example = "PRESSWERK_GITHUB_TOKEN";
-            description = "Logical name of the GitHub API token secret.";
+            description = "Name of the environment variable that holds the GitHub API token.";
           };
         };
       };
