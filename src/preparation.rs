@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use git2::{ErrorCode, ObjectType, Oid, Repository, StatusOptions};
 use semver::Version;
 use std::fmt::Write as _;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,14 +161,18 @@ pub fn build_release_plan(
 }
 
 pub fn prepare_release(plan: &ReleasePlan) -> Result<Option<Oid>> {
-    if is_worktree_dirty(&plan.repository)? {
-        bail!("working tree is dirty; commit or stash your changes first");
-    }
     let Some(version) = &plan.next_version else {
         return Ok(None);
     };
 
     let repository = Repository::open(&plan.repository).context("could not open Git repository")?;
+    let changed = locally_changed_release_files(&repository, &plan.release_files)?;
+    if !changed.is_empty() {
+        bail!(
+            "local changes in {} would be overwritten by the release commit; commit or stash them first",
+            changed.join(", ")
+        );
+    }
     let head = repository.head().context("could not read HEAD")?;
     let actual = head
         .peel_to_commit()
@@ -182,16 +187,59 @@ pub fn prepare_release(plan: &ReleasePlan) -> Result<Option<Oid>> {
     let reference = head.name().unwrap_or("HEAD").to_owned();
     drop(head);
 
-    create_release_commit(
+    let commit = create_release_commit(
         &plan.repository,
         &reference,
         plan.commit,
         version,
         &plan.release_files,
         plan.trusted_predecessor.as_ref(),
-    )
-    .map(Some)
-    .map_err(Into::into)
+    )?;
+    check_out_release_files(&repository, &plan.release_files)?;
+    Ok(Some(commit))
+}
+
+fn locally_changed_release_files(
+    repository: &Repository,
+    files: &[ReleaseFile],
+) -> Result<Vec<String>> {
+    let mut options = StatusOptions::new();
+    options
+        .include_untracked(true)
+        .include_ignored(false)
+        .disable_pathspec_match(true);
+    for file in files {
+        options.pathspec(&file.path);
+    }
+    let statuses = repository
+        .statuses(Some(&mut options))
+        .context("could not read the working tree status")?;
+    statuses
+        .iter()
+        .map(|entry| Ok(entry.path()?.to_owned()))
+        .collect()
+}
+
+// The release commit is created from Git objects, so the files it changed are written to the index
+// and working tree afterwards. Their local state was checked to be clean before.
+fn check_out_release_files(repository: &Repository, files: &[ReleaseFile]) -> Result<()> {
+    let Some(workdir) = repository.workdir() else {
+        return Ok(());
+    };
+    let mut index = repository.index().context("could not read the Git index")?;
+    for file in files {
+        let target = workdir.join(&file.path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("could not create {}", parent.display()))?;
+        }
+        fs::write(&target, &file.contents)
+            .with_context(|| format!("could not write {}", file.path.display()))?;
+        index
+            .add_path(&file.path)
+            .with_context(|| format!("could not stage {}", file.path.display()))?;
+    }
+    index.write().context("could not write the Git index")
 }
 
 pub fn is_worktree_dirty(repository_path: impl AsRef<Path>) -> Result<bool> {

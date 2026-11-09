@@ -199,13 +199,24 @@ fn plan_reads_head_and_prepare_creates_the_first_release_commit() {
     assert!(stdout.contains("Cargo.toml  0.0.0 -> 0.1.0"));
     assert!(stdout.contains("✨ Add the first feature"));
 
-    repository.git(["checkout", "--", "Cargo.toml"]);
-    let prepared = presswerk_in(repository.path(), &["prepare"]);
+    let refused = presswerk_in(repository.path(), &["prepare"]);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success());
     assert!(
-        prepared.status.success(),
-        "{}",
-        String::from_utf8_lossy(&prepared.stderr)
+        stderr.contains("local changes in Cargo.toml would be overwritten"),
+        "{stderr}"
     );
+
+    repository.git(["checkout", "--", "Cargo.toml"]);
+    repository.write("scratch", "untracked\n");
+    let prepared = presswerk_in(repository.path(), &["prepare"]);
+    let stderr = String::from_utf8_lossy(&prepared.stderr);
+    assert!(prepared.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("warning: working tree is dirty; preparing HEAD"),
+        "{stderr}"
+    );
+    assert_eq!(repository.git(["status", "--short"]), "?? scratch");
     let stdout = String::from_utf8_lossy(&prepared.stdout);
     assert!(stdout.starts_with("Preparing v0.1.0 on "), "{stdout}");
     assert!(stdout.contains("Cargo.toml"), "{stdout}");

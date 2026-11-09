@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::cli::{Cli, Command};
@@ -37,15 +37,19 @@ fn run() -> Result<()> {
             print!("{}", render_plan(&plan));
         }
         Command::Prepare { trust_predecessor } => {
-            if is_worktree_dirty(".")? {
-                bail!("working tree is dirty; commit or stash your changes first");
-            }
+            let dirty = is_worktree_dirty(".")?;
             let trusted_predecessor = trust_predecessor
                 .as_deref()
                 .map(TrustedPredecessor::from_argument)
                 .transpose()?;
             let plan =
                 build_head_release_plan_with_trust(".", &GitCliffAnalyzer, trusted_predecessor)?;
+            if dirty {
+                eprintln!(
+                    "warning: working tree is dirty; preparing HEAD ({}) without local changes",
+                    short_commit(&plan.commit.to_string())
+                );
+            }
             match prepare_release(&plan)? {
                 Some(commit) => {
                     let version = plan.next_version.as_ref().expect("release version exists");
