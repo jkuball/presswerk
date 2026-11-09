@@ -40,7 +40,7 @@ Create a Cargo binary:
 ```console
 $ mkdir YOUR-REPO && cd YOUR-REPO
 $ git init -b main
-$ cargo init --name YOUR-REPO .
+$ cargo init --name YOUR-CRATE .
 ```
 
 Cargo starts the package at `0.1.0`. Set it to `0.0.0` instead: nothing has been released yet,
@@ -48,7 +48,7 @@ and the first release is the one that gives the project its first version.
 
 ```diff lang="toml" title="Cargo.toml"
  [package]
- name = "YOUR-REPO"
+ name = "YOUR-CRATE"
 -version = "0.1.0"
 +version = "0.0.0"
  edition = "2024"
@@ -83,7 +83,8 @@ Create `flake.nix`. Replace `YOUR-OWNER/YOUR-REPO` with the repository you creat
     {
       presswerk.default = presswerk.lib.mkRelease {
         sourceRoot = self.outPath;
-        versionFiles.cargo.YOUR-REPO = { };
+        # the package name from Cargo.toml
+        versionFiles.cargo.YOUR-CRATE = { };
         publishers.github-release.default.repository = "YOUR-OWNER/YOUR-REPO";
       };
 
