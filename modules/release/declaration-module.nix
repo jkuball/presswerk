@@ -109,12 +109,14 @@
       options = {
         sourceRoot = mkOption {
           type = types.path;
-          description = "Immutable consumer source used while evaluating the release declaration.";
+          example = lib.literalExpression "self.outPath";
+          description = "Source of the repository, from which the version files are read.";
         };
 
         version = mkOption {
           type = types.nonEmptyStr;
-          description = "Effective release version shared by every version source.";
+          defaultText = lib.literalMD "read from the [version files](https://jkuball.github.io/presswerk/reference/version-files/)";
+          description = "Release version; every version file must declare the same one.";
         };
 
         versionFiles.cargo = mkOption {
