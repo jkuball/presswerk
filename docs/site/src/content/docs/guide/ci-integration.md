@@ -12,16 +12,16 @@ exact release commit once its checks passed. [Release modes](../release-modes/) 
 ## What a setup has to provide
 
 - **Full history.** Both steps analyze the commits since the previous release and read its tag, so
-  the checkout must not be shallow.
+  your CI should fetch the full history instead of a shallow clone.
 - **The exact commit.** `publish` receives the full SHA of the release commit, never a branch name,
-  and your CI checks out that commit before it builds and checks it.
-- **Checks before publish.** The release commit gets the same build and checks as any other commit,
-  and `publish` runs only after they passed.
-- **No stale release commit.** Your CI pushes the release commit without force, so the push is
-  rejected if the release branch moved on in the meantime. CI for the newer commit takes over.
-- **One release at a time.** Your CI never prepares or publishes two releases at once.
-- **Credentials.** Your CI can push the release commit to the release branch and the tag to the
-  remote, and it provides the publishers' tokens.
+  and your CI should check out that commit before it builds and checks it.
+- **Checks before publish.** Your CI should build and check the release commit like any other
+  commit, and run `publish` only after those checks passed.
+- **No stale release commit.** Your CI should push the release commit without force, so the push
+  is rejected if the release branch moved on in the meantime. CI for the newer commit takes over.
+- **One release at a time.** Your CI should never prepare or publish two releases at once.
+- **Credentials.** Your CI should be allowed to push the release commit to the release branch and
+  the tag to the remote, and it should provide the publishers' tokens.
 
 ## Setups
 
