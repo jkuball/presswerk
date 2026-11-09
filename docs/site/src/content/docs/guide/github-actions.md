@@ -133,16 +133,12 @@ This only saves work. Without it, the rejected push keeps stale runs from releas
 
 ## Recovery
 
-The [recovery guide](../recovery/) describes each case with Git and the Presswerk CLI. In this
-workflow, its steps map to runs:
+The [recovery guide](../recovery/) describes what to do when a release fails. To check and publish a
+candidate again, rerun its candidate run. GitHub allows reruns for 30 days; dispatching the
+candidate's full SHA again works at any time:
 
-- **Checking and publishing a candidate again.** Rerun the candidate run, or dispatch the same full
-  SHA again. The run checks out that commit, repeats the build and checks, and publishes only if
-  they pass:
+```console
+$ gh workflow run ci.yml --ref main -f candidate=RELEASE_COMMIT_SHA
+```
 
-  ```console
-  $ gh workflow run ci.yml --ref main -f candidate=RELEASE_COMMIT_SHA
-  ```
-
-- **Preparing again after a transient failure.** Rerun the push run if `main` still points to its
-  commit. If `main` moved on, the push run of the newer commit prepares instead.
+The run checks out that commit, repeats the build and checks, and publishes only if they pass.
