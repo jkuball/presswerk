@@ -143,9 +143,9 @@ export const referencePages: ReferencePage[] = [
       }),
   },
   {
-    slug: 'reference/publishers/github-release',
-    title: 'GitHub Release publisher',
-    description: 'How Presswerk publishes GitHub Releases, and the options of the publisher.',
+    slug: 'reference/publishers',
+    title: 'Release publishers',
+    description: 'How Presswerk publishes releases outside the repository, and the GitHub Release publisher.',
     markdown: ({ options }, base) =>
       fill(githubReleasePage, base, {
         options: optionsTable(
@@ -155,9 +155,9 @@ export const referencePages: ReferencePage[] = [
       }),
   },
   {
-    slug: 'reference/analyzers/gitmoji',
-    title: 'Gitmoji',
-    description: 'Write analyzable commit subjects, configure which Gitmojis change versions, and the default catalog.',
+    slug: 'reference/analyzers',
+    title: 'Commit analyzers',
+    description: 'How Presswerk turns commits into a version bump and release notes, and the Gitmoji analyzer with its default catalog.',
     markdown: ({ gitmoji, gitmojiLicense }, base) =>
       fill(gitmojiPage, base, {
         // One list per release level instead of a wide table, so the catalog reads on a phone too.

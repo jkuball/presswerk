@@ -1,3 +1,20 @@
+A release publisher creates a release outside the Git repository, from the release commit and its
+frozen notes. `publish` first pushes the tag, then runs every declared publisher.
+
+Every publisher follows the same rules on a retry:
+
+- matching state is kept;
+- missing state is created;
+- conflicting state fails the run.
+
+A release is complete once its tag and every publisher's release exist. `prepare` refuses to start
+the next release before that.
+
+GitHub Release is the only built-in publisher today, and every release currently needs one.
+Declaring publishers for other targets in the flake itself is planned.
+
+## GitHub Release
+
 The GitHub Release publisher creates one GitHub Release for the release tag, with the frozen
 release notes from the changelog as its body. Declare it under
 [`publishers.github-release`](/reference/options/#publishers.github-release), keyed by a name of
@@ -10,11 +27,11 @@ presswerk.lib.mkRelease {
 }
 ```
 
-## Options
+### Options
 
 <!-- reference:options -->
 
-## Token
+### Token
 
 `token.secret` names the environment variable that holds the GitHub API token, `GITHUB_TOKEN`
 by default. The token never enters the declaration or the Nix store; Presswerk reads it at run
@@ -26,7 +43,7 @@ ordinary commit it reports that there is nothing to publish before reading it. O
 GitHub Release is complete before planning the next one. Only the very first release can be
 planned and prepared without it. In GitHub Actions, the token needs the `contents: write` permission to publish.
 
-## Behavior
+### Behavior
 
 `presswerk publish` pushes the release tag first and then completes every GitHub Release
 publisher. For each publisher it looks up the release for the tag. GitHub finds only published

@@ -54,7 +54,7 @@ The release tag format, containing `{version}` exactly once, such as `"v{version
 - `gitmoji.catalog`: the Gitmoji catalog keyed by shortcode, without colons. Each entry has an
   `emoji`, a `description` used as the release-note group, and a `semver` level of `"major"`,
   `"minor"`, `"patch"`, or `null` for no release. See the
-  [default catalog](/reference/analyzers/gitmoji/#default-catalog).
+  [default catalog](/reference/analyzers/#default-catalog).
 
 ### `changelog.path`
 
@@ -65,4 +65,4 @@ The repository-relative path of the changelog that holds the release notes.
 The publishers of a release, keyed by publisher type and then by a name of your choice. Schema 2
 has one type, `github-release`, and requires at least one publisher of it. Each publisher has
 an `apiUrl`, a `repository` in `owner/name` form, and a `token.secret`; see the
-[GitHub Release publisher](/reference/publishers/github-release/).
+[GitHub Release publisher](/reference/publishers/).

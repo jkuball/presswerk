@@ -116,7 +116,7 @@ to analyze history and create commits. `branches = ":default"` keeps releases on
 Set two secrets for the repository in NixCI:
 
 - `GITHUB_TOKEN`: a token that can write the repository's contents, for the
-  [GitHub Release publisher](/presswerk/reference/publishers/github-release/#token). `plan` and
+  [GitHub Release publisher](/presswerk/reference/publishers/#token). `plan` and
   `prepare` also use it to check that the previous release is complete.
 - `PRESSWERK_DEPLOY_KEY`: the private half of an SSH deploy key with write access, used to push the
   release commit and its tag. NixCI writes it to a file and puts the path in the variable. Add the

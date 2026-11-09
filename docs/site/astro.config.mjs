@@ -52,22 +52,8 @@ export default defineConfig({
             { label: 'Release options', link: '/reference/options/' },
             { slug: 'reference/cli' },
             { slug: 'reference/version-files' },
-            {
-              label: 'Commit analyzers',
-              items: [
-                { slug: 'reference/analyzers' },
-                { slug: 'reference/analyzers/gitmoji' },
-                { slug: 'reference/analyzers/build-your-own' },
-              ],
-            },
-            {
-              label: 'Release publishers',
-              items: [
-                { slug: 'reference/publishers' },
-                { label: 'GitHub Release', slug: 'reference/publishers/github-release' },
-                { slug: 'reference/publishers/build-your-own' },
-              ],
-            },
+            { slug: 'reference/analyzers' },
+            { slug: 'reference/publishers' },
           ],
         },
         {

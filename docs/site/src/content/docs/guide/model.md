@@ -92,7 +92,7 @@ Presswerk follows SemVer. A fresh repository starts from an implicit `0.0.0` bas
 
 Presswerk never moves to `1.0.0` by itself, and there is no version override yet, so releases stay
 on `0.x` for now. Which level a commit selects, and how levels map to versions before `1.0.0`, is
-described on the [Gitmoji](/presswerk/reference/analyzers/gitmoji/#version-levels) page.
+described under [Version levels](/presswerk/reference/analyzers/#version-levels).
 
 How publication proceeds step by step, and what it does with existing releases, is described in the
-[GitHub Release publisher](/presswerk/reference/publishers/github-release/#behavior) reference.
+[GitHub Release publisher](/presswerk/reference/publishers/#behavior) reference.

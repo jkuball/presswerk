@@ -274,7 +274,7 @@ body that publication used.
 ## Next change
 
 The workflow pushed the release commit, so start the next change only after fast-forwarding your
-clean local `main` to it. Then use the [Gitmoji convention](/presswerk/reference/analyzers/gitmoji/) and pass your GitHub token
+clean local `main` to it. Then use the [Gitmoji convention](/presswerk/reference/analyzers/) and pass your GitHub token
 when planning. From the second release onward, `plan` verifies that the previous GitHub Release
 completed:
 

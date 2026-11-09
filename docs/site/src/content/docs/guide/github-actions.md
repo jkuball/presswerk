@@ -61,7 +61,7 @@ permissions:
 `contents: write` allows pushing the release commit and the tag, and creating the GitHub Release.
 `actions: write` allows the dispatch. The job passes the workflow's token twice: `gh` reads it from
 `GH_TOKEN`, and Presswerk reads it from `GITHUB_TOKEN`, the default secret of the
-[GitHub Release publisher](/presswerk/reference/publishers/github-release/#token).
+[GitHub Release publisher](/presswerk/reference/publishers/#token).
 
 Branch protection on `main` must allow the workflow to push the release commit.
 
