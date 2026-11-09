@@ -16,7 +16,12 @@
 </p>
 
 <p align="center">
-  <a href="https://jkuball.github.io/presswerk/"><img alt="Released with Presswerk" src="docs/site/public/badge.svg" width="164" height="20"></a>
+  <a href="https://jkuball.github.io/presswerk/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/site/public/badge-light.svg">
+      <img alt="Released with Presswerk" src="docs/site/public/badge.svg" width="164" height="20">
+    </picture>
+  </a>
 </p>
 
 > [!WARNING]

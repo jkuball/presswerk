@@ -8,7 +8,8 @@ and favicons.
 
 The "Released with Presswerk" badge sets the reduced icon in the ink colour of
 the dark theme on the light theme's accent. It is a fixed image for READMEs,
-which do not follow the docs theme.
+which do not follow the docs theme. Its label field comes in ink (badge.svg,
+for light pages) and in the paper colour (badge-light.svg, for dark pages).
 
 Every asset is a single filled path with one colour and a transparent
 background. The shapes are combined as geometry instead of SVG masks, because
@@ -154,8 +155,8 @@ def lockup(font, fill):
     return svg(icon + gap + width, icon, body, "Presswerk")
 
 
-def badge(heavy, regular):
-    """Two fields like a common README badge: a label on ink, the icon and name on the accent."""
+def badge(heavy, regular, field, label_ink):
+    """Two fields like a common README badge: a label on its own field, the icon and name on the accent."""
     height, cap, icon, pad, gap = 20, 7.6, 13, 6, 4
 
     def text(font, label, fill, x):
@@ -164,13 +165,13 @@ def badge(heavy, regular):
         top = (height - cap) / 2
         return f'<path d="{path}" fill="{fill}" transform="translate({x:.2f},{top:.2f}) scale({k:.4f})"/>', width * k
 
-    label, label_width = text(regular, "RELEASED WITH", INK_DARK, pad)
+    label, label_width = text(regular, "RELEASED WITH", label_ink, pad)
     split = pad + label_width + pad
     name, name_width = text(heavy, "PRESSWERK", INK_DARK, split + pad + icon + gap)
     width = split + pad + icon + gap + name_width + pad
     top = (height - icon) / 2
     body = (
-        f'<rect width="{split:.2f}" height="{height}" fill="{INK_LIGHT}"/>'
+        f'<rect width="{split:.2f}" height="{height}" fill="{field}"/>'
         f'<rect x="{split:.2f}" width="{width - split:.2f}" height="{height}" fill="{ACCENT_LIGHT}"/>'
         + label
         + mark_path(False, INK_DARK, f' transform="translate({split + pad:.2f},{top:.2f}) scale({icon / 100:.4f})"')
@@ -199,7 +200,8 @@ def main(archivo_path, root):
         (assets / f"icon-{theme}.svg").write_text(svg(100, 100, mark_path(False, ink), "Presswerk"))
         (assets / f"lockup-{theme}.svg").write_text(lockup(font, ink))
     (public / "favicon.svg").write_text(favicon())
-    (public / "badge.svg").write_text(badge(font, regular))
+    (public / "badge.svg").write_text(badge(font, regular, INK_LIGHT, INK_DARK))
+    (public / "badge-light.svg").write_text(badge(font, regular, INK_DARK, INK_LIGHT))
 
 
 if __name__ == "__main__":

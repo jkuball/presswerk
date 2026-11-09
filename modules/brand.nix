@@ -41,6 +41,7 @@
         diff -r ${../docs/site/src/assets/brand} generated/docs/site/src/assets/brand
         diff ${../docs/site/public/favicon.svg} generated/docs/site/public/favicon.svg
         diff ${../docs/site/public/badge.svg} generated/docs/site/public/badge.svg
+        diff ${../docs/site/public/badge-light.svg} generated/docs/site/public/badge-light.svg
         touch $out
       '';
 
