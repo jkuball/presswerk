@@ -28,9 +28,9 @@ The deploy job runs the same script on every commit of the default branch:
 
 ```mermaid The deploy job of an ordinary commit pushes the release commit; the deploy job of the release commit publishes it after its suite succeeded.
 gitGraph
-  commit id: "0.2.2" tag: "v0.2.2"
+  commit id: "🔖 0.2.2" tag: "v0.2.2"
   commit id: "✨ feature"
-  commit id: "🔖 release 0.3.0" tag: "v0.3.0"
+  commit id: "🔖 0.3.0" tag: "v0.3.0"
 ```
 
 GitHub Actions needs two phases and an explicit dispatch for the same flow, because pushes made with
