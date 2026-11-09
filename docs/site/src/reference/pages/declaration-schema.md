@@ -4,7 +4,8 @@ JSON-compatible data with no functions, paths, or module internals. Your flake e
 
 :::caution
 The schema is not frozen before Presswerk 1.0. A new schema gets a new `schemaVersion`, and the
-CLI refuses declarations whose version it does not support instead of guessing.
+CLI refuses declarations whose version it does not support instead of guessing. From 1.0 on, newer
+CLIs will also read declarations with older schema versions.
 :::
 
 This page documents `schemaVersion = 2`. Produce the declaration with `lib.mkRelease` rather
