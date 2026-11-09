@@ -155,9 +155,7 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
 
       - name: Build and check
-        run: |
-          nix build
-          nix flake check
+        run: nix flake check --build-all --keep-going
 
       - name: Prepare release
         if: github.event_name == 'push'
