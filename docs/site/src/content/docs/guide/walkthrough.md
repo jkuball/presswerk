@@ -113,12 +113,9 @@ Lock and check the flake:
 
 ```console
 $ nix flake lock
-$ nix build .# --no-link
+$ nix build
 $ nix flake check
 ```
-
-`--no-link` prevents `nix build` from leaving an untracked `result` symlink. `prepare` requires a
-clean worktree.
 
 ## 3. Add the workflow
 
@@ -159,7 +156,7 @@ jobs:
 
       - name: Build and check
         run: |
-          nix build --no-link
+          nix build
           nix flake check
 
       - name: Prepare release
