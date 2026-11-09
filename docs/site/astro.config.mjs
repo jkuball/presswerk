@@ -19,6 +19,7 @@ export default defineConfig({
         replacesTitle: true,
       },
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/jkuball/presswerk' }],
+      routeMiddleware: './src/routeData.ts',
       customCss: [
         '@fontsource-variable/archivo/wdth.css',
         '@fontsource-variable/jetbrains-mono/wght.css',
