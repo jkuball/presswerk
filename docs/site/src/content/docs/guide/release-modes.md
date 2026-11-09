@@ -18,8 +18,7 @@ Every release takes the same two steps, whatever runs them:
 
 :::caution[GitHub is required for now]
 Every release currently needs a [GitHub Release publisher](/presswerk/reference/publishers/github-release/),
-so publication talks to GitHub. That is a limitation of the publishers available today, not of the
-release model, and it will go away.
+so publication talks to GitHub.
 :::
 
 ## What every mode must ensure

@@ -24,8 +24,8 @@ You need:
 - permission for GitHub Actions to write repository contents and dispatch workflows;
 - a branch policy that permits the workflow's release commit push.
 
-The implemented publisher creates a Git tag and GitHub Release only. This example has no release
-assets and needs no binary cache.
+Presswerk publishes a Git tag and a GitHub Release. This example has no release assets and needs no
+binary cache.
 
 ## 1. Create the project
 
@@ -245,7 +245,7 @@ builds it, and calls `publish HEAD` only after its checks pass.
 ```mermaid The first push creates a release commit, then an explicit dispatch validates and publishes that exact commit.
 gitGraph
   commit id: "✨ first command"
-  commit id: "🔖 release 0.1.0" tag: "v0.1.0"
+  commit id: "🔖 0.1.0" tag: "v0.1.0"
 ```
 
 The tag appears only after candidate CI succeeds. If preparation finds no release-worthy commit, it
@@ -256,8 +256,7 @@ creates no release commit and dispatches nothing.
 Fetch the result and compare the release commit across Git, Actions, and GitHub Releases:
 
 ```console
-$ git fetch origin main --tags
-$ git pull --ff-only origin main
+$ git pull --ff-only --tags
 $ git log --oneline --decorate -3 main
 $ git rev-list -n 1 v0.1.0
 $ gh run list --workflow=ci.yml --limit=5
@@ -277,13 +276,12 @@ body that publication used.
 ## Next change
 
 The workflow pushed the release commit, so start the next change only after fast-forwarding your
-clean local `main` to it. Then use the [Gitmoji convention](../../reference/analyzers/gitmoji/) and pass your GitHub token
+clean local `main` to it. Then use the [Gitmoji convention](/presswerk/reference/analyzers/gitmoji/) and pass your GitHub token
 when planning. From the second release onward, `plan` verifies that the previous GitHub Release
 completed:
 
 ```console
-$ git switch main
-$ git pull --ff-only origin main
+$ git pull --ff-only
 $ # edit, stage, and commit the next change
 $ GITHUB_TOKEN="$(gh auth token)" nix run --inputs-from . presswerk -- plan
 $ git push
