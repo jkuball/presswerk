@@ -77,6 +77,7 @@ export default defineConfig({
           items: [
             { label: 'Recovery', slug: 'guide/recovery' },
             { slug: 'reference/declaration-schema' },
+            { slug: 'badges' },
           ],
         },
       ],

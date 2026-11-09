@@ -15,6 +15,10 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
+<p align="center">
+  <a href="https://jkuball.github.io/presswerk/"><img alt="Released with Presswerk" src="docs/site/public/badge.svg" width="164" height="20"></a>
+</p>
+
 > [!WARNING]
 > Presswerk is early, work-in-progress software. It releases itself, but its commands,
 > configuration, and output are not stable yet. Do not rely on it for production releases.

@@ -6,6 +6,10 @@ round spindle hole. It comes in two detail levels: the full mark with grooves
 and flake for large sizes (from about 64 px), and the reduced icon for headers
 and favicons.
 
+The "Released with Presswerk" badge sets the reduced icon in the ink colour of
+the dark theme on the light theme's accent. It is a fixed image for READMEs,
+which do not follow the docs theme.
+
 Every asset is a single filled path with one colour and a transparent
 background. The shapes are combined as geometry instead of SVG masks, because
 WebKit rasterises masked SVG images at low resolution and they turn blurry.
@@ -38,6 +42,7 @@ from shapely.ops import unary_union
 
 INK_LIGHT = "#111111"  # ink on the light theme
 INK_DARK = "#ECECEA"  # ink on the dark theme
+ACCENT_LIGHT = "#B82E1C"  # accent on the light theme
 
 ASSETS = Path("docs/site/src/assets/brand")
 PUBLIC = Path("docs/site/public")
@@ -113,9 +118,11 @@ def mark_path(full, fill, attrs=""):
     return f'<path d="{to_path(mark_geometry(full))}" fill="{fill}" fill-rule="evenodd"{attrs}/>'
 
 
-def svg(width, height, body, title):
+def svg(width, height, body, title, sized=False):
+    """Sized images carry their own width and height, so Markdown renderers do not stretch them."""
+    size = f'width="{width:.2f}" height="{height:.2f}" ' if sized else ""
     return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width:.2f} {height:.2f}" '
+        f'<svg xmlns="http://www.w3.org/2000/svg" {size}viewBox="0 0 {width:.2f} {height:.2f}" '
         f'role="img" aria-label="{title}"><title>{title}</title>{body}</svg>\n'
     )
 
@@ -147,6 +154,31 @@ def lockup(font, fill):
     return svg(icon + gap + width, icon, body, "Presswerk")
 
 
+def badge(heavy, regular):
+    """Two fields like a common README badge: a label on ink, the icon and name on the accent."""
+    height, cap, icon, pad, gap = 20, 7.6, 13, 6, 4
+
+    def text(font, label, fill, x):
+        path, width, font_cap = wordmark(font, label, 0.06)
+        k = cap / font_cap
+        top = (height - cap) / 2
+        return f'<path d="{path}" fill="{fill}" transform="translate({x:.2f},{top:.2f}) scale({k:.4f})"/>', width * k
+
+    label, label_width = text(regular, "RELEASED WITH", INK_DARK, pad)
+    split = pad + label_width + pad
+    name, name_width = text(heavy, "PRESSWERK", INK_DARK, split + pad + icon + gap)
+    width = split + pad + icon + gap + name_width + pad
+    top = (height - icon) / 2
+    body = (
+        f'<rect width="{split:.2f}" height="{height}" fill="{INK_LIGHT}"/>'
+        f'<rect x="{split:.2f}" width="{width - split:.2f}" height="{height}" fill="{ACCENT_LIGHT}"/>'
+        + label
+        + mark_path(False, INK_DARK, f' transform="translate({split + pad:.2f},{top:.2f}) scale({icon / 100:.4f})"')
+        + name
+    )
+    return svg(width, height, body, "Released with Presswerk", sized=True)
+
+
 def favicon():
     """The reduced icon; the browser tab follows the OS theme, so a media query is right here."""
     style = (
@@ -158,6 +190,7 @@ def favicon():
 
 def main(archivo_path, root):
     font = instantiateVariableFont(TTFont(archivo_path), {"wdth": 62, "wght": 800})
+    regular = instantiateVariableFont(TTFont(archivo_path), {"wdth": 62, "wght": 500})
     assets, public = Path(root) / ASSETS, Path(root) / PUBLIC
     assets.mkdir(parents=True, exist_ok=True)
     public.mkdir(parents=True, exist_ok=True)
@@ -166,6 +199,7 @@ def main(archivo_path, root):
         (assets / f"icon-{theme}.svg").write_text(svg(100, 100, mark_path(False, ink), "Presswerk"))
         (assets / f"lockup-{theme}.svg").write_text(lockup(font, ink))
     (public / "favicon.svg").write_text(favicon())
+    (public / "badge.svg").write_text(badge(font, regular))
 
 
 if __name__ == "__main__":
