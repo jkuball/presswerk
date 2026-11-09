@@ -18,6 +18,7 @@ export default defineConfig({
         dark: './src/assets/brand/lockup-dark.svg',
         replacesTitle: true,
       },
+      social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/jkuball/presswerk' }],
       customCss: [
         '@fontsource-variable/archivo/wdth.css',
         '@fontsource-variable/jetbrains-mono/wght.css',
