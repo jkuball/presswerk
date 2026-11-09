@@ -12,8 +12,9 @@ Every release takes the same two steps, whatever runs them:
    branch tip. You push that commit. It needs the history since the previous release, and read
    access to the remote's tags and, once a previous release exists, to the publishers, because it
    checks that the previous release is complete.
-2. Once your checks passed on that exact commit, `publish` tags it and publishes it. It needs the
-   same history, push access for the tag, and credentials that let the publishers create releases.
+2. Once the release commit is ready, for example when your CI has run all its checks on it,
+   `publish` tags it and publishes it. It needs the same history, push access for the tag, and
+   credentials that let the publishers create releases.
 
 :::caution[GitHub is required for now]
 Every release currently needs a [GitHub Release publisher](/presswerk/reference/publishers/github-release/),
@@ -52,10 +53,9 @@ Keep the workflow, but run preparation only when someone asks for it, for exampl
 
 ### From your machine
 
-Run the commands yourself, with the publisher's token in the environment:
+Run the commands yourself:
 
 ```console
-$ export GITHUB_TOKEN="$(gh auth token)"
 $ presswerk plan            # check the version and notes
 $ presswerk prepare         # create the release commit
 $ git push                  # push it to the release branch
