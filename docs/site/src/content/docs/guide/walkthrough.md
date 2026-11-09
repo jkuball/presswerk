@@ -239,22 +239,34 @@ takes over.
 
 ## 6. Verify the evidence
 
-Fetch the result and compare the release commit across Git, Actions, and GitHub Releases:
+Fetch the release commit and its tag, then look at the runs and the release:
 
 ```console
 $ git pull --ff-only --tags
-$ git log --oneline --decorate -3 main
-$ git rev-list -n 1 v0.1.0
-$ gh run list --workflow=ci.yml --limit=5
-$ gh release view v0.1.0 --json tagName,isDraft,isPrerelease,url
+$ git log --oneline -2
+9c4e1d2 (HEAD -> main, tag: v0.1.0, origin/main) 🔖 Release v0.1.0
+3f621b7 ✨ Add the first command
+$ gh run list --workflow ci.yml --limit 2 --json event,conclusion
+[
+  {
+    "conclusion": "success",
+    "event": "workflow_dispatch"
+  },
+  {
+    "conclusion": "success",
+    "event": "push"
+  }
+]
+$ gh release view v0.1.0 --json tagName,isDraft,url
+{
+  "isDraft": false,
+  "tagName": "v0.1.0",
+  "url": "https://github.com/YOUR-OWNER/YOUR-REPO/releases/tag/v0.1.0"
+}
 ```
 
-You should find:
-
-1. the original push run with a successful **Prepare release** step;
-2. a `workflow_dispatch` run whose candidate input equals the `🔖` commit SHA;
-3. `v0.1.0` resolving to that same commit;
-4. a published, non-draft GitHub Release for `v0.1.0`.
+The tag points to the release commit, the push run prepared it, the dispatched run published it, and
+the GitHub Release is not a draft.
 
 Open `CHANGELOG.md` at the release commit as a final check. Its `0.1.0` section is the frozen release
 body that publication used.
