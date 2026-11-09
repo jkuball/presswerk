@@ -103,9 +103,10 @@ jobs:
       - name: Publish release
         if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
         env:
+          CANDIDATE: ${{ inputs.candidate }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          test "$(git rev-parse HEAD)" = "${{ inputs.candidate }}"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           nix run .#presswerk-release -- publish HEAD
