@@ -8,8 +8,10 @@ sidebar:
 A version file is a file in your repository that carries the project's version, such as
 `Cargo.toml`. Presswerk uses version files in two directions:
 
-- **Reading.** The release declaration takes the declared version from the version files. Every
-  version file must carry the same version; if two disagree, the flake fails to evaluate.
+- **Reading.** Each version file defines the release's [`version`](/presswerk/reference/options/#version)
+  with the version it carries. The module system merges these definitions like any others, so every
+  version file must carry the same version: if two disagree, their definitions conflict and the flake
+  fails to evaluate, naming both files.
 - **Writing.** `prepare` writes the new version into every version file and commits them together in
   the release commit.
 
