@@ -174,14 +174,15 @@ jobs:
 Every run builds and checks its commit first. After that:
 
 - A push to `main` runs `prepare`. If it creates a release commit, the run pushes it and starts
-  the workflow again with that commit as `candidate`.
+  the workflow again with that commit as `candidate`. It has to start that run itself, because
+  pushes made with `GITHUB_TOKEN` do not trigger workflows.
 - A run with a `candidate` checks out exactly that commit, builds and checks it, and publishes it.
 - The shared concurrency group lets only one release run at a time.
 - `nix run --inputs-from . presswerk` runs the CLI from your flake's `presswerk` input, so it is
   always the version locked in `flake.lock`, the same one that provides `mkRelease`.
 
-[GitHub Actions](../github-actions/) explains why the workflow dispatches itself and how to extend
-it, for example with release plans on pull requests.
+[GitHub Actions](../github-actions/) shows how to extend the workflow, for example with release plans
+on pull requests.
 
 ## 4. Plan the first release
 
@@ -221,10 +222,9 @@ Push the ordinary commit:
 $ git push -u origin main
 ```
 
-The push run builds and checks the ordinary commit, runs `prepare`, and pushes a new
-`🔖 Release v0.1.0` commit. Because pushes made with `GITHUB_TOKEN` do not start another push
-workflow, the run dispatches CI with the release commit's full SHA. In the dispatched run, CI
-builds and checks that exact commit and only then calls `publish HEAD`.
+The push run builds and checks the ordinary commit, runs `prepare`, pushes a new
+`🔖 Release v0.1.0` commit, and dispatches CI with its full SHA. The dispatched run builds and checks
+that exact commit and only then calls `publish HEAD`.
 
 ```mermaid The first push creates a release commit, then an explicit dispatch validates and publishes that exact commit.
 gitGraph
