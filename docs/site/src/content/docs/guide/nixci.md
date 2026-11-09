@@ -134,6 +134,6 @@ These depend on how NixCI behaves and must be confirmed in a first run:
   from with `git ls-remote`.
 - **New suites from pushes.** Whether the push from the deploy job starts a suite for the release
   commit. Without it the release commit is never published automatically.
-- **Serialization.** Whether NixCI runs deploys of one repository one at a time. If not, the check
-  against `origin/main` before `prepare` is the only guard against two release runs racing.
+- **Serialization.** Whether NixCI runs deploys of one repository one at a time. If not, the push
+  without force still keeps a stale deploy from releasing, but two deploys can publish at once.
 - **Nix in the job.** Whether `nix` is on the deploy job's `PATH`. The script runs the CLI through it.
