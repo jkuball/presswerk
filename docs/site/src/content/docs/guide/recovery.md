@@ -23,7 +23,7 @@ Use these invariants throughout:
 ## Gather evidence first
 
 The examples on this page use the default tag format `v{version}`. If
-[`tag.format`](/reference/options/#tag.format) is set, use the tags it produces instead.
+[`tag.format`](../../reference/options/#tag.format) is set, use the tags it produces instead.
 
 Record the branch tip, recent release commits, and tags before changing history:
 
@@ -67,9 +67,9 @@ Do not write a release commit yourself to bypass a preparation error; fix the ca
 ### The previous release uses an unsupported declaration
 
 Before 1.0, a newer CLI may not read the declaration of the previous release. `prepare` then stops
-and names the previous tag and release commit together with the command to trust it. First check that
-release with the Presswerk version it was
-made with, which is the one locked in its `flake.lock`:
+and names the previous tag and release commit together with the command to trust it. First check
+that release with the Presswerk version it was made with, which is the one locked in its
+`flake.lock`:
 
 ```console
 $ git worktree add --detach ../previous-release v0.3.0
