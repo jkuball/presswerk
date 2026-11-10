@@ -8,13 +8,6 @@ debugging or for tools that read it.
 with no functions, paths, or module internals. Your flake exposes it as `presswerk.default`, and the
 CLI evaluates that output at an exact commit.
 
-:::caution
-Before Presswerk 1.0, `schemaVersion` is `0` and the shape may change with any Presswerk version.
-The CLI refuses a declaration it cannot decode instead of guessing; see
-[recovery](/guide/recovery/#the-previous-release-uses-an-unsupported-declaration). Presswerk 1.0
-introduces `schemaVersion = 1`, and from then on newer CLIs also read older declarations.
-:::
-
 ## Example
 
 Presswerk's own release settings, evaluated with this version of `lib.mkRelease`. The Gitmoji
@@ -26,7 +19,10 @@ catalog is shortened to two of its <!-- reference:catalog-size --> entries:
 
 Every field is required, and unknown fields are rejected.
 
-- `schemaVersion`: the integer `0`.
+- `schemaVersion`: the integer `0`. Before Presswerk 1.0, the shape may change with any Presswerk
+  version, and the CLI refuses a declaration it cannot decode instead of guessing; see
+  [recovery](/guide/recovery/#the-previous-release-uses-an-unsupported-declaration). Presswerk 1.0
+  introduces `1`, and from then on newer CLIs also read older declarations.
 - `version`: the effective release version, such as `"1.4.0"` or `"2.0.0-rc.1"`.
 - `tag.format`: the release tag format, containing `{version}` exactly once.
 - `changelog.path`: the repository-relative path of the changelog.
