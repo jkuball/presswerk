@@ -91,6 +91,9 @@ Common defaults include:
 Presswerk takes the highest level in the applicable commit range. Before `1.0.0`, both `minor` and
 `major` advance the minor component; `patch` advances the patch component.
 
+No commit moves a project to `1.0.0`. That step must always be acknowledged explicitly; a way to
+choose the version for it is planned.
+
 ```mermaid A documentation commit is included in notes but does not trigger a release alone; the later feature selects the 0.3.0 release.
 gitGraph
   commit id: "0.2.2" tag: "v0.2.2"
