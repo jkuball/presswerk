@@ -44,11 +44,10 @@ verifies the final result. Each line reports whether that step was already compl
 them were, the last line says that nothing changed. Once `publish` succeeds, the release is complete
 and the rest of this page does not apply.
 
-Never:
+When retrying, do not:
 
 - rerun `prepare` to invent a new candidate for the same tagged version;
 - move or force-push the tag to another commit;
-- delete a published tag or release to make the version look unused;
 - publish the current `main` tip when the retry belongs to an older commit.
 
 If the tag points to another commit, a release has incompatible metadata, or the remote state cannot
@@ -57,8 +56,9 @@ weaken the identity check.
 
 ## Rewrite history
 
-If the release commit has no tag and nothing has been published for it, you can also remove it from
-`main` and force-push. Once the tag exists, do not rewrite: the tag reserves the version for good.
+You can also remove the release commit from `main` and force-push. If its tag already exists, that
+means deleting the tag too, and cleaning up whatever the publishers have published, such as a GitHub
+Release or an image in a registry, as far as that is possible. Presswerk does not do this for you.
 
 The rest of this page recovers without force-pushing, so that `main` keeps a record of what
 happened. Recovery starts by identifying the exact ordinary commit, release commit, and tag involved.
