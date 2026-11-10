@@ -21,7 +21,7 @@ in
     assert builtins.seq releaseConfig.sourceRoot true;
     assert lib.assertMsg (failedAssertions == [ ]) "Release module assertions failed:\n${assertionMessage}";
     {
-      schemaVersion = 2;
+      schemaVersion = 0;
       inherit (releaseConfig) version;
 
       versionFiles = lib.concatLists (lib.mapAttrsToList

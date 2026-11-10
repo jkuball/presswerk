@@ -3,6 +3,7 @@ use crate::changelog::read_version_section;
 use crate::classification::{CommitClassification, classify_commit};
 use crate::declaration::{
     DeclarationError, GithubReleasePublisher as GithubReleaseDeclaration, ReleaseDeclaration,
+    UNSTABLE_SCHEMA_VERSION,
 };
 use crate::evaluation::{EvaluationError, evaluate_release_declaration};
 use crate::release_commit::TrustedPredecessor;
@@ -44,7 +45,7 @@ impl PublicationError {
     ) -> Self {
         let tag = tag.into();
         let message = format!(
-            "previous release tag {tag:?} at {commit} uses unsupported declaration schemaVersion {schema_version}; verify that release with its original Presswerk toolchain, then run `presswerk prepare --trust-predecessor {tag}={commit}`"
+            "previous release tag {tag:?} at {commit} uses a declaration with schemaVersion {schema_version} that this CLI cannot read; verify that release with its original Presswerk toolchain, then run `presswerk prepare --trust-predecessor {tag}={commit}`"
         );
         Self {
             message,
@@ -1140,6 +1141,13 @@ fn verify_predecessor_with_trust_mode(
                 commit,
                 schema_version,
             )),
+            Err(EvaluationError::Declaration(DeclarationError::IncompatibleUnstableSchema(_))) => {
+                Err(PublicationError::unsupported_predecessor(
+                    previous_tag.clone(),
+                    commit,
+                    UNSTABLE_SCHEMA_VERSION,
+                ))
+            }
             Err(error) => Err(PublicationError::new(error.to_string())),
         },
         |publisher, tag, _version| {

@@ -20,7 +20,7 @@ use support::GitRepo;
 fn declaration(version: &str, repository: &str) -> ReleaseDeclaration {
     ReleaseDeclaration::from_json(&format!(
         r#"{{
-          "schemaVersion": 2,
+          "schemaVersion": 0,
           "version": "{version}",
           "versionFiles": [],
           "tag": {{ "format": "v{{version}}" }},

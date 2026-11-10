@@ -20,7 +20,7 @@ use support::{GitRepo, gitmoji_catalog};
 
 fn declaration(version: &str) -> ReleaseDeclaration {
     ReleaseDeclaration {
-        schema_version: 2,
+        schema_version: 0,
         version: Version::parse(version).unwrap(),
         version_files: vec![VersionFile::Toml(TomlVersionFile {
             path: "Cargo.toml".into(),

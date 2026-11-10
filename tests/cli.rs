@@ -44,7 +44,7 @@ fn ordinary_repository() -> GitRepo {
         r#"{
   outputs = { self }: {
     presswerk.default = {
-      schemaVersion = 2;
+      schemaVersion = 0;
       version = "0.0.0";
       versionFiles = [];
       tag.format = "v{version}";
@@ -83,7 +83,7 @@ fn release_repository() -> GitRepo {
         r#"{
   outputs = { self }: {
     presswerk.default = {
-      schemaVersion = 2;
+      schemaVersion = 0;
       version = (builtins.fromTOML (builtins.readFile (self + "/Cargo.toml"))).package.version;
       versionFiles = [
         { path = "Cargo.toml"; toml = "package.version"; }

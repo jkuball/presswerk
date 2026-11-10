@@ -45,7 +45,7 @@ in
     "test defaults normalize to plain declaration data" = {
       expr = defaults;
       expected = {
-        schemaVersion = 2;
+        schemaVersion = 0;
         version = presswerkVersion;
         versionFiles = [
           {
@@ -412,7 +412,7 @@ in
       expected = defaults;
     };
 
-    "test Presswerk self release pins its schema while the current library stays on schema 2" = {
+    "test Presswerk self release pins its schema while the current library is on schema 0" = {
       expr = {
         selfSchemaVersion = self.presswerk.default.schemaVersion;
         currentSchemaVersion = defaults.schemaVersion;
@@ -420,7 +420,7 @@ in
       };
       expected = {
         selfSchemaVersion = 1;
-        currentSchemaVersion = 2;
+        currentSchemaVersion = 0;
         versionMatches = true;
       };
     };
