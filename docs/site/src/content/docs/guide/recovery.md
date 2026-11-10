@@ -22,6 +22,9 @@ Use these invariants throughout:
 
 ## Gather evidence first
 
+The examples on this page use the default tag format `v{version}`. If
+[`tag.format`](/reference/options/#tag.format) is set, use the tags it produces instead.
+
 Record the branch tip, recent release commits, and tags before changing history:
 
 ```console
@@ -60,6 +63,33 @@ gitGraph
 
 Do not write a release commit yourself to bypass a preparation error; fix the cause and run
 `prepare` again.
+
+### The previous release uses an unsupported declaration
+
+Before 1.0, a newer CLI may not read the declaration of the previous release. `prepare` then stops
+and names the previous tag and release commit together with the command to trust it. First check that
+release with the Presswerk version it was
+made with, which is the one locked in its `flake.lock`:
+
+```console
+$ git worktree add --detach ../previous-release v0.3.0
+$ cd ../previous-release
+$ nix run --inputs-from . presswerk -- publish HEAD
+v0.3.0 from 7b3e5f1 was already released; nothing changed.
+$ cd - && git worktree remove ../previous-release
+```
+
+If the release is complete, prepare again and trust exactly that predecessor by its tag and full
+commit ID:
+
+```console
+$ presswerk prepare --trust-predecessor v0.3.0=RELEASE_COMMIT_SHA
+```
+
+Presswerk still checks that the tag points to that commit, but skips reading the previous
+declaration. The release commit records the trusted predecessor in a `Presswerk-Trusted-Predecessor`
+trailer, so `publish` accepts it as well. The flag is refused when the previous declaration is
+readable.
 
 ## Candidate checks did not complete
 
