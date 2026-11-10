@@ -109,19 +109,17 @@ prepare.
 ## Change a default level
 
 Ordinary Nix module merging lets a project override one field without copying the catalog. For
-example, make documentation changes release a patch and stop dependency upgrades from doing so:
+example, make documentation changes release a patch and stop dependency upgrades from doing so. The
+argument of `mkRelease` is a module, so this is a complete one; add it to your `mkRelease` call or
+import it there:
 
 ```nix
-flake.presswerk.default = presswerk.lib.mkRelease {
-  sourceRoot = self.outPath;
-  versionFiles.cargo.my-project = { };
-  publishers.github-release.default.repository = "owner/my-project";
-
+{
   analyzer.gitmoji.catalog = {
     memo.semver = "patch";
     arrow_up.semver = null;
   };
-};
+}
 ```
 
 ```mermaid With memo changed to patch, a documentation commit can create the next patch release.
