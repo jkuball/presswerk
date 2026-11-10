@@ -35,9 +35,9 @@ Note the ordinary commit, the release commit, and the tag before you act.
 
 ## Failed preparation
 
-Preparation can fail before creating or pushing a release commit because the declaration is invalid,
-the lock file is inconsistent, the previous release is incomplete, a publisher is unavailable, or the
-branch moved.
+Preparation can fail before creating a release commit because the declaration is invalid,
+`flake.lock` is missing or out of date, an earlier release is pending or incomplete, the publisher
+state of the previous release cannot be read, or the branch moved.
 
 ```mermaid A preparation failure adds no release commit; after the cause is fixed, a later ordinary commit can prepare normally.
 gitGraph
@@ -49,12 +49,14 @@ gitGraph
 
 1. Confirm that `origin/main` has no new `🔖 Release …` commit from the failed attempt.
 2. If `main` moved on in the meantime, leave the old attempt alone and prepare from the new tip.
-3. If preparation reports an incomplete previous release, identify that tag and release commit, then
+3. If preparation reports a pending release, an earlier release commit has no tag yet. Follow
+   [candidate checks did not complete](#candidate-checks-did-not-complete) for that commit.
+4. If preparation reports an incomplete previous release, identify that tag and release commit, then
    follow [partial publication](#partial-publication) to retry the exact earlier candidate. Preparation
    cannot continue until that release chain is complete.
-4. Fix any deterministic declaration, lock-file, or code problem in an ordinary commit and push it.
+5. Fix any deterministic declaration, lock-file, or code problem in an ordinary commit and push it.
    Preparation from that commit is the next attempt.
-5. If the failure was transient and `main` has not moved, run `prepare` again.
+6. If the failure was transient and `main` has not moved, run `prepare` again.
 
 Do not write a release commit yourself to bypass a preparation error; fix the cause and run
 `prepare` again.
