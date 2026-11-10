@@ -37,9 +37,8 @@ The intention is either the configured Unicode emoji or its shortcode:
 🐛 : Fix tag lookup
 ```
 
-A scope in parentheses is optional. Whitespace must terminate the emoji or shortcode. For an
-unscoped colon style, put whitespace on both sides of the colon, as in `🐛 : Fix tag lookup`. A colon
-may attach directly to the closing parenthesis of a scope, as in `✨ (cli): Add search`.
+A scope in parentheses is optional. Whitespace must terminate the emoji or shortcode. A colon may
+attach directly to the closing parenthesis of a scope, as in `✨ (cli): Add search`.
 
 A subject that does not match an entry in the declared catalog does not contribute a bump or release
 note. Keep one clear Gitmoji intention at the start of each commit subject.
