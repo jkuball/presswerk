@@ -7,7 +7,12 @@ use std::error::Error;
 use std::fmt;
 use url::Url;
 
-pub const SCHEMA_VERSION: i64 = 2;
+/// The schema version of declarations before Presswerk 1.0. Its shape may change between
+/// Presswerk versions, so a declaration that does not decode is treated as written for another
+/// version instead of as invalid.
+pub const UNSTABLE_SCHEMA_VERSION: i64 = 0;
+
+pub const SCHEMA_VERSION: i64 = UNSTABLE_SCHEMA_VERSION;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -35,8 +40,13 @@ impl ReleaseDeclaration {
             return Err(DeclarationError::UnsupportedSchemaVersion(schema_version));
         }
 
-        let declaration: Self =
-            serde_json::from_value(value).map_err(DeclarationError::InvalidDeclaration)?;
+        let declaration: Self = serde_json::from_value(value).map_err(|error| {
+            if schema_version == UNSTABLE_SCHEMA_VERSION {
+                DeclarationError::IncompatibleUnstableSchema(error)
+            } else {
+                DeclarationError::InvalidDeclaration(error)
+            }
+        })?;
         declaration.validate()?;
         Ok(declaration)
     }
@@ -322,6 +332,7 @@ pub enum DeclarationError {
     MissingSchemaVersion,
     InvalidSchemaVersion,
     UnsupportedSchemaVersion(i64),
+    IncompatibleUnstableSchema(serde_json::Error),
     InvalidDeclaration(serde_json::Error),
     Invalid(String),
 }
@@ -338,6 +349,10 @@ impl fmt::Display for DeclarationError {
                 formatter,
                 "unsupported declaration schemaVersion {version}; update the locked `presswerk` flake input so the release module and CLI use the same Presswerk version"
             ),
+            Self::IncompatibleUnstableSchema(error) => write!(
+                formatter,
+                "declaration with the unstable schemaVersion {UNSTABLE_SCHEMA_VERSION} does not match this CLI ({error}); update the locked `presswerk` flake input so the release module and CLI use the same Presswerk version"
+            ),
             Self::InvalidDeclaration(error) => write!(formatter, "invalid declaration: {error}"),
             Self::Invalid(message) => formatter.write_str(message),
         }
@@ -347,7 +362,9 @@ impl fmt::Display for DeclarationError {
 impl Error for DeclarationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::InvalidJson(error) | Self::InvalidDeclaration(error) => Some(error),
+            Self::InvalidJson(error)
+            | Self::IncompatibleUnstableSchema(error)
+            | Self::InvalidDeclaration(error) => Some(error),
             _ => None,
         }
     }
@@ -382,7 +399,7 @@ mod tests {
 
     fn declaration(patch: impl FnOnce(&mut Value)) -> String {
         let mut declaration = json!({
-            "schemaVersion": 2,
+            "schemaVersion": 0,
             "version": "1.2.3",
             "versionFiles": [
                 { "path": "Cargo.toml", "toml": "package.version" },
@@ -417,9 +434,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_schema_two_with_the_declared_gitmoji_catalog() {
+    fn parses_schema_zero_with_the_declared_gitmoji_catalog() {
         let declaration = ReleaseDeclaration::from_json(&declaration(|_| {})).unwrap();
-        assert_eq!(declaration.schema_version, 2);
+        assert_eq!(declaration.schema_version, 0);
         assert_eq!(declaration.version, Version::new(1, 2, 3));
         assert_eq!(
             declaration.changelog,
@@ -448,7 +465,7 @@ mod tests {
 
         assert!(matches!(
             ReleaseDeclaration::from_json(&missing).unwrap_err(),
-            DeclarationError::InvalidDeclaration(_)
+            DeclarationError::IncompatibleUnstableSchema(_)
         ));
     }
 
@@ -478,13 +495,25 @@ mod tests {
     }
 
     #[test]
+    fn treats_an_undecodable_unstable_schema_as_written_for_another_version() {
+        let unexpected = declaration(|value| value["unexpected"] = json!(true));
+        let error = ReleaseDeclaration::from_json(&unexpected).unwrap_err();
+
+        assert!(error.to_string().contains("locked `presswerk` flake input"));
+        assert!(matches!(
+            error,
+            DeclarationError::IncompatibleUnstableSchema(_)
+        ));
+    }
+
+    #[test]
     fn rejects_a_missing_changelog() {
         let missing = declaration(|value| {
             value.as_object_mut().unwrap().remove("changelog");
         });
         assert!(matches!(
             ReleaseDeclaration::from_json(&missing).unwrap_err(),
-            DeclarationError::InvalidDeclaration(_)
+            DeclarationError::IncompatibleUnstableSchema(_)
         ));
     }
 
@@ -645,7 +674,7 @@ mod tests {
         let invalid = declaration(|value| value["version"] = json!("next"));
         assert!(matches!(
             ReleaseDeclaration::from_json(&invalid).unwrap_err(),
-            DeclarationError::InvalidDeclaration(_)
+            DeclarationError::IncompatibleUnstableSchema(_)
         ));
     }
 }

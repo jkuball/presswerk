@@ -1,0 +1,82 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { Code } from '@astrojs/starlight/components';
+import { getCollection, render } from 'astro:content';
+import type { ReleaseOption } from '../../reference/data';
+
+type Option = ReleaseOption & { defaultHtml: string | null };
+
+const options = await Promise.all(
+  (await getCollection('options')).map(async (entry) => ({
+    option: entry.data as Option,
+    Description: (await render(entry)).Content,
+  })),
+);
+options.sort((left, right) => left.option.name.localeCompare(right.option.name));
+---
+
+<StarlightPage
+  frontmatter={{
+    title: 'Release options',
+    description: 'Every option of the release module evaluated by lib.mkRelease.',
+    editUrl: false,
+  }}
+  headings={options.map(({ option }) => ({ depth: 2, slug: option.anchor, text: option.name }))}
+>
+  <p>
+    Options of <code>presswerk.lib.mkRelease</code>. It evaluates them into the{' '}
+    <a href={`${import.meta.env.BASE_URL}reference/declaration-schema/`}>plain declaration</a> that the CLI reads.
+    <code>&lt;name&gt;</code> stands for a name of your choice.
+  </p>
+
+  <div class="pw-option-list" data-placeholder="tag, publishers, catalog…">
+  {
+    options.map(({ option, Description }) => (
+      <section class="pw-option" data-option={`${option.name} ${option.description}`.toLowerCase()}>
+        <h2 id={option.anchor}>
+          <code>{option.name}</code>
+        </h2>
+        <Description />
+        <dl>
+          <dt>Type</dt>
+          <dd>{option.type}</dd>
+          <dt>Default</dt>
+          <dd>
+            {option.default === null ? (
+              'none, the option must be set'
+            ) : option.defaultHtml !== null ? (
+              <Fragment set:html={option.defaultHtml} />
+            ) : (
+              <Code code={option.default.text} lang="nix" />
+            )}
+          </dd>
+          {option.example && (
+            <>
+              <dt>Example</dt>
+              <dd>
+                <Code code={option.example.text} lang="nix" />
+              </dd>
+            </>
+          )}
+          {option.readOnly && (
+            <>
+              <dt>Read-only</dt>
+              <dd>Set by Presswerk; it cannot be defined in a release module.</dd>
+            </>
+          )}
+          <dt>Declared in</dt>
+          <dd>
+            {option.declarations.map((declaration) => (
+              <a href={declaration.url}>
+                <code>
+                  {declaration.path}:{declaration.line}
+                </code>
+              </a>
+            ))}
+          </dd>
+        </dl>
+      </section>
+    ))
+  }
+  </div>
+</StarlightPage>

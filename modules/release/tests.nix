@@ -45,7 +45,7 @@ in
     "test defaults normalize to plain declaration data" = {
       expr = defaults;
       expected = {
-        schemaVersion = 2;
+        schemaVersion = 0;
         version = presswerkVersion;
         versionFiles = [
           {
@@ -221,6 +221,25 @@ in
       expected = [ "memo" ];
     };
 
+    "test Gitmoji catalog entries can be removed with mkForce null" = {
+      expr =
+        let
+          catalog = (mkRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            analyzer.gitmoji.catalog.memo = lib.mkForce null;
+          }).analyzer.gitmoji.catalog;
+        in
+        {
+          memo = catalog ? memo;
+          sparkles = catalog ? sparkles;
+        };
+      expected = {
+        memo = false;
+        sparkles = true;
+      };
+    };
+
     "test Gitmoji emojis must be unique without variation selectors" = {
       expr = succeeds (mkRelease {
         inherit sourceRoot;
@@ -393,7 +412,7 @@ in
       expected = defaults;
     };
 
-    "test Presswerk self release pins its schema while the current library stays on schema 2" = {
+    "test Presswerk self release pins its schema while the current library is on schema 0" = {
       expr = {
         selfSchemaVersion = self.presswerk.default.schemaVersion;
         currentSchemaVersion = defaults.schemaVersion;
@@ -401,7 +420,7 @@ in
       };
       expected = {
         selfSchemaVersion = 1;
-        currentSchemaVersion = 2;
+        currentSchemaVersion = 0;
         versionMatches = true;
       };
     };

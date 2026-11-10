@@ -169,6 +169,8 @@
             name = "docs-preview";
             help = "Preview the documentation site";
             command = ''
+              PRESSWERK_REFERENCE="$(nix build "$PRJ_ROOT#docs-reference" --no-link --print-out-paths)" || exit
+              export PRESSWERK_REFERENCE
               pnpm --dir "$PRJ_ROOT/docs/site" install --frozen-lockfile \
                 && pnpm --dir "$PRJ_ROOT/docs/site" dev
             '';

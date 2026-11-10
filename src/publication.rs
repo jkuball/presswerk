@@ -3,6 +3,7 @@ use crate::changelog::read_version_section;
 use crate::classification::{CommitClassification, classify_commit};
 use crate::declaration::{
     DeclarationError, GithubReleasePublisher as GithubReleaseDeclaration, ReleaseDeclaration,
+    UNSTABLE_SCHEMA_VERSION,
 };
 use crate::evaluation::{EvaluationError, evaluate_release_declaration};
 use crate::release_commit::TrustedPredecessor;
@@ -44,7 +45,7 @@ impl PublicationError {
     ) -> Self {
         let tag = tag.into();
         let message = format!(
-            "previous release tag {tag:?} at {commit} uses unsupported declaration schemaVersion {schema_version}; verify that release with its original Presswerk toolchain, then run `presswerk prepare --trust-predecessor {tag}={commit}`"
+            "previous release tag {tag:?} at {commit} uses a declaration with schemaVersion {schema_version} that this CLI cannot read; verify that release with its original Presswerk toolchain, then run `presswerk prepare --trust-predecessor {tag}={commit}`"
         );
         Self {
             message,
@@ -233,7 +234,8 @@ impl GithubClient {
                         "could not decode GitHub Release {tag:?} in {repository}: {error}"
                     ))
                 }),
-            Err(ureq::Error::Status(404, _)) => Ok(None),
+            // GitHub finds only published releases by tag; a draft must be looked up in the listing.
+            Err(ureq::Error::Status(404, _)) => self.draft_release(repository, tag),
             Err(ureq::Error::Status(status, _)) => Err(PublicationError::new(format!(
                 "could not inspect GitHub Release {tag:?} in {repository} (HTTP {status})"
             ))),
@@ -241,6 +243,60 @@ impl GithubClient {
                 "could not inspect GitHub Release {tag:?} in {repository}: {error}"
             ))),
         }
+    }
+
+    fn draft_release(
+        &self,
+        repository: &str,
+        tag: &str,
+    ) -> Result<Option<GithubRelease>, PublicationError> {
+        const PER_PAGE: usize = 100;
+        let mut matches = Vec::new();
+        for page in 1.. {
+            let mut url = self.endpoint(repository, &["releases"])?;
+            url.query_pairs_mut()
+                .append_pair("per_page", &PER_PAGE.to_string())
+                .append_pair("page", &page.to_string());
+            let releases: Vec<ListedGithubRelease> = match self.request("GET", &url).call() {
+                Ok(response) => response.into_json().map_err(|error| {
+                    PublicationError::new(format!(
+                        "could not decode GitHub Releases of {repository}: {error}"
+                    ))
+                })?,
+                Err(ureq::Error::Status(status, _)) => {
+                    return Err(PublicationError::new(format!(
+                        "could not list GitHub Releases of {repository} (HTTP {status})"
+                    )));
+                }
+                Err(ureq::Error::Transport(error)) => {
+                    return Err(PublicationError::new(format!(
+                        "could not list GitHub Releases of {repository}: {error}"
+                    )));
+                }
+            };
+            let complete = releases.len() < PER_PAGE;
+            for listed in releases {
+                // An entry without a usable tag could be the release we look for: fail closed.
+                if listed.tag_name.is_empty() {
+                    return Err(PublicationError::new(format!(
+                        "GitHub listed a release without a tag name in {repository}"
+                    )));
+                }
+                if listed.tag_name == tag {
+                    matches.push(listed.release);
+                }
+            }
+            if complete {
+                break;
+            }
+        }
+        if matches.len() > 1 {
+            return Err(PublicationError::new(format!(
+                "found {} GitHub Releases for {tag:?} in {repository}, expected at most one",
+                matches.len()
+            )));
+        }
+        Ok(matches.pop())
     }
 
     fn create_draft(
@@ -444,6 +500,13 @@ struct GithubRelease {
     id: u64,
     draft: bool,
     prerelease: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListedGithubRelease {
+    tag_name: String,
+    #[serde(flatten)]
+    release: GithubRelease,
 }
 
 #[derive(Debug, Serialize)]
@@ -661,10 +724,48 @@ impl TagPublisher for GitTagPublisher {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublishOutcome {
-    NothingToDo,
+    /// The commit is an ordinary commit, not a release commit.
+    NothingToDo {
+        commit: String,
+    },
+    Published(PublishReport),
+}
+
+/// What publication did, step by step; already complete steps show that a retry changed nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishReport {
+    pub commit: String,
+    pub tag: String,
+    pub tag_step: TagStep,
+    /// One step per publisher, named like its declaration, such as `github-release.default`.
+    pub publisher_steps: Vec<(String, PublisherStep)>,
+}
+
+impl PublishReport {
+    /// Whether every step was already complete before this run.
+    #[must_use]
+    pub fn changed_nothing(&self) -> bool {
+        self.tag_step == TagStep::AlreadyPushed
+            && self
+                .publisher_steps
+                .iter()
+                .all(|(_, step)| *step == PublisherStep::AlreadyPublished)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagStep {
+    Pushed,
+    AlreadyPushed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublisherStep {
     Published,
+    DraftCompleted,
+    AlreadyPublished,
 }
 
 pub fn publish(
@@ -703,7 +804,9 @@ pub fn publish_to_remote(
         .map_err(|error| PublicationError::new(error.to_string()))?;
 
     match classification {
-        CommitClassification::OrdinaryCommit => return Ok(PublishOutcome::NothingToDo),
+        CommitClassification::OrdinaryCommit => {
+            return Ok(PublishOutcome::NothingToDo { commit: commit_id });
+        }
         CommitClassification::NewRelease | CommitClassification::RetryOrRepublish => {}
         other => {
             return Err(PublicationError::new(format!(
@@ -754,24 +857,36 @@ pub fn publish_to_remote(
         .map(GithubPublisher::from_declaration)
         .map(|publisher| publisher.map(|publisher| Box::new(publisher) as Box<dyn Publisher>))
         .collect::<Result<Vec<_>, _>>()?;
-    publish_ordered(&tag_publisher, &release, &publishers)?;
-    Ok(PublishOutcome::Published)
+    let (tag_step, steps) = publish_ordered(&tag_publisher, &release, &publishers)?;
+    let publisher_names = declaration
+        .publishers
+        .github_release
+        .keys()
+        .map(|name| format!("github-release.{name}"));
+    Ok(PublishOutcome::Published(PublishReport {
+        commit: release.commit,
+        tag: release.tag,
+        tag_step,
+        publisher_steps: publisher_names.zip(steps).collect(),
+    }))
 }
 
+/// Publishes the tag, then completes every publisher, and reports what each step found.
 pub fn publish_ordered(
     tag_publisher: &dyn TagPublisher,
     release: &Release,
     publishers: &[Box<dyn Publisher>],
-) -> Result<(), PublicationError> {
+) -> Result<(TagStep, Vec<PublisherStep>), PublicationError> {
     if publishers.is_empty() {
         return Err(PublicationError::new(
             "at least one GitHub Release publisher is required",
         ));
     }
-    match tag_publisher.state(release)? {
-        RemoteState::Missing | RemoteState::Matching => {}
+    let tag_step = match tag_publisher.state(release)? {
+        RemoteState::Missing => TagStep::Pushed,
+        RemoteState::Matching => TagStep::AlreadyPushed,
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
-    }
+    };
     for publisher in publishers {
         if let PublisherState::Conflicting(message) = publisher.state(release)? {
             return Err(PublicationError::new(message));
@@ -779,12 +894,18 @@ pub fn publish_ordered(
     }
 
     tag_publisher.publish(release)?;
+    let mut publisher_steps = Vec::with_capacity(publishers.len());
     for publisher in publishers {
-        match publisher.state(release)? {
-            PublisherState::Published => {}
-            PublisherState::Missing | PublisherState::Draft => publisher.publish(release)?,
+        let step = match publisher.state(release)? {
+            PublisherState::Published => PublisherStep::AlreadyPublished,
+            PublisherState::Missing => PublisherStep::Published,
+            PublisherState::Draft => PublisherStep::DraftCompleted,
             PublisherState::Conflicting(message) => return Err(PublicationError::new(message)),
+        };
+        if step != PublisherStep::AlreadyPublished {
+            publisher.publish(release)?;
         }
+        publisher_steps.push(step);
     }
 
     match tag_publisher.state(release)? {
@@ -807,7 +928,7 @@ pub fn publish_ordered(
             }
         }
     }
-    Ok(())
+    Ok((tag_step, publisher_steps))
 }
 
 pub fn validate_new_release(
@@ -1020,6 +1141,13 @@ fn verify_predecessor_with_trust_mode(
                 commit,
                 schema_version,
             )),
+            Err(EvaluationError::Declaration(DeclarationError::IncompatibleUnstableSchema(_))) => {
+                Err(PublicationError::unsupported_predecessor(
+                    previous_tag.clone(),
+                    commit,
+                    UNSTABLE_SCHEMA_VERSION,
+                ))
+            }
             Err(error) => Err(PublicationError::new(error.to_string())),
         },
         |publisher, tag, _version| {

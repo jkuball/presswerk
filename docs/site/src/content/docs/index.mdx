@@ -1,7 +1,6 @@
 ---
 title: Presswerk
 description: Release tooling for projects whose artifacts are built with Nix flakes.
-template: splash
 hero:
   title: PRESSWERK
   tagline: Bringing controlled outside world mutation into your immutable software builds.
@@ -11,16 +10,19 @@ hero:
     alt: The Presswerk mark, a record held in a split hexagonal die.
 ---
 
-Presswerk turns repository release declarations into repeatable release work. One immutable
-master record, the flake at an exact commit, is pressed into every published release.
+Nix makes building your software reproducible, but not releasing it. Version bumps, release notes,
+tags, and published releases change the outside world, and they easily drift apart from what was
+actually built and tested. Presswerk keeps them together: it records the new version and
+frozen notes in a release commit, lets your checks run on it, and publishes exactly what they
+tested.
 
 :::caution
 Presswerk is early, work-in-progress software. It releases itself, but its commands,
 configuration, and output are not stable yet. Do not rely on it for production releases.
 :::
 
-A release is declared with `lib.mkRelease`, which evaluates a Nix module and produces plain data
-at the `presswerk.default` flake output:
+To use Presswerk, add a release declaration to the flake that already builds your software.
+`lib.mkRelease` describes which files carry the version and where the release is published:
 
 ```nix
 # flake.nix
@@ -28,33 +30,92 @@ at the `presswerk.default` flake output:
   inputs.presswerk.url = "github:jkuball/presswerk";
 
   outputs = { self, presswerk, ... }: {
+    # your software, built as before
+    packages = { … };
+
     presswerk.default = presswerk.lib.mkRelease {
       sourceRoot = self.outPath;
+      # the version lives in this crate's Cargo.toml
       versionFiles.cargo.my-crate = { };
+      # publish a GitHub Release here
       publishers.github-release.default.repository = "owner/project";
     };
   };
 }
 ```
 
-Run the CLI from the Presswerk input locked in your flake, so it matches your `mkRelease`:
+Every release then takes the same steps, whether you run them yourself or let CI run them on every
+push. Plan the release, prepare the release commit, and push it to run your checks on it:
 
 ```console
-$ nix run --inputs-from . presswerk -- plan           # show the next release, write nothing
-$ nix run --inputs-from . presswerk -- prepare        # create the release commit
-$ nix run --inputs-from . presswerk -- publish HEAD   # tag and publish an exact candidate
+$ presswerk plan
+commit             4e21c09b7a5d3f18e6c2a90b1d47f8e35c6a0b92
+previous release   v0.2.2 (a1f3c2e8d4b6970f5e1c3a28b7d9046f2e8c1d53)
+analyzed commits   1
+  4e21c09  ✨ Look up tags by prefix
+next version       0.3.0
+
+version files
+  Cargo.toml  0.2.2 -> 0.3.0
+  Cargo.lock  0.2.2 -> 0.3.0
+
+notes
+  ### ✨ Introduce new features
+
+  - Look up tags by prefix
+
+Nothing written. Run `presswerk prepare` to commit 0.3.0.
+
+$ presswerk prepare
+Preparing v0.3.0 on 4e21c09
+  version  Cargo.toml    0.2.2 -> 0.3.0
+  version  Cargo.lock    0.2.2 -> 0.3.0
+  notes    CHANGELOG.md  added 0.3.0
+  commit   7b3e5f1       🔖 Release v0.3.0
+
+$ git push
 ```
 
-The release commit carries the new version and frozen release notes, so CI builds and checks
-the exact candidate before anything is published:
+Once the checks pass on that commit, publish exactly it:
 
-```mermaid
+```console
+$ presswerk publish HEAD
+Publishing v0.3.0 from 7b3e5f1
+  tag      v0.3.0                  pushed
+  release  github-release.default  published
+Released v0.3.0 from 7b3e5f1.
+```
+
+```mermaid After publish: the previous release, the planned feature commit, and the release commit on top, tagged v0.3.0.
 gitGraph
-  commit id: "a1f3c2e"
-  branch fix/tag-lookup
-  commit id: "4e21c09"
-  checkout main
-  merge fix/tag-lookup
-  commit id: "release 0.2.0" tag: "v0.2.0"
-  commit id: "c7d1e88"
+  commit id: "🔖 a1f3c2e" tag: "v0.2.2"
+  commit id: "✨ 4e21c09"
+  commit id: "🔖 7b3e5f1" tag: "v0.3.0"
 ```
+
+Presswerk needs only a flake and a Git repository. [Release modes](./guide/release-modes/) shows both
+ways to run it, and the [walkthrough](./guide/walkthrough/) sets up a project from scratch.
+
+## Guide
+
+- [Why Presswerk](./guide/) explains the problem, the idea, and what Presswerk is not.
+- [Release model](./guide/model/) defines candidates, release commits, pressings, and pending releases.
+- [Release modes](./guide/release-modes/) compares automatic releases from CI with manual releases from any machine.
+- [Walkthrough](./guide/walkthrough/) sets up automatic releases from GitHub Actions.
+- [Adopt an existing project](./guide/adoption/) is still to be written.
+- CI integration
+  - [GitHub Actions](./guide/github-actions/) covers serialization, stale-run protection, and exact-candidate dispatch.
+  - [NixCI](./guide/nixci/) releases from a single deploy job; not yet tested.
+
+## Reference
+
+- [Release options](./reference/options/) lists every option of `lib.mkRelease`, generated from the module.
+- [CLI](./reference/cli/) documents `plan`, `prepare`, and `publish`, generated from the CLI.
+- [Version files](./reference/version-files/) describes how Presswerk reads and writes the version, and the Cargo support.
+- [Commit analyzers](./reference/analyzers/) shows how Gitmoji commits select versions and release-note groups, and lists the default catalog.
+- [Release publishers](./reference/publishers/) describes publication, retries, and the GitHub Release publisher with its token.
+
+## More
+
+- [Recovery](./guide/recovery/) handles failed preparation, failed candidates, and partial publication.
+- [Declaration schema](./reference/declaration-schema/) documents the plain declaration the CLI reads.

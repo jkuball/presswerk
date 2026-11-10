@@ -549,7 +549,23 @@ struct NoteGroup<'a> {
     emoji: &'a str,
     shortcode: &'a str,
     description: &'a str,
-    commits: Vec<&'a AnalyzedCommit>,
+    commits: Vec<NoteCommit<'a>>,
+}
+
+#[derive(Serialize)]
+struct NoteCommit<'a> {
+    /// The subject without its leading intention, which the group heading already shows.
+    text: &'a str,
+}
+
+impl<'a> NoteCommit<'a> {
+    fn new(commit: &'a AnalyzedCommit) -> Self {
+        let text = commit
+            .subject
+            .split_once(char::is_whitespace)
+            .map_or(commit.subject.as_str(), |(_, rest)| rest.trim_start());
+        Self { text }
+    }
 }
 
 pub fn render_release_notes(analysis: &Analysis) -> Result<String, RenderError> {
@@ -564,7 +580,7 @@ pub fn render_release_notes(analysis: &Analysis) -> Result<String, RenderError> 
                 commits: Vec::new(),
             })
             .commits
-            .push(commit);
+            .push(NoteCommit::new(commit));
     }
 
     let mut groups: Vec<_> = groups.into_values().collect();
@@ -792,7 +808,7 @@ mod tests {
         let notes = render_release_notes(&analysis).unwrap();
         assert_eq!(
             notes,
-            "### 📝 Add or update documentation\n\n- 📝 Document Unicode spelling\n- :memo: Document shortcode spelling\n\n### 🐛 Fix a bug\n\n- :bug: Fix bug\n\n### ✨ Introduce new features\n\n- ✨ Add feature\n"
+            "### 📝 Add or update documentation\n\n- Document Unicode spelling\n- Document shortcode spelling\n\n### 🐛 Fix a bug\n\n- Fix bug\n\n### ✨ Introduce new features\n\n- Add feature\n"
         );
     }
 

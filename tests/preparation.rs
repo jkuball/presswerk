@@ -20,7 +20,7 @@ use support::{GitRepo, gitmoji_catalog};
 
 fn declaration(version: &str) -> ReleaseDeclaration {
     ReleaseDeclaration {
-        schema_version: 2,
+        schema_version: 0,
         version: Version::parse(version).unwrap(),
         version_files: vec![VersionFile::Toml(TomlVersionFile {
             path: "Cargo.toml".into(),
@@ -141,8 +141,8 @@ fn plans_and_prepares_the_full_range_after_a_completed_release() {
     );
     let changelog = repository.git(["show", &format!("{release}:CHANGELOG.md")]);
     assert!(changelog.contains("## [0.2.0] - 2026-11-05"));
-    assert!(changelog.contains("✨ Add full-range planning"));
-    assert!(changelog.contains("📝 Document the feature"));
+    assert!(changelog.contains("\n- Add full-range planning"));
+    assert!(changelog.contains("\n- Document the feature"));
 }
 
 #[test]
@@ -399,7 +399,7 @@ fn prepares_a_release_from_a_detached_ci_checkout() {
 }
 
 #[test]
-fn plan_reads_committed_files_but_prepare_refuses_a_dirty_tree() {
+fn plan_reads_committed_files_but_prepare_refuses_to_overwrite_a_release_file() {
     let repository = GitRepo::new();
     write_version(&repository, "0.0.0");
     repository.write("feature", "committed\n");
@@ -417,10 +417,45 @@ fn plan_reads_committed_files_but_prepare_refuses_a_dirty_tree() {
 
     assert_eq!(plan.current_version, Version::new(0, 0, 0));
     assert!(is_worktree_dirty(repository.path()).unwrap());
+    let head = repository.head();
+    let error = prepare_release(&plan).unwrap_err().to_string();
     assert!(
-        prepare_release(&plan)
-            .unwrap_err()
-            .to_string()
-            .contains("working tree is dirty")
+        error.contains("local changes in Cargo.toml would be overwritten"),
+        "{error}"
+    );
+    assert_eq!(repository.head(), head);
+}
+
+#[test]
+fn prepare_keeps_unrelated_local_changes_and_checks_out_the_release_files() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.write("feature", "committed\n");
+    repository.commit("✨ Add the first feature");
+    repository.write("feature", "uncommitted\n");
+    repository.write("scratch", "untracked\n");
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated(&repository, "0.0.0"),
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+    let release = prepare_release(&plan).unwrap().unwrap();
+
+    assert_eq!(repository.head(), release.to_string());
+    assert_eq!(
+        repository.git(["show", &format!("{release}:feature")]),
+        "committed"
+    );
+    assert_eq!(
+        repository.git(["status", "--porcelain"]),
+        "M feature\n?? scratch"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("Cargo.toml")).unwrap(),
+        "[package]\nname = \"example\"\nversion = \"0.1.0\"\n"
     );
 }

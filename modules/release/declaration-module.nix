@@ -7,7 +7,7 @@
       gitmojiCatalog = builtins.fromJSON (builtins.readFile ./gitmoji/catalog.json);
       variationSelector = builtins.fromJSON ''"\uFE0F"'';
       normalizedEmoji = emoji: builtins.replaceStrings [ variationSelector ] [ "" ] emoji;
-      catalogEntries = builtins.attrValues config.analyzer.gitmoji.catalog;
+      catalogEntries = builtins.filter (entry: entry != null) (builtins.attrValues config.analyzer.gitmoji.catalog);
       catalogEmojis = map (entry: normalizedEmoji entry.emoji) catalogEntries;
       catalogShortcodes = map (entry: entry.shortcode) catalogEntries;
 
@@ -92,13 +92,15 @@
 
           repository = mkOption {
             type = types.strMatching "[^/]+/[^/]+";
+            example = "owner/project";
             description = "GitHub repository in owner/name form.";
           };
 
           token.secret = mkOption {
             type = types.nonEmptyStr;
             default = "GITHUB_TOKEN";
-            description = "Logical name of the GitHub API token secret.";
+            example = "PRESSWERK_GITHUB_TOKEN";
+            description = "Name of the environment variable that holds the GitHub API token.";
           };
         };
       };
@@ -107,23 +109,32 @@
       options = {
         sourceRoot = mkOption {
           type = types.path;
-          description = "Immutable consumer source used while evaluating the release declaration.";
+          example = lib.literalExpression "self.outPath";
+          description = "Source of the repository, from which the version files are read.";
         };
 
         version = mkOption {
           type = types.nonEmptyStr;
-          description = "Effective release version shared by every version source.";
+          defaultText = lib.literalMD "read from the [version files](https://jkuball.github.io/presswerk/reference/version-files/)";
+          description = "Release version; every version file must declare the same one.";
         };
 
         versionFiles.cargo = mkOption {
           type = types.attrsOf (types.submodule cargoModule);
           default = { };
+          example = lib.literalExpression ''
+            {
+              my-crate = { };
+              my-other-crate.cargoToml = "crates/other/Cargo.toml";
+            }
+          '';
           description = "Cargo version sources and writers.";
         };
 
         tag.format = mkOption {
           type = tagFormat;
           default = "v{version}";
+          example = "release-{version}";
           description = "Release tag format; must contain {version} exactly once, not adjacent to another brace.";
         };
 
@@ -135,21 +146,36 @@
           };
 
           gitmoji.catalog = mkOption {
-            type = types.attrsOf (types.submodule gitmojiModule);
+            type = types.attrsOf (types.nullOr (types.submodule gitmojiModule));
             default = { };
-            description = "Gitmoji catalog keyed by entry identifier; each entry's shortcode defaults to its identifier.";
+            defaultText = lib.literalMD "the [default Gitmoji catalog](https://jkuball.github.io/presswerk/reference/analyzers/#default-catalog)";
+            example = lib.literalExpression ''
+              {
+                # Release CI changes as patches.
+                construction_worker.semver = "patch";
+                # Stop accepting 💩 commits.
+                poop = lib.mkForce null;
+              }
+            '';
+            description = "Gitmoji catalog keyed by entry identifier; each entry's shortcode defaults to its identifier. Setting an entry to `lib.mkForce null` removes it.";
           };
         };
 
         changelog.path = mkOption {
           type = relativePath;
           default = "CHANGELOG.md";
+          example = "docs/NEWS.md";
           description = "Repository-relative changelog path.";
         };
 
         publishers.github-release = mkOption {
           type = types.attrsOf (types.submodule githubReleaseModule);
           default = { };
+          example = lib.literalExpression ''
+            {
+              default.repository = "owner/project";
+            }
+          '';
           description = "GitHub Release publishers.";
         };
 
@@ -161,6 +187,8 @@
             };
           });
           default = [ ];
+          internal = true;
+          visible = false;
           description = "Assertions checked while evaluating the release module.";
         };
       };

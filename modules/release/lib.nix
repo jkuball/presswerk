@@ -21,7 +21,7 @@ in
     assert builtins.seq releaseConfig.sourceRoot true;
     assert lib.assertMsg (failedAssertions == [ ]) "Release module assertions failed:\n${assertionMessage}";
     {
-      schemaVersion = 2;
+      schemaVersion = 0;
       inherit (releaseConfig) version;
 
       versionFiles = lib.concatLists (lib.mapAttrsToList
@@ -48,7 +48,7 @@ in
             _identifier: entry:
               lib.nameValuePair entry.shortcode (builtins.removeAttrs entry [ "shortcode" ])
           )
-          releaseConfig.analyzer.gitmoji.catalog;
+          (lib.filterAttrs (_identifier: entry: entry != null) releaseConfig.analyzer.gitmoji.catalog);
       };
       changelog.path = releaseConfig.changelog.path;
       publishers.github-release = releaseConfig.publishers.github-release;

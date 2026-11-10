@@ -9,17 +9,36 @@ import { htmlToHast } from 'satteri';
  * client-side JavaScript.
  */
 export default function pelePlugin() {
+  let figureNumber = 0;
+
   return {
     name: 'presswerk-pele',
     code(node) {
       if (node.lang !== 'mermaid') return;
+
+      const caption = node.meta?.trim();
+      if (!caption) throw new Error('Mermaid diagrams need a caption after the language name.');
+
+      const captionId = `pw-graph-${++figureNumber}-caption`;
       const { svg } = render(node.value);
+      const diagram = htmlToHast(svg, { fragment: true }).children;
+      const svgNode = diagram.find((child) => child.type === 'element' && child.tagName === 'svg');
+      if (svgNode) svgNode.properties.ariaLabelledBy = captionId;
+
       return {
         type: 'paragraph',
         data: {
           hName: 'figure',
-          hProperties: { className: ['pw-graph', 'not-content'] },
-          hChildren: htmlToHast(svg, { fragment: true }).children,
+          hProperties: { className: ['pw-graph', 'not-content'], ariaLabelledBy: captionId },
+          hChildren: [
+            ...diagram,
+            {
+              type: 'element',
+              tagName: 'figcaption',
+              properties: { id: captionId },
+              children: [{ type: 'text', value: caption }],
+            },
+          ],
         },
         children: [],
       };

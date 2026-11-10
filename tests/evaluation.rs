@@ -24,7 +24,7 @@ fn valid_flake(version: &str) -> String {
     legacyPackages.x86_64-linux.presswerk = throw "installable lookup must not be used";
 
     presswerk.default = {
-      schemaVersion = 2;
+      schemaVersion = 0;
       version = "@VERSION@";
       versionFiles = [
         { path = "Cargo.toml"; toml = "package.version"; }
@@ -142,6 +142,24 @@ fn rejects_unsupported_schemas_before_decoding_the_remainder() {
     assert!(matches!(
         error,
         EvaluationError::Declaration(DeclarationError::UnsupportedSchemaVersion(1))
+    ));
+}
+
+#[test]
+fn treats_an_undecodable_unstable_schema_as_written_for_another_version() {
+    let repository = GitRepo::new();
+    repository.write(
+        "flake.nix",
+        flake("{ schemaVersion = 0; version = false; unexpected = true; }"),
+    );
+    repository.write("flake.lock", LOCK_FILE);
+    repository.commit("🧪 Add declaration from another Presswerk version");
+
+    let error = evaluate(&repository, "HEAD").unwrap_err();
+    assert!(error.to_string().contains("locked `presswerk` flake input"));
+    assert!(matches!(
+        error,
+        EvaluationError::Declaration(DeclarationError::IncompatibleUnstableSchema(_))
     ));
 }
 

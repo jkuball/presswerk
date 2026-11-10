@@ -56,7 +56,7 @@
   --pele-series-3: var(--pw-muted);
   --pele-font: var(--sl-font);
   --pele-font-mono: var(--sl-font-mono);
-  --pele-radius: 2px;
+  --pele-radius: 0;
 }
 
 /* Light theme */
@@ -109,14 +109,28 @@
   text-decoration-thickness: 1px;
   text-underline-offset: 0.2em;
 }
+/* Links that leave the documentation end in a small outward arrow */
+.sl-markdown-content
+  a[href^='http']:not([href^='https://jkuball.github.io/presswerk']):not(:where(.not-content *))::after {
+  content: '';
+  display: inline-block;
+  width: 0.65em;
+  height: 0.65em;
+  margin-inline-start: 0.2em;
+  background-color: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='black' stroke-width='1.6'%3E%3Cpath d='M3 9 9 3M4 3h5v5'/%3E%3C/svg%3E")
+    no-repeat center / contain;
+}
 
-/* Sidebar: the current page gets weight and an accent rule instead of a filled pill */
+/* Sidebar: the current page gets a square accent bar, like the asides, and a light wash instead of a pill */
 nav.sidebar a[aria-current='page'],
 nav.sidebar a[aria-current='page']:hover,
 nav.sidebar a[aria-current='page']:focus {
   color: var(--pw-ink);
-  background-color: transparent;
-  box-shadow: inset 2px 0 0 var(--pw-accent);
+  font-weight: inherit;
+  background-color: var(--pw-accent-wash);
+  border-radius: 0;
+  box-shadow: inset 3px 0 0 var(--pw-accent);
 }
 
 /*
@@ -163,17 +177,57 @@ nav.sidebar a[aria-current='page']:focus {
 
 /* Git graphs */
 .pw-graph {
+  display: grid;
+  gap: 0.75rem;
   overflow-x: auto;
   border: 1px solid var(--pw-rule);
   border-radius: 3px;
   padding: 0.75rem;
 }
 .pw-graph svg {
-  width: min(100%, 32rem);
+  display: block;
+  width: 100%;
   height: auto;
+}
+.pw-graph figcaption {
+  position: sticky;
+  left: 0;
+  color: var(--pw-muted);
+  font-size: var(--sl-text-sm);
+  max-width: 52rem;
 }
 .pw-graph .pele-commits {
   fill: var(--pw-ink);
+}
+/* Tags mark published releases, so they carry the accent; their text keeps the ink. */
+.pw-graph .pele-tag path {
+  fill: var(--pw-accent-wash);
+  stroke: var(--pw-accent);
+}
+.pw-graph .pele-tag circle {
+  fill: var(--pw-accent);
+}
+/* Pages that are still to be written carry a badge in the accent, so open work stands out. */
+nav.sidebar .sl-badge {
+  color: var(--pw-accent);
+  background-color: var(--pw-accent-wash);
+  border-color: var(--pw-accent);
+  border-radius: 0;
+}
+
+/* Diagrams use the hard edges of the rest of the design. */
+.pw-graph svg rect {
+  rx: 0;
+  ry: 0;
+}
+/* States are outlined in ink like the edges between them, so they stand out from the ground. */
+.pw-graph .pele-node.pele-state rect {
+  stroke: var(--pw-ink);
+}
+/* The published state is what a release is for, so it carries the accent like a tag. */
+.pw-graph .pele-node.pele-state[data-id='Published'] rect {
+  fill: var(--pw-accent-wash);
+  stroke: var(--pw-accent);
 }
 
 /*
@@ -189,4 +243,125 @@ nav.sidebar a[aria-current='page']:focus {
   :root:not([data-has-sidebar]) .header .social-icons:not(:has(a))::after {
     display: none;
   }
+}
+
+/* Nested sidebar groups (CI integration, Version files, …) read as quiet labels, not as headings */
+nav.sidebar ul ul .group-label .large {
+  font-size: var(--sl-text-sm);
+  font-weight: inherit;
+  color: var(--pw-muted);
+}
+
+/* Release options in code examples link to the options reference, marked by the Presswerk icon. */
+.expressive-code a.pw-code-link {
+  color: inherit;
+  text-decoration: none;
+  /* A border instead of an underline, so the line runs under the icon too. */
+  border-bottom: 1.5px dotted var(--pw-ink);
+}
+.expressive-code a.pw-code-link:hover {
+  border-bottom-style: solid;
+  border-bottom-color: var(--pw-accent);
+}
+.expressive-code a.pw-code-link:hover .pw-code-link-icon {
+  background-color: var(--pw-accent);
+}
+.expressive-code .pw-code-link-icon {
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  margin-left: 0.2em;
+  vertical-align: -0.1em;
+  background-color: var(--pw-ink);
+  mask: url('/presswerk/favicon.svg') center / contain no-repeat;
+}
+
+/* Filters added by src/scripts/option-filter.js and src/scripts/catalog-filter.js. */
+.pw-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-block: 1.5rem;
+}
+.pw-filter input {
+  flex: 1 1 16rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 3px;
+  background: var(--sl-color-black);
+  color: var(--sl-color-white);
+  font: inherit;
+}
+.pw-filter output {
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+}
+
+/* Default Gitmoji catalog, enhanced by src/scripts/catalog-filter.js. */
+.sl-markdown-content ul.pw-catalog {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+  gap: 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+.sl-markdown-content ul.pw-catalog > li {
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  column-gap: 0.5rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 3px;
+  background: var(--sl-color-gray-6);
+}
+.sl-markdown-content ul.pw-catalog > li[hidden] {
+  display: none;
+}
+.pw-catalog-emoji {
+  grid-row: span 2;
+  font-size: 1.75rem;
+  line-height: 1.2;
+}
+.sl-markdown-content .pw-catalog code {
+  justify-self: start;
+  padding: 0;
+  background: none;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.pw-catalog-description {
+  color: var(--sl-color-gray-2);
+  font-size: var(--sl-text-sm);
+  line-height: 1.4;
+}
+
+/* Release options, on the options page and in the option lists of the reference pages. */
+.pw-option {
+  margin-top: 2.5rem;
+}
+.sl-markdown-content .pw-option :is(h2, h3, h4) {
+  font-size: var(--sl-text-h4);
+  overflow-wrap: anywhere;
+  border-left: 4px solid var(--pw-accent);
+  padding-left: 0.75rem;
+}
+.sl-markdown-content .pw-option :is(h2, h3, h4) code {
+  padding: 0;
+  background: none;
+}
+.pw-option dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.25rem 1rem;
+}
+.pw-option dt {
+  font-weight: 600;
+}
+.sl-markdown-content .pw-option :is(dt, dd) {
+  margin: 0;
+}
+.sl-markdown-content .pw-option dd > * {
+  margin-top: 0;
 }
