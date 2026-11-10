@@ -117,10 +117,14 @@ function commandMarkdown(command: CliCommand, depth: number): string[] {
   ];
 }
 
+/** Fields shown first in the example, before the longer lists. */
+const leadingFields = ['schemaVersion', 'version', 'tag', 'changelog'];
+
 const shorten = (declaration: Record<string, unknown>, keep: number) => {
   const { analyzer } = declaration as { analyzer: { gitmoji: { catalog: Record<string, unknown> } } };
   const catalog = Object.fromEntries(Object.entries(analyzer.gitmoji.catalog).slice(0, keep));
-  return { ...declaration, analyzer: { ...analyzer, gitmoji: { catalog } } };
+  const leading = Object.fromEntries(leadingFields.map((field) => [field, declaration[field]]));
+  return { ...leading, ...declaration, analyzer: { ...analyzer, gitmoji: { catalog } } };
 };
 
 export const referencePages: ReferencePage[] = [
