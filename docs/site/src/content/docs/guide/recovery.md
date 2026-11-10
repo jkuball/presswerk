@@ -7,19 +7,60 @@ description: Get the release chain moving again when a locked release cannot be 
 published with. `publish` then releases exactly that commit. Between the two, the locked release can
 turn out to be unreleasable:
 
+- `publish` was interrupted after pushing the tag, and a publisher is left incomplete;
 - the checks for the release commit fail, so its locked contents cannot be released;
-- the declaration locked into it is wrong, for example a publisher with a wrong repository;
-- `publish` was interrupted after pushing the tag, and a publisher is left incomplete.
+- the declaration locked into it is wrong, for example a publisher with a wrong repository.
 
 Presswerk does not paper over this. Until the locked release is published or deliberately removed,
 `prepare` refuses to lock another one on top of it. Recovery is how you get the release chain moving
 again.
 
+## Partial publication
+
+Publication pushes the annotated tag before the publishers run. A network failure or API error can
+therefore leave a matching tag with incomplete publisher state, such as a draft GitHub Release. The
+version is reserved once the tag exists.
+
+```mermaid A partial release is repaired by retrying the tagged candidate, even if main later contains another ordinary commit.
+gitGraph
+  commit id: "0.2.2" tag: "v0.2.2"
+  commit id: "feature"
+  commit id: "candidate 0.3.0" tag: "v0.3.0"
+  commit id: "later main"
+```
+
+Publish the exact release commit again:
+
+```console
+$ presswerk publish RELEASE_COMMIT_SHA
+Publishing v0.3.0 from 7b3e5f1
+  tag      v0.3.0                  already pushed
+  release  github-release.default  draft completed
+Released v0.3.0 from 7b3e5f1.
+```
+
+Presswerk keeps a matching tag, continues matching publisher state, creates what is missing, and
+verifies the final result. Each line reports whether that step was already complete. When all of
+them were, the last line says that nothing changed. Once `publish` succeeds, the release is complete
+and the rest of this page does not apply.
+
+Never:
+
+- rerun `prepare` to invent a new candidate for the same tagged version;
+- move or force-push the tag to another commit;
+- delete a published tag or release to make the version look unused;
+- publish the current `main` tip when the retry belongs to an older commit.
+
+If the tag points to another commit, a release has incompatible metadata, or the remote state cannot
+be established, Presswerk stops. Investigate manually and preserve the conflicting state. Do not
+weaken the identity check.
+
 ## Rewrite history
 
-The quickest recovery is to clean up yourself. As long as the release commit has no tag and no
-publisher has published anything for it, nothing outside your repository knows about the release.
-Remove the release commit from `main`, fix the cause, and force-push:
+When the release commit itself cannot be published, the quickest recovery is to clean up yourself.
+As long as the release commit has no tag and no publisher has published anything for it, nothing
+outside your repository knows about the release. Remove the release commit from `main`, fix the
+cause, and force-push:
 
 ```console
 $ git switch main
@@ -170,45 +211,6 @@ candidate may use the same version.
 
 Do not add a fixup commit directly on top of the pending version and try to publish it. Only the
 version-changing release commit can publish that version.
-
-## Partial publication
-
-Publication pushes the annotated tag before the publishers run. A network failure or API error can
-therefore leave a matching tag with incomplete publisher state, such as a draft GitHub Release. The
-version is reserved once the tag exists.
-
-```mermaid A partial release is repaired by retrying the tagged candidate, even if main later contains another ordinary commit.
-gitGraph
-  commit id: "0.2.2" tag: "v0.2.2"
-  commit id: "feature"
-  commit id: "candidate 0.3.0" tag: "v0.3.0"
-  commit id: "later main"
-```
-
-Publish the exact release commit again:
-
-```console
-$ presswerk publish RELEASE_COMMIT_SHA
-Publishing v0.3.0 from 7b3e5f1
-  tag      v0.3.0                  already pushed
-  release  github-release.default  draft completed
-Released v0.3.0 from 7b3e5f1.
-```
-
-Presswerk keeps a matching tag, continues matching publisher state, creates what is missing, and
-verifies the final result. Each line reports whether that step was already complete. When all of
-them were, the last line says that nothing changed.
-
-Never:
-
-- rerun `prepare` to invent a new candidate for the same tagged version;
-- move or force-push the tag to another commit;
-- delete a published tag or release to make the version look unused;
-- publish the current `main` tip when the retry belongs to an older commit.
-
-If the tag points to another commit, a release has incompatible metadata, or the remote state cannot
-be established, Presswerk stops. Investigate manually and preserve the conflicting state. Do not
-weaken the identity check.
 
 ## Verify recovery
 
