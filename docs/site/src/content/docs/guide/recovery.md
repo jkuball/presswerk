@@ -128,8 +128,6 @@ gitGraph
 ```
 
 ```console
-$ git switch main
-$ git pull --ff-only
 $ git revert --no-edit RELEASE_COMMIT_SHA
 $ # make and test the real fix
 $ git add PATHS_YOU_FIXED
@@ -137,10 +135,15 @@ $ git commit -m "🐛 Fix candidate checks"
 $ git push origin main
 ```
 
-The revert restores the previous version, so the chain is no longer pending. Push the revert and the
-fix together: preparing between them would create the same broken candidate again. After the push,
-`prepare` may create a fresh release commit. Because the failed candidate had no tag, the new
-candidate may use the same version.
+Use `git revert` rather than undoing the changes by hand. The commit analyzer honors standard revert
+commits, recognized by the `This reverts commit …` line that `git revert` writes: the reverted
+commit and its revert cancel out and neither shows up in the release notes. An undo commit written
+by hand is analyzed like any other commit.
+
+The revert restores the previous version, so the chain is no longer pending. From there, `prepare`
+works as usual: it analyzes every commit since the last tag again and computes the version from
+them, including the fix. Because the failed candidate had no tag, the fresh candidate may get the
+same version.
 
 Do not add a fixup commit directly on top of the pending version and try to publish it. Only the
 version-changing release commit can publish that version.
