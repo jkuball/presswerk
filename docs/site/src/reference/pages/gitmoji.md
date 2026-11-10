@@ -109,9 +109,7 @@ prepare.
 ## Change a default level
 
 Ordinary Nix module merging lets a project override one field without copying the catalog. For
-example, make documentation changes release a patch and stop dependency upgrades from doing so. The
-argument of `mkRelease` is a module, so this is a complete one; add it to your `mkRelease` call or
-import it there:
+example, make documentation changes release a patch and stop dependency upgrades from doing so:
 
 ```nix
 {
@@ -128,10 +126,6 @@ gitGraph
   commit id: "📝 guide"
   commit id: "release 0.2.3" tag: "v0.2.3"
 ```
-
-The resolved catalog is serialized into `presswerk.default` and read from the candidate commit.
-Changing the catalog affects future analysis only; an exact tagged retry keeps the release commit's
-own declaration.
 
 ## Add a project-specific entry
 
