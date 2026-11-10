@@ -148,43 +148,22 @@ same version.
 Do not add a fixup commit directly on top of the pending version and try to publish it. Only the
 version-changing release commit can publish that version.
 
-## Verify recovery
-
-After any successful recovery, compare the tag with the release commit:
-
-```console
-$ git fetch origin main --tags
-$ git rev-list -n 1 v0.3.0
-$ git show --no-patch --format=fuller RELEASE_COMMIT_SHA
-```
-
-The tag must resolve to the release commit whose checks passed, and every publisher must show a
-complete release, for example a published rather than draft GitHub Release. The version section in
-the changelog at that commit is the canonical release body.
-
 ## The previous release uses an unsupported declaration
 
-Before 1.0, a newer CLI may not read the declaration of the previous release. `prepare` then stops
-and names the previous tag and release commit together with the command to trust it. First check
-that release with the Presswerk version it was made with, which is the one locked in its
-`flake.lock`:
+Before Presswerk 1.0, the declaration schema may change between Presswerk versions, and the CLI only
+reads the schema of its own version. Run the CLI from the same Presswerk input as your release
+module, for example with `nix run --inputs-from . presswerk`, so both always match.
 
-```console
-$ git worktree add --detach ../previous-release v0.3.0
-$ cd ../previous-release
-$ nix run --inputs-from . presswerk -- publish HEAD
-v0.3.0 from 7b3e5f1 was already released; nothing changed.
-$ cd - && git worktree remove ../previous-release
-```
-
-If the release is complete, prepare again and trust exactly that predecessor by its tag and full
-commit ID:
+That leaves one step where they cannot match: the first release after updating Presswerk. `prepare`
+checks that the previous release is complete, but the new CLI cannot read the declaration it was
+made with. `--trust-predecessor` exists for this step. Once you have confirmed that the previous
+release is complete, for example by running `publish` for it with the old Presswerk version, pass
+the command that `prepare` prints:
 
 ```console
 $ presswerk prepare --trust-predecessor v0.3.0=RELEASE_COMMIT_SHA
 ```
 
-Presswerk still checks that the tag points to that commit, but skips reading the previous
-declaration. The release commit records the trusted predecessor in a `Presswerk-Trusted-Predecessor`
-trailer, so `publish` accepts it as well. The flag is refused when the previous declaration is
-readable.
+Presswerk then skips the previous declaration but still checks that the tag points to that commit.
+The release commit records the trust in a `Presswerk-Trusted-Predecessor` trailer, so `publish`
+accepts it as well.
