@@ -90,8 +90,8 @@ Presswerk follows SemVer. A fresh repository starts from an implicit `0.0.0` bas
 `0.0.0` and without a tag. For projects that already have a version, see
 [Adopt an existing project](../adoption/).
 
-Presswerk never moves to `1.0.0` by itself, and there is no version override yet, so releases stay
-on `0.x` for now. Which level a commit selects, and how levels map to versions before `1.0.0`, is
+Presswerk never moves to `1.0.0` by itself; that step must be acknowledged explicitly, and a way to
+choose the version for it is planned. Which level a commit selects, and how levels map to versions before `1.0.0`, is
 described under [Version levels](/presswerk/reference/analyzers/#version-levels).
 
 How publication proceeds step by step, and what it does with existing releases, is described in the
