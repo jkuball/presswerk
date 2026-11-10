@@ -57,20 +57,8 @@ weaken the identity check.
 
 ## Rewrite history
 
-When the release commit itself cannot be published, the quickest recovery is to clean up yourself.
-As long as the release commit has no tag and no publisher has published anything for it, nothing
-outside your repository knows about the release. Remove the release commit from `main`, fix the
-cause, and force-push:
-
-```console
-$ git switch main
-$ git pull --ff-only
-$ git rebase --onto RELEASE_COMMIT_SHA^ RELEASE_COMMIT_SHA
-$ git push --force-with-lease origin main
-```
-
-This only works where force-pushing `main` is allowed, and it rewrites history that others may have
-already pulled. Once the tag exists, do not rewrite: the tag reserves the version for good.
+If the release commit has no tag and nothing has been published for it, you can also remove it from
+`main` and force-push. Once the tag exists, do not rewrite: the tag reserves the version for good.
 
 The rest of this page recovers without force-pushing, so that `main` keeps a record of what
 happened. Recovery starts by identifying the exact ordinary commit, release commit, and tag involved.
