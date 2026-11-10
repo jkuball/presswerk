@@ -11,7 +11,7 @@ reason: a version, its notes, its tag, and its published release must all come f
 - An **ordinary commit** is any commit that does not change the declared version. Your changes are
   ordinary commits.
 - A **release commit** changes the declared version compared with its first parent. Create it with
-  `prepare`, which also writes every version file and the matching section in `CHANGELOG.md`. A
+  `prepare`, which also writes every version file and the matching section in the changelog. A
   release commit written by hand must get all of that right itself.
 - The **master record** of a release is the flake at its release commit: the committed version,
   `flake.lock`, release declaration, and frozen notes. Uncommitted changes are never part of it.
@@ -76,7 +76,7 @@ For a new release, `publish` validates that:
 
 - the version is a valid SemVer successor of its parent;
 - the bump is at least what commit analysis requires;
-- `CHANGELOG.md` contains the frozen section for that version;
+- the changelog contains the frozen section for that version;
 - the previous release is complete;
 - the candidate's tag is missing rather than conflicting.
 

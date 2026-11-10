@@ -31,7 +31,7 @@ from that commit.
   build can use it, for example in `--version` output or package metadata, and a check of the
   release commit builds exactly what you release. The price: everything that reads the version is
   rebuilt for each release.
-- The notes are committed too. `CHANGELOG.md` is part of the release commit, locked like the code,
+- The notes are committed too. The changelog is part of the release commit, locked like the code,
   and the published release text is taken from it.
 - The release configuration is part of the release. The declaration lives in the flake, so its rules
   are locked with everything else: which files carry the version, how commits are analyzed, where

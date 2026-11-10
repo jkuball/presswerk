@@ -172,4 +172,4 @@ $ git show --no-patch --format=fuller RELEASE_COMMIT_SHA
 
 The tag must resolve to the release commit whose checks passed, and every publisher must show a
 complete release, for example a published rather than draft GitHub Release. The version section in
-`CHANGELOG.md` at that commit is the canonical release body.
+the changelog at that commit is the canonical release body.

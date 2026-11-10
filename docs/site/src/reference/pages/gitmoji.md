@@ -3,7 +3,8 @@ A commit analyzer reads the commits since the previous release and decides two t
 - **The version bump.** Each commit selects a level, and the highest level selects the next version.
   If no commit selects one, there is nothing to release.
 - **The release notes.** The analyzer groups the commits into the notes that `prepare` writes into
-  `CHANGELOG.md` and that the publishers publish.
+  the changelog and that the publishers publish. The changelog is `CHANGELOG.md` unless
+  [`changelog.path`](/reference/options/#changelog.path) names another file.
 
 `publish` runs the analyzer again for a new release and fails if the release commit's version is
 smaller than the analysis requires.
@@ -13,9 +14,9 @@ built-in analyzer today. Declaring analyzers for other commit conventions in the
 planned.
 
 The Gitmoji analyzer reads a Gitmoji at the start of each commit subject. The release declaration
-contains the complete catalog
-used for matching, grouping notes, and choosing a SemVer level. The CLI has no hidden Gitmoji table,
-so analysis is pinned to the exact commit like the rest of the release declaration. The
+contains the complete catalog used
+for matching, grouping notes, and choosing a SemVer level. The CLI has no hidden Gitmoji table, so
+analysis is pinned to the exact commit like the rest of the release declaration. The
 [default catalog](#default-catalog) at the end of this page lists every entry.
 
 ## Commit subject shape
