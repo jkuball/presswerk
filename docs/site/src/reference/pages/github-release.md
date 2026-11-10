@@ -1,5 +1,8 @@
-A release publisher creates a release outside the Git repository, from the release commit and its
-frozen notes. `publish` first pushes the tag, then runs every declared publisher.
+A release publisher is Presswerk's interface to the outside world. It is the bridge between the
+immutable release commit with its frozen notes and the places where a release is published, which
+Presswerk does not control and which change on their own. A project usually has more than one
+publisher, for example a GitHub Release next to packages on PyPI, crates.io, or npm, and container
+images on GHCR. `publish` first pushes the tag, then runs every declared publisher.
 
 Every publisher follows the same rules on a retry:
 
