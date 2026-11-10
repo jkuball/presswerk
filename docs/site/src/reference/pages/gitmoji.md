@@ -13,16 +13,22 @@ Gitmoji, selected with [`analyzer.convention`](/reference/options/#analyzer.conv
 built-in analyzer today. Declaring analyzers for other commit conventions in the flake itself is
 planned.
 
-The Gitmoji analyzer reads a Gitmoji at the start of each commit subject. The release declaration
-contains the complete catalog used
-for matching, grouping notes, and choosing a SemVer level. The CLI has no hidden Gitmoji table, so
+The Gitmoji analyzer reads commit subjects written to the
+[Gitmoji specification](https://gitmoji.dev/specification): a Gitmoji at the start of each subject
+states the commit's intention. The release declaration contains the complete catalog used for
+matching, grouping notes, and choosing a SemVer level. The CLI has no hidden Gitmoji table, so
 analysis is pinned to the exact commit like the rest of the release declaration. The
 [default catalog](#default-catalog) at the end of this page lists every entry.
 
 ## Commit subject shape
 
-Start the subject with either the configured Unicode emoji or its shortcode, followed by whitespace
-and a message:
+The [Gitmoji specification](https://gitmoji.dev/specification) defines the subject as:
+
+```text
+<intention> [scope?][:?] <message>
+```
+
+The intention is either the configured Unicode emoji or its shortcode:
 
 ```text
 ✨ Add search
