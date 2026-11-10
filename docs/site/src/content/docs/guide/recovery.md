@@ -81,8 +81,8 @@ gitGraph
 
 1. Confirm that `origin/main` has no new `🔖 Release …` commit from the failed attempt.
 2. If `main` moved on in the meantime, leave the old attempt alone and prepare from the new tip.
-3. If preparation reports a pending release, an earlier release commit has no tag yet. Follow
-   [candidate checks did not complete](#candidate-checks-did-not-complete) for that commit.
+3. If preparation reports a pending release, an earlier release commit has no tag yet. Run its
+   checks and publish it, or follow [candidate checks fail](#candidate-checks-fail) if they fail.
 4. If preparation reports an incomplete previous release, identify that tag and release commit, then
    follow [partial publication](#partial-publication) to retry the exact earlier candidate. Preparation
    cannot continue until that release chain is complete.
@@ -120,14 +120,18 @@ declaration. The release commit records the trusted predecessor in a `Presswerk-
 trailer, so `publish` accepts it as well. The flag is refused when the previous declaration is
 readable.
 
-## Candidate checks did not complete
+## Candidate checks fail
 
-A release commit may be pushed without its checks completing. The checks may never have started, may
-have been canceled or hit transient infrastructure trouble, or the candidate's contents may genuinely
-fail a build or check. With no tag, the commit is a **pending release** in every case. Later commits
-that retain its version are blocked and cannot become replacement candidates.
+A release commit without a tag is a **pending release**. If its checks never ran or were canceled,
+there is nothing to recover: run them on the same release commit and, when they pass, publish
+exactly that commit with `presswerk publish RELEASE_COMMIT_SHA`. Do not revert a candidate merely
+because its checks did not run.
 
-Before choosing a recovery, verify that publication never started:
+Recover when the candidate's committed contents reproducibly fail a required build or check. Its
+locked release cannot be published, and later commits that retain its version are blocked and cannot
+become replacement candidates.
+
+Before reverting, verify that publication never started:
 
 ```console
 $ git ls-remote --tags origin refs/tags/v0.3.0
@@ -136,22 +140,7 @@ $ git ls-remote --tags origin refs/tags/v0.3.0
 The tag should not exist, and no publisher should have state for the version. If either exists,
 treat the incident as [partial publication](#partial-publication).
 
-### Retry a candidate that has not failed its checks
-
-If the checks never ran or failed for reasons outside the candidate, run them again on the same
-release commit. When they pass, publish exactly that commit:
-
-```console
-$ presswerk publish RELEASE_COMMIT_SHA
-```
-
-Do not revert a candidate merely because its checks did not run. A successful retry completes the
-pending release without creating another commit.
-
-### Revert a confirmed broken candidate
-
-Reserve replacement for a candidate whose committed contents reproducibly fail a required build or
-check. Revert that exact untagged release commit, fix the cause, and let preparation create a fresh
+Revert that exact untagged release commit, fix the cause, and let preparation create a fresh
 candidate.
 
 ```mermaid A confirmed broken untagged candidate is reverted, then the real fix is committed before a fresh candidate is prepared.

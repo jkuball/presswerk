@@ -42,7 +42,7 @@ stateDiagram-v2
 - **revert** is the way out for a candidate whose contents fail its checks. It restores the previous
   version, so a fix can follow and `prepare` can create a fresh candidate, even with the same
   version, because no tag points to the broken one. See
-  [Recovery](../recovery/#candidate-checks-did-not-complete).
+  [Recovery](../recovery/#candidate-checks-fail).
 
 Presswerk cannot tell whether the checks of a pending release are still running or have failed. It
 reports the pending commit and refuses to prepare another release until the pending one is published
@@ -68,7 +68,7 @@ The release commit `🔖 0.3.0` has no tag yet. The fixup on top still contains 
 it did not change it, so it is not a release commit: `publish` on the fixup fails instead of
 publishing `0.3.0`, and `prepare` refuses to start another release. Only `🔖 0.3.0` can publish
 `0.3.0`. Retry it if its checks did not show a problem in its contents, or
-[revert it](../recovery/#revert-a-confirmed-broken-candidate).
+[revert it](../recovery/#candidate-checks-fail).
 
 ## What publish checks
 
