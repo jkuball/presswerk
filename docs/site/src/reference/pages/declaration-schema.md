@@ -5,7 +5,9 @@ JSON-compatible data with no functions, paths, or module internals. Your flake e
 :::caution
 The schema is not frozen before Presswerk 1.0. A new schema gets a new `schemaVersion`, and the
 CLI refuses declarations whose version it does not support instead of guessing. From 1.0 on, newer
-CLIs will also read declarations with older schema versions.
+CLIs will also read declarations with older schema versions. Until then,
+[recovery](/guide/recovery/#the-previous-release-uses-an-unsupported-declaration) explains how to
+continue after a previous release with an unsupported schema.
 :::
 
 This page documents `schemaVersion = 2`. Produce the declaration with `lib.mkRelease` rather
@@ -65,5 +67,6 @@ The repository-relative path of the changelog that holds the release notes.
 
 The publishers of a release, keyed by publisher type and then by a name of your choice. Schema 2
 has one type, `github-release`, and requires at least one publisher of it. Each publisher has
-an `apiUrl`, a `repository` in `owner/name` form, and a `token.secret`; see the
+an `apiUrl`, a `repository` in `owner/name` form, and a `token.secret` naming the environment
+variable that holds the token, never the token itself; see the
 [GitHub Release publisher](/reference/publishers/).
