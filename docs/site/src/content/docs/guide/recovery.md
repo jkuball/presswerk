@@ -1,9 +1,38 @@
 ---
 title: Recovery
-description: Recover from failed preparation, failed candidate checks, or partial publication without changing release identity.
+description: Get the release chain moving again when a locked release cannot be published, by rewriting history or by retrying and reverting.
 ---
 
-Recovery starts by identifying the exact ordinary commit, release commit, and tag involved.
+`prepare` locks a release into a release commit: its version, its notes, and the declaration it is
+published with. `publish` then releases exactly that commit. Between the two, the locked release can
+turn out to be unreleasable:
+
+- the checks for the release commit never ran, were canceled, or failed;
+- the declaration locked into it is wrong, for example a publisher with a wrong repository;
+- `publish` was interrupted after pushing the tag, and a publisher is left incomplete.
+
+Presswerk does not paper over this. Until the locked release is published or deliberately removed,
+`prepare` refuses to lock another one on top of it. Recovery is how you get the release chain moving
+again.
+
+## Rewrite history
+
+The quickest recovery is to clean up yourself. As long as the release commit has no tag and no
+publisher has published anything for it, nothing outside your repository knows about the release.
+Remove the release commit from `main`, fix the cause, and force-push:
+
+```console
+$ git switch main
+$ git pull --ff-only
+$ git rebase --onto RELEASE_COMMIT_SHA^ RELEASE_COMMIT_SHA
+$ git push --force-with-lease origin main
+```
+
+This only works where force-pushing `main` is allowed, and it rewrites history that others may have
+already pulled. Once the tag exists, do not rewrite: the tag reserves the version for good.
+
+The rest of this page recovers without force-pushing, so that `main` keeps a record of what
+happened. Recovery starts by identifying the exact ordinary commit, release commit, and tag involved.
 Presswerk does not follow `main` to a replacement candidate and does not overwrite conflicting remote
 state.
 
