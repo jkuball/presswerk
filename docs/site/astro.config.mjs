@@ -22,11 +22,11 @@ export default defineConfig({
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/jkuball/presswerk' }],
       routeMiddleware: './src/routeData.ts',
       head: [
-        {
+        ...['option-filter', 'catalog-filter'].map((script) => ({
           tag: 'script',
           attrs: { type: 'module' },
-          content: readFileSync(new URL('./src/scripts/catalog-filter.js', import.meta.url), 'utf8'),
-        },
+          content: readFileSync(new URL(`./src/scripts/${script}.js`, import.meta.url), 'utf8'),
+        })),
       ],
       customCss: [
         '@fontsource-variable/archivo/wdth.css',

@@ -209,6 +209,10 @@ publication analysis. Do not assign a release level to `bookmark` merely to make
 trigger more releases; keep the release boundary driven by the actual changes since the previous
 release.
 
+## Options
+
+<!-- reference:options -->
+
 ## Default catalog
 
 The default for [`analyzer.gitmoji.catalog`](/reference/options/#analyzer.gitmoji.catalog) has

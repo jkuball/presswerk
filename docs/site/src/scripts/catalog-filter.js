@@ -28,7 +28,7 @@ if (heading) {
   });
 
   const filter = document.createElement('div');
-  filter.className = 'pw-catalog-filter not-content';
+  filter.className = 'pw-filter not-content';
   filter.innerHTML =
     '<label for="pw-catalog-filter">Filter the catalog</label>' +
     '<input id="pw-catalog-filter" type="search" placeholder="bug, docs, 🔥…" autocomplete="off" />' +

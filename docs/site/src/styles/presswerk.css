@@ -276,15 +276,15 @@ nav.sidebar ul ul .group-label .large {
   mask: url('/presswerk/favicon.svg') center / contain no-repeat;
 }
 
-/* Default Gitmoji catalog, enhanced by src/scripts/catalog-filter.js. */
-.pw-catalog-filter {
+/* Filters added by src/scripts/option-filter.js and src/scripts/catalog-filter.js. */
+.pw-filter {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem 1rem;
   margin-block: 1.5rem;
 }
-.pw-catalog-filter input {
+.pw-filter input {
   flex: 1 1 16rem;
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--sl-color-gray-5);
@@ -293,10 +293,12 @@ nav.sidebar ul ul .group-label .large {
   color: var(--sl-color-white);
   font: inherit;
 }
-.pw-catalog-filter output {
+.pw-filter output {
   color: var(--sl-color-gray-3);
   font-size: var(--sl-text-sm);
 }
+
+/* Default Gitmoji catalog, enhanced by src/scripts/catalog-filter.js. */
 .sl-markdown-content ul.pw-catalog {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
@@ -333,4 +335,33 @@ nav.sidebar ul ul .group-label .large {
   color: var(--sl-color-gray-2);
   font-size: var(--sl-text-sm);
   line-height: 1.4;
+}
+
+/* Release options, on the options page and in the option lists of the reference pages. */
+.pw-option {
+  margin-top: 2.5rem;
+}
+.sl-markdown-content .pw-option :is(h2, h3, h4) {
+  font-size: var(--sl-text-h4);
+  overflow-wrap: anywhere;
+  border-left: 4px solid var(--pw-accent);
+  padding-left: 0.75rem;
+}
+.sl-markdown-content .pw-option :is(h2, h3, h4) code {
+  padding: 0;
+  background: none;
+}
+.pw-option dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.25rem 1rem;
+}
+.pw-option dt {
+  font-weight: 600;
+}
+.sl-markdown-content .pw-option :is(dt, dd) {
+  margin: 0;
+}
+.sl-markdown-content .pw-option dd > * {
+  margin-top: 0;
 }

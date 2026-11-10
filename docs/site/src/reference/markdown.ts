@@ -14,7 +14,8 @@ export interface ReferencePage {
   slug: string;
   title: string;
   description: string;
-  markdown: (data: ReferenceData, base: string) => string;
+  /** The site variant leaves option lists as placeholders that the loader renders like the options page. */
+  markdown: (data: ReferenceData, base: string, target: 'site' | 'text') => string;
 }
 
 /**
@@ -34,12 +35,8 @@ const fence = (language: string, text: string) => {
   return `${ticks}${language}\n${text.trimEnd()}\n${ticks}`;
 };
 const code = (text: string) => (text.includes('`') ? `\`\` ${text} \`\`` : `\`${text}\``);
-const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\n+/g, ' ');
 /** Escape Markdown syntax in plain text such as option types, like the pattern `[^/]+/[^/]+`. */
 const plain = (text: string) => text.replace(/[\\`*_[\]<>|]/g, '\\$&');
-
-export const optionHref = (base: string, option: Pick<ReleaseOption, 'anchor'>) =>
-  `${base}reference/options/#${option.anchor}`;
 
 function literalMarkdown(literal: Literal): string {
   if (literal.kind === 'markdown') return literal.text;
@@ -52,8 +49,8 @@ function literalItem(label: string, literal: Literal): string {
   return value.includes('\n') ? `- ${label}:\n\n  ${value.replace(/\n/g, '\n  ')}\n` : `- ${label}: ${value}`;
 }
 
-export function optionMarkdown(option: ReleaseOption): string {
-  const lines = [`### ${code(option.name)}`, '', option.description.trim(), '', `- Type: ${plain(option.type)}`];
+export function optionMarkdown(option: ReleaseOption, depth = 3): string {
+  const lines = [`${'#'.repeat(depth)} ${code(option.name)}`, '', option.description.trim(), '', `- Type: ${plain(option.type)}`];
   lines.push(option.default ? literalItem('Default', option.default) : '- Default: none, the option must be set');
   if (option.example) lines.push(literalItem('Example', option.example));
   if (option.readOnly) lines.push('- Read-only');
@@ -73,12 +70,16 @@ export function optionsMarkdown(options: ReleaseOption[]): string {
   ].join('\n');
 }
 
-function optionsTable(options: ReleaseOption[], base: string): string {
-  const rows = options.map((option) => {
-    const value = option.default ? cell(option.default.kind === 'nix' ? code(option.default.text) : option.default.text) : 'required';
-    return `| [${code(option.name)}](${optionHref(base, option)}) | ${plain(option.type)} | ${value} | ${cell(option.description)} |`;
-  });
-  return ['| Option | Type | Default | Description |', '| --- | --- | --- | --- |', ...rows].join('\n');
+/** Placeholder paragraph for an option list; the loader replaces it in the rendered site page. */
+export const optionListPlaceholder = /<p>@@pw-options (\d) (\S+)@@<\/p>/g;
+
+/** The options whose name starts with a prefix, as on the options page, with headings at a depth. */
+function optionList(options: ReleaseOption[], prefix: string, depth: number, target: 'site' | 'text'): string {
+  if (target === 'site') return `@@pw-options ${depth} ${prefix}@@`;
+  return options
+    .filter((option) => option.name.startsWith(prefix))
+    .map((option) => optionMarkdown(option, depth))
+    .join('\n\n');
 }
 
 function argumentSignature(argument: CliArgument): string {
@@ -146,20 +147,18 @@ export const referencePages: ReferencePage[] = [
     slug: 'reference/publishers',
     title: 'Release publishers',
     description: 'How Presswerk publishes releases outside the repository, and the GitHub Release publisher.',
-    markdown: ({ options }, base) =>
+    markdown: ({ options }, base, target) =>
       fill(githubReleasePage, base, {
-        options: optionsTable(
-          options.filter((option) => option.name.startsWith('publishers.github-release.')),
-          base,
-        ),
+        options: optionList(options, 'publishers.github-release.', 4, target),
       }),
   },
   {
     slug: 'reference/analyzers',
     title: 'Commit analyzers',
     description: 'How Presswerk turns commits into a version bump and release notes, and the Gitmoji analyzer with its default catalog.',
-    markdown: ({ gitmoji, gitmojiLicense }, base) =>
+    markdown: ({ gitmoji, gitmojiLicense, options }, base, target) =>
       fill(gitmojiPage, base, {
+        options: optionList(options, 'analyzer.', 3, target),
         // One list per release level instead of a wide table, so the catalog reads on a phone too.
         catalog: (
           [

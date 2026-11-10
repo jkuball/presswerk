@@ -10,7 +10,7 @@ export const getStaticPaths = (() => {
     { params: { page: 'options' }, props: { markdown: optionsMarkdown(data.options) } },
     ...referencePages.map((page) => ({
       params: { page: page.slug.replace(/^reference\//, '') },
-      props: { markdown: `# ${page.title}\n\n${page.markdown(data, base)}` },
+      props: { markdown: `# ${page.title}\n\n${page.markdown(data, base, 'text')}` },
     })),
   ];
 }) satisfies GetStaticPaths;
