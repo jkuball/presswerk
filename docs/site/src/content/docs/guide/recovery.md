@@ -94,61 +94,6 @@ $ git ls-remote --tags origin 'v*'
 Also look up the state of each configured publisher, for example the GitHub Release for the tag.
 Note the ordinary commit, the release commit, and the tag before you act.
 
-## Failed preparation
-
-Preparation can fail before creating a release commit because the declaration is invalid,
-`flake.lock` is missing or out of date, an earlier release is pending or incomplete, the publisher
-state of the previous release cannot be read, or the branch moved.
-
-```mermaid A preparation failure adds no release commit; after the cause is fixed, a later ordinary commit can prepare normally.
-gitGraph
-  commit id: "0.2.2" tag: "v0.2.2"
-  commit id: "change"
-  commit id: "preparation fix"
-  commit id: "release 0.3.0" tag: "v0.3.0"
-```
-
-1. Confirm that `origin/main` has no new `🔖 Release …` commit from the failed attempt.
-2. If `main` moved on in the meantime, leave the old attempt alone and prepare from the new tip.
-3. If preparation reports a pending release, an earlier release commit has no tag yet. Run its
-   checks and publish it, or follow [candidate checks fail](#candidate-checks-fail) if they fail.
-4. If preparation reports an incomplete previous release, identify that tag and release commit, then
-   follow [partial publication](#partial-publication) to retry the exact earlier candidate. Preparation
-   cannot continue until that release chain is complete.
-5. Fix any deterministic declaration, lock-file, or code problem in an ordinary commit and push it.
-   Preparation from that commit is the next attempt.
-6. If the failure was transient and `main` has not moved, run `prepare` again.
-
-Do not write a release commit yourself to bypass a preparation error; fix the cause and run
-`prepare` again.
-
-### The previous release uses an unsupported declaration
-
-Before 1.0, a newer CLI may not read the declaration of the previous release. `prepare` then stops
-and names the previous tag and release commit together with the command to trust it. First check
-that release with the Presswerk version it was made with, which is the one locked in its
-`flake.lock`:
-
-```console
-$ git worktree add --detach ../previous-release v0.3.0
-$ cd ../previous-release
-$ nix run --inputs-from . presswerk -- publish HEAD
-v0.3.0 from 7b3e5f1 was already released; nothing changed.
-$ cd - && git worktree remove ../previous-release
-```
-
-If the release is complete, prepare again and trust exactly that predecessor by its tag and full
-commit ID:
-
-```console
-$ presswerk prepare --trust-predecessor v0.3.0=RELEASE_COMMIT_SHA
-```
-
-Presswerk still checks that the tag points to that commit, but skips reading the previous
-declaration. The release commit records the trusted predecessor in a `Presswerk-Trusted-Predecessor`
-trailer, so `publish` accepts it as well. The flag is refused when the previous declaration is
-readable.
-
 ## Candidate checks fail
 
 A release commit without a tag is a **pending release**. If its checks never ran or were canceled,
@@ -213,3 +158,30 @@ $ git show --no-patch --format=fuller RELEASE_COMMIT_SHA
 The tag must resolve to the release commit whose checks passed, and every publisher must show a
 complete release, for example a published rather than draft GitHub Release. The version section in
 the changelog at that commit is the canonical release body.
+
+## The previous release uses an unsupported declaration
+
+Before 1.0, a newer CLI may not read the declaration of the previous release. `prepare` then stops
+and names the previous tag and release commit together with the command to trust it. First check
+that release with the Presswerk version it was made with, which is the one locked in its
+`flake.lock`:
+
+```console
+$ git worktree add --detach ../previous-release v0.3.0
+$ cd ../previous-release
+$ nix run --inputs-from . presswerk -- publish HEAD
+v0.3.0 from 7b3e5f1 was already released; nothing changed.
+$ cd - && git worktree remove ../previous-release
+```
+
+If the release is complete, prepare again and trust exactly that predecessor by its tag and full
+commit ID:
+
+```console
+$ presswerk prepare --trust-predecessor v0.3.0=RELEASE_COMMIT_SHA
+```
+
+Presswerk still checks that the tag points to that commit, but skips reading the previous
+declaration. The release commit records the trusted predecessor in a `Presswerk-Trusted-Predecessor`
+trailer, so `publish` accepts it as well. The flag is refused when the previous declaration is
+readable.
