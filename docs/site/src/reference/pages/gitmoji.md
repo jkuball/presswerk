@@ -111,7 +111,7 @@ prepare.
 Ordinary Nix module merging lets a project override one field without copying the catalog. For
 example, make documentation changes release a patch and stop dependency upgrades from doing so:
 
-```nix
+```nix presswerk-module
 {
   analyzer.gitmoji.catalog = {
     memo.semver = "patch";
@@ -135,7 +135,7 @@ to fall back on, so it must set [`emoji`](/reference/options/#analyzer.gitmoji.c
 [`semver`](/reference/options/#analyzer.gitmoji.catalog.name.semver). Its attribute name becomes the
 shortcode unless you set `shortcode` explicitly:
 
-```nix
+```nix presswerk-module
 analyzer.gitmoji.catalog.flying_saucer = {
   emoji = "🛸";
   description = "Add an experimental feature behind a flag.";

@@ -30,7 +30,7 @@ derivations that much of your build depends on.
 crate. The flake reads `package.version` from the crate's `Cargo.toml`. Presswerk writes that field
 and the crate's package entry in `Cargo.lock`, and checks that both carry the same version.
 
-```nix
+```nix presswerk-module
 versionFiles.cargo.my-crate = { };
 versionFiles.cargo.my-other-crate.cargoToml = "crates/other/Cargo.toml";
 ```

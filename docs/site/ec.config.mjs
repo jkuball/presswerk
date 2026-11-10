@@ -176,7 +176,8 @@ function matchOption(options, path) {
 /**
  * Link release options in Nix code to the options reference. Only attributes set inside a
  * `mkRelease { … }` call are linked, with the paths of enclosing attribute sets taken into
- * account, so a `version` attribute of a package elsewhere in the flake stays plain.
+ * account, so a `version` attribute of a package elsewhere in the flake stays plain. A block marked
+ * `presswerk-module` is a release module, or part of one, as a whole.
  */
 function optionLinks() {
   const options = releaseOptions();
@@ -186,7 +187,7 @@ function optionLinks() {
       postprocessAnnotations: ({ codeBlock }) => {
         if (codeBlock.language !== 'nix' || options.length === 0) return;
         // The attribute set paths currently open inside the release declaration; null outside it.
-        let scopes = null;
+        let scopes = /(?:^|\s)presswerk-module(?:\s|$)/.test(codeBlock.meta) ? [[]] : null;
         for (const line of codeBlock.getLines()) {
           const text = line.text;
           if (scopes === null) {
