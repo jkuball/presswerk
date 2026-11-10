@@ -7,7 +7,7 @@ description: Get the release chain moving again when a locked release cannot be 
 published with. `publish` then releases exactly that commit. Between the two, the locked release can
 turn out to be unreleasable:
 
-- the checks for the release commit never ran, were canceled, or failed;
+- the checks for the release commit fail, so its locked contents cannot be released;
 - the declaration locked into it is wrong, for example a publisher with a wrong repository;
 - `publish` was interrupted after pushing the tag, and a publisher is left incomplete.
 
