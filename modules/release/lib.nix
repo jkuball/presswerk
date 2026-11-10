@@ -48,7 +48,7 @@ in
             _identifier: entry:
               lib.nameValuePair entry.shortcode (builtins.removeAttrs entry [ "shortcode" ])
           )
-          releaseConfig.analyzer.gitmoji.catalog;
+          (lib.filterAttrs (_identifier: entry: entry != null) releaseConfig.analyzer.gitmoji.catalog);
       };
       changelog.path = releaseConfig.changelog.path;
       publishers.github-release = releaseConfig.publishers.github-release;

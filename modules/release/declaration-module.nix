@@ -7,7 +7,7 @@
       gitmojiCatalog = builtins.fromJSON (builtins.readFile ./gitmoji/catalog.json);
       variationSelector = builtins.fromJSON ''"\uFE0F"'';
       normalizedEmoji = emoji: builtins.replaceStrings [ variationSelector ] [ "" ] emoji;
-      catalogEntries = builtins.attrValues config.analyzer.gitmoji.catalog;
+      catalogEntries = builtins.filter (entry: entry != null) (builtins.attrValues config.analyzer.gitmoji.catalog);
       catalogEmojis = map (entry: normalizedEmoji entry.emoji) catalogEntries;
       catalogShortcodes = map (entry: entry.shortcode) catalogEntries;
 
@@ -146,16 +146,18 @@
           };
 
           gitmoji.catalog = mkOption {
-            type = types.attrsOf (types.submodule gitmojiModule);
+            type = types.attrsOf (types.nullOr (types.submodule gitmojiModule));
             default = { };
             defaultText = lib.literalMD "the [default Gitmoji catalog](https://jkuball.github.io/presswerk/reference/analyzers/#default-catalog)";
             example = lib.literalExpression ''
               {
                 # Release CI changes as patches.
                 construction_worker.semver = "patch";
+                # Stop accepting 💩 commits.
+                poop = lib.mkForce null;
               }
             '';
-            description = "Gitmoji catalog keyed by entry identifier; each entry's shortcode defaults to its identifier.";
+            description = "Gitmoji catalog keyed by entry identifier; each entry's shortcode defaults to its identifier. Setting an entry to `lib.mkForce null` removes it.";
           };
         };
 

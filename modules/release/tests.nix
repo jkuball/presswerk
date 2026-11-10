@@ -221,6 +221,25 @@ in
       expected = [ "memo" ];
     };
 
+    "test Gitmoji catalog entries can be removed with mkForce null" = {
+      expr =
+        let
+          catalog = (mkRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            analyzer.gitmoji.catalog.memo = lib.mkForce null;
+          }).analyzer.gitmoji.catalog;
+        in
+        {
+          memo = catalog ? memo;
+          sparkles = catalog ? sparkles;
+        };
+      expected = {
+        memo = false;
+        sparkles = true;
+      };
+    };
+
     "test Gitmoji emojis must be unique without variation selectors" = {
       expr = succeeds (mkRelease {
         inherit sourceRoot;

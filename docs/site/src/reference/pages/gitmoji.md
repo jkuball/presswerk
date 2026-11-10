@@ -160,18 +160,17 @@ gitGraph
   commit id: "release 0.5.0" tag: "v0.5.0"
 ```
 
-## Catalog validation
+## Remove an entry
 
-`mkRelease` rejects catalogs with:
+Set an entry to `lib.mkForce null` to remove it from the catalog. Commits with its Gitmoji then
+match no entry, so they neither select a level nor appear in the release notes:
 
-- an empty shortcode or a shortcode containing colons;
-- duplicate resolved shortcodes;
-- duplicate emoji after removing variation selector-16;
-- an empty emoji or description;
-- a SemVer value outside the supported levels.
-
-Unicode spellings with and without variation selector-16 match the same entry. Shortcodes in commit
-subjects include surrounding colons, while declaration keys and explicit `shortcode` values do not.
+```nix presswerk-module
+{ lib, ... }:
+{
+  analyzer.gitmoji.catalog.poop = lib.mkForce null;
+}
+```
 
 ## Replace the catalog
 
