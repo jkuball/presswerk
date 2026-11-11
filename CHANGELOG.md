@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0] - 2026-11-11
+
+### ✨ Introduce new features
+
+- (release): Find versions in any text file with a regular expression
+- (release): Read and write versions in TOML, JSON, and plain files
+
 ## [0.4.1] - 2026-11-11
 
 ### 🐛 Fix a bug
