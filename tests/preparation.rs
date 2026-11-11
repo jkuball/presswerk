@@ -569,6 +569,6 @@ fn the_plan_lists_each_publisher_with_its_release_and_assets() {
         "\npublishers\n",
         "  github-release.default  owner/project\n",
         "    release  v0.1.0\n",
-        "    asset    example-x86_64-linux  /nix/store/abc-example-0.1.0/bin/example\n",
+        "    asset    example-x86_64-linux\n",
     )));
 }

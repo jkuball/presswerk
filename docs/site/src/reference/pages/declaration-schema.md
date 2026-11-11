@@ -41,5 +41,6 @@ Every field is required, and unknown fields are rejected.
   keyed by shortcode. Each entry has an `emoji`, a `description`, and a `semver` level of
   `"major"`, `"minor"`, `"patch"`, or `null`.
 - `publishers`: keyed by publisher type, currently only `github-release`, and then by name. At
-  least one publisher is required. Each has an `apiUrl`, a `repository` in `owner/name` form, and a
-  `token.secret` naming the environment variable that holds the token.
+  least one publisher is required. Each has an `apiUrl`, a `repository` in `owner/name` form, a
+  `token.secret` naming the environment variable that holds the token, and `assets`, which maps
+  asset names to absolute store paths of files and may be missing in older declarations.

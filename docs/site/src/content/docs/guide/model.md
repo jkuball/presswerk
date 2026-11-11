@@ -80,6 +80,10 @@ For a new release, `publish` validates that:
 - the previous release is complete;
 - the candidate's tag is missing rather than conflicting.
 
+On every run, new release or retry, `publish` also fetches every artifact it publishes from the
+local store or a substituter before it writes anything. It never builds one: an artifact is
+published exactly as CI built it for the candidate, and a missing one stops the run before the tag.
+
 If the tag already exists and matches, `publish` treats the run as a retry. It does not apply newer
 analysis rules to the old release, but it still checks the candidate, its predecessor, and the
 remote state.

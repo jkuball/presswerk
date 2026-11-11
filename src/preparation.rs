@@ -304,8 +304,9 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
         for (name, publisher) in &plan.publishers.github_release {
             let _ = writeln!(output, "  github-release.{name}  {}", publisher.repository);
             let _ = writeln!(output, "    release  {tag}");
-            for (asset, path) in &publisher.assets {
-                let _ = writeln!(output, "    asset    {asset}  {path}");
+            // Store paths are left out: the release commit's artifacts get their own paths.
+            for asset in publisher.assets.keys() {
+                let _ = writeln!(output, "    asset    {asset}");
             }
         }
     }
