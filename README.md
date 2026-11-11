@@ -22,6 +22,7 @@
       <img alt="Released with Presswerk" src="docs/site/public/badge.svg" width="164" height="20">
     </picture>
   </a>
+  <img alt="Version" src=".github/presswerk-badge.svg" height="20">
 </p>
 
 > [!WARNING]

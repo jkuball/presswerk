@@ -1,13 +1,22 @@
-{ inputs, self, ... }:
+{ config, self, ... }:
 {
-  flake.presswerk.default = inputs.presswerk-release.lib.mkRelease {
+  # Presswerk releases itself with the module and CLI of the commit being released.
+  flake.presswerk.default = config.flake.lib.mkRelease {
     sourceRoot = self.outPath;
     versionFiles.cargo.presswerk = { };
+    # The README badge follows the viewer's colour scheme; the docs show the variant for their theme.
+    versionFiles.badge = {
+      default = { };
+      light = {
+        colorScheme = "light";
+        path = ".github/presswerk-badge-light.svg";
+      };
+      dark = {
+        colorScheme = "dark";
+        path = ".github/presswerk-badge-dark.svg";
+      };
+    };
     publishers.github-release.default.repository = "jkuball/presswerk";
     analyzer.gitmoji.catalog.memo.semver = "patch";
-  };
-
-  perSystem = { system, ... }: {
-    packages.presswerk-release = inputs.presswerk-release.packages.${system}.presswerk;
   };
 }

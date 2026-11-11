@@ -475,7 +475,6 @@ in
         import-tree
         nix-unit
         nixpkgs
-        presswerk-release
         rust-flake
         treefmt-nix
         ;
