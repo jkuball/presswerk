@@ -136,6 +136,13 @@
         };
       };
 
+      # A file in a flake output: a derivation, or a string built from one, such as "${pkg}/bin/tool".
+      # The string context proves that the path comes from a derivation the flake evaluates.
+      artifactFile = types.coercedTo types.package (package: "${package}") (
+        types.addCheck types.str (path: builtins.hasContext path && lib.hasPrefix "${builtins.storeDir}/" path)
+        // { description = "file in a flake output"; }
+      );
+
       githubReleaseModule = {
         options = {
           apiUrl = mkOption {
@@ -155,6 +162,18 @@
             default = "GITHUB_TOKEN";
             example = "PRESSWERK_GITHUB_TOKEN";
             description = "Name of the environment variable that holds the GitHub API token.";
+          };
+
+          assets = mkOption {
+            type = types.attrsOf artifactFile;
+            default = { };
+            example = lib.literalExpression ''
+              {
+                "my-tool-x86_64-linux" = "''${self.packages.x86_64-linux.default}/bin/my-tool";
+                "my-tool-aarch64-darwin" = "''${self.packages.aarch64-darwin.default}/bin/my-tool";
+              }
+            '';
+            description = "Files attached to the release, keyed by asset name. Each is a file in a flake output, which `publish` fetches from the local store or a substituter without building.";
           };
         };
       };

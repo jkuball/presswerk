@@ -6,7 +6,7 @@ use presswerk::preparation::{
     build_head_release_plan, build_head_release_plan_with_trust, is_worktree_dirty,
     prepare_release, render_plan,
 };
-use presswerk::publication::{PublishOutcome, PublisherStep, TagStep, publish};
+use presswerk::publication::{AssetStep, PublishOutcome, PublisherStep, TagStep, publish};
 use presswerk::release_commit::{TrustedPredecessor, release_subject};
 
 fn main() {
@@ -97,14 +97,22 @@ fn run() -> Result<()> {
                     TagStep::AlreadyPushed => "already pushed",
                 };
                 let mut rows = vec![["tag".into(), report.tag.clone(), tag_status.into()]];
-                rows.extend(report.publisher_steps.iter().map(|(name, step)| {
+                for (name, step, artifacts) in &report.publisher_steps {
                     let status = match step {
                         PublisherStep::Published => "published",
                         PublisherStep::DraftCompleted => "draft completed",
+                        PublisherStep::ArtifactsCompleted => "assets completed",
                         PublisherStep::AlreadyPublished => "already published",
                     };
-                    ["release".into(), name.clone(), status.into()]
-                }));
+                    rows.push(["release".into(), name.clone(), status.into()]);
+                    rows.extend(artifacts.iter().map(|(asset, step)| {
+                        let status = match step {
+                            AssetStep::Uploaded => "uploaded",
+                            AssetStep::AlreadyUploaded => "already uploaded",
+                        };
+                        ["asset".into(), asset.clone(), status.into()]
+                    }));
+                }
                 print!("{}", render_steps(&rows));
                 if report.changed_nothing() {
                     println!(

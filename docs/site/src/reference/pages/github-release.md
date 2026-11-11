@@ -52,6 +52,43 @@ release listing for a draft with exactly that tag. Then it acts on what it finds
 So a retry of the same candidate completes missing state and keeps everything that already
 matches. After publishing, Presswerk reads every release back and fails unless it is published.
 
+### Assets
+
+`assets` attaches files to the release, keyed by asset name. Each value is a file in a flake
+output: a string built from a derivation, such as `"${pkg}/bin/tool"`, or a derivation whose
+output is a single file, such as a tarball. A directory is rejected.
+
+```nix presswerk-module
+{
+  publishers.github-release.default = {
+    repository = "owner/project";
+    assets = {
+      "tool-x86_64-linux" = "${self.packages.x86_64-linux.default}/bin/tool";
+      "tool-aarch64-darwin" = "${self.packages.aarch64-darwin.default}/bin/tool";
+    };
+  };
+}
+```
+
+Evaluating an output for another system does not build it. `publish` fetches each asset from the
+local store or a substituter and stops before writing anything if one is missing, so the CI job
+that builds a system must push its outputs to a binary cache that the publishing job can read.
+
+Presswerk attaches the file as it is. A binary that links libraries from `/nix/store` runs only
+where those libraries exist; build a static or bundled binary if the asset must run elsewhere.
+
+Each asset has its own state, compared by the SHA-256 digest that GitHub reports:
+
+- **Missing:** no asset with that name. Presswerk uploads it, into the draft before the release is
+  published, or to the published release on a retry.
+- **Matching:** the same name and digest. It is left as it is.
+- **Conflicting:** the same name with another digest, or without a digest. Presswerk stops and
+  never replaces it.
+
+Assets on the release that the declaration does not name are ignored. Because a missing asset is
+uploaded on any retry, an asset that was deleted can be restored later by publishing the release
+again.
+
 ### Token
 
 `token.secret` names the environment variable that holds the GitHub API token, `GITHUB_TOKEN`

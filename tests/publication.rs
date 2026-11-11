@@ -3,9 +3,10 @@ mod support;
 use presswerk::analysis::{Analysis, Bump};
 use presswerk::declaration::ReleaseDeclaration;
 use presswerk::publication::{
-    GitTagPublisher, GithubClient, GithubPublisher, GithubReleaseReader, GithubReleaseState,
-    PublicationError, Publisher, PublisherState, PublisherStep, Release, RemoteState, TagPublisher,
-    TagStep, is_valid_successor, publish_ordered, validate_new_release, verify_predecessor_with,
+    AssetStep, GitTagPublisher, GithubClient, GithubPublisher, GithubReleaseReader,
+    GithubReleaseState, LocalAsset, PublicationError, Publisher, PublisherState, PublisherStep,
+    Release, RemoteState, TagPublisher, TagStep, is_valid_successor, publish_ordered,
+    validate_new_release, verify_predecessor_with,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
@@ -81,10 +82,10 @@ impl Publisher for FakePublisher {
         Ok(self.state.borrow().clone())
     }
 
-    fn publish(&self, _release: &Release) -> Result<(), PublicationError> {
+    fn publish(&self, _release: &Release) -> Result<Vec<(String, AssetStep)>, PublicationError> {
         self.writes.borrow_mut().push("release");
         *self.state.borrow_mut() = PublisherState::Published;
-        Ok(())
+        Ok(Vec::new())
     }
 }
 
@@ -110,7 +111,10 @@ fn publishes_the_tag_before_completing_missing_publishers() {
     assert_eq!(*writes.borrow(), ["tag", "release"]);
     assert_eq!(
         steps,
-        (TagStep::Pushed, vec![PublisherStep::DraftCompleted])
+        (
+            TagStep::Pushed,
+            vec![(PublisherStep::DraftCompleted, Vec::new())]
+        )
     );
 }
 
@@ -137,7 +141,7 @@ fn reports_complete_publication_without_writing_again() {
         steps,
         (
             TagStep::AlreadyPushed,
-            vec![PublisherStep::AlreadyPublished]
+            vec![(PublisherStep::AlreadyPublished, Vec::new())]
         )
     );
     assert_eq!(*writes.borrow(), ["tag"]);
@@ -594,7 +598,14 @@ struct ExpectedRequest {
 }
 
 fn mock_github_api(requests: Vec<ExpectedRequest>) -> (String, thread::JoinHandle<()>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    mock_github_api_on("http://127.0.0.1:0", requests)
+}
+
+fn mock_github_api_on(
+    url: &str,
+    requests: Vec<ExpectedRequest>,
+) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind(url.trim_start_matches("http://")).unwrap();
     let address = listener.local_addr().unwrap();
     let handle = thread::spawn(move || {
         for expected in requests {
@@ -1188,4 +1199,161 @@ fn github_creates_a_draft_then_publishes_and_verifies_it() {
         .unwrap();
 
     server.join().unwrap();
+}
+
+fn leak(text: String) -> &'static str {
+    Box::leak(text.into_boxed_str())
+}
+
+fn get(path: &'static str, status: u16, response: &'static str) -> ExpectedRequest {
+    ExpectedRequest {
+        method: "GET",
+        path,
+        status,
+        response,
+        body_contains: None,
+    }
+}
+
+fn local_asset(directory: &tempfile::TempDir) -> LocalAsset {
+    let path = directory.path().join("tool");
+    std::fs::write(&path, "tool\n").unwrap();
+    LocalAsset::from_file("tool-x86_64-linux", path).unwrap()
+}
+
+/// Bind the mock first, so responses can point GitHub's upload URL at it.
+fn mock_github_api_at(
+    requests: impl FnOnce(&str) -> Vec<ExpectedRequest>,
+) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let requests = requests(&url);
+    drop(listener);
+    let (actual, handle) = mock_github_api_on(&url, requests);
+    assert_eq!(actual, url);
+    (url, handle)
+}
+
+#[test]
+fn github_uploads_assets_into_the_draft_before_publishing_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let asset = local_asset(&directory);
+    let (url, server) = mock_github_api_at(|url| {
+        let draft = leak(format!(
+            r#"{{"id":7,"draft":true,"prerelease":false,"upload_url":"{url}/uploads/7/assets{{?name,label}}","assets":[]}}"#
+        ));
+        let published = leak(format!(
+            r#"{{"id":7,"draft":false,"prerelease":false,"assets":[{{"name":"tool-x86_64-linux","digest":"{}"}}]}}"#,
+            asset.digest
+        ));
+        vec![
+            get("/repos/owner/project", 200, "{}"),
+            get("/repos/owner/project/releases/tags/v0.1.0", 404, "{}"),
+            get(
+                "/repos/owner/project/releases?per_page=100&page=1",
+                200,
+                "[]",
+            ),
+            ExpectedRequest {
+                method: "POST",
+                path: "/repos/owner/project/releases",
+                status: 201,
+                response: draft,
+                body_contains: Some(r#""draft":true"#),
+            },
+            ExpectedRequest {
+                method: "POST",
+                path: "/uploads/7/assets?name=tool-x86_64-linux",
+                status: 201,
+                response: "{}",
+                body_contains: Some("tool\n"),
+            },
+            ExpectedRequest {
+                method: "PATCH",
+                path: "/repos/owner/project/releases/7",
+                status: 200,
+                response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+                body_contains: Some(r#""draft":false"#),
+            },
+            get("/repos/owner/project", 200, "{}"),
+            get("/repos/owner/project/releases/tags/v0.1.0", 200, published),
+        ]
+    });
+    let publisher = GithubPublisher::new(
+        GithubClient::new(&url, "test-token").unwrap(),
+        "owner/project",
+    )
+    .with_assets(vec![asset]);
+
+    let steps = publisher
+        .publish(&release("0123456789012345678901234567890123456789".into()))
+        .unwrap();
+
+    assert_eq!(
+        steps,
+        [("tool-x86_64-linux".to_owned(), AssetStep::Uploaded)]
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn github_assets_decide_whether_a_published_release_is_complete() {
+    let directory = tempfile::tempdir().unwrap();
+    let asset = local_asset(&directory);
+    let release = release("0123456789012345678901234567890123456789".into());
+    let matching = leak(format!(
+        r#"{{"id":7,"draft":false,"prerelease":false,"assets":[{{"name":"tool-x86_64-linux","digest":"{}"}}]}}"#,
+        asset.digest
+    ));
+    for (response, expected) in [
+        (
+            r#"{"id":7,"draft":false,"prerelease":false,"assets":[]}"#,
+            Ok(PublisherState::Incomplete),
+        ),
+        (matching, Ok(PublisherState::Published)),
+        (
+            r#"{"id":7,"draft":false,"prerelease":false,"assets":[{"name":"tool-x86_64-linux","digest":"sha256:00"}]}"#,
+            Err("has digest sha256:00"),
+        ),
+        (
+            r#"{"id":7,"draft":false,"prerelease":false,"assets":[{"name":"tool-x86_64-linux"}]}"#,
+            Err("has no digest"),
+        ),
+        (
+            r#"{"id":7,"draft":false,"prerelease":false,"assets":[{"name":"by-hand.txt","digest":"sha256:00"}]}"#,
+            Ok(PublisherState::Incomplete),
+        ),
+    ] {
+        let (url, server) = mock_github_api(vec![
+            get("/repos/owner/project", 200, "{}"),
+            get("/repos/owner/project/releases/tags/v0.1.0", 200, response),
+        ]);
+        let publisher = GithubPublisher::new(
+            GithubClient::new(&url, "test-token").unwrap(),
+            "owner/project",
+        )
+        .with_assets(vec![asset.clone()]);
+
+        match (publisher.state(&release).unwrap(), expected) {
+            (PublisherState::Conflicting(message), Err(expected)) => {
+                assert!(message.contains(expected), "{message}");
+            }
+            (state, Ok(expected)) => assert_eq!(state, expected),
+            (state, Err(expected)) => {
+                panic!("expected a conflict with {expected:?}, got {state:?}")
+            }
+        }
+        server.join().unwrap();
+    }
+}
+
+#[test]
+fn a_github_release_asset_must_be_a_regular_file() {
+    let directory = tempfile::tempdir().unwrap();
+    assert!(
+        LocalAsset::from_file("tool", directory.path())
+            .unwrap_err()
+            .to_string()
+            .contains("is not a regular file")
+    );
 }

@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod artifacts;
 mod badge;
 pub mod changelog;
 pub mod classification;

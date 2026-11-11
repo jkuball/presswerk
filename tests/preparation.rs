@@ -48,6 +48,7 @@ fn declaration(version: &str) -> ReleaseDeclaration {
                     token: Token {
                         secret: "GITHUB_TOKEN".into(),
                     },
+                    assets: BTreeMap::new(),
                 },
             )]),
         },
@@ -535,4 +536,39 @@ fn the_release_commit_names_the_declared_tag() {
         repository.git(["show", "--format=%s", "--no-patch", &release.to_string()]),
         "🔖 Release release-0.1.0"
     );
+}
+
+#[test]
+fn the_plan_lists_each_publisher_with_its_release_and_assets() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated
+        .declaration
+        .publishers
+        .github_release
+        .get_mut("default")
+        .unwrap()
+        .assets
+        .insert(
+            "example-x86_64-linux".into(),
+            "/nix/store/abc-example-0.1.0/bin/example".into(),
+        );
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+
+    assert!(render_plan(&plan).contains(concat!(
+        "\npublishers\n",
+        "  github-release.default  owner/project\n",
+        "    release  v0.1.0\n",
+        "    asset    example-x86_64-linux\n",
+    )));
 }

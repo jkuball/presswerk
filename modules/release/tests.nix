@@ -73,6 +73,7 @@ in
           apiUrl = "https://api.github.com";
           repository = "owner/project";
           token.secret = "GITHUB_TOKEN";
+          assets = { };
         };
       };
     };
@@ -215,6 +216,52 @@ in
           regex = "^version: (?<version>\\S+)$";
         };
       };
+    };
+
+    "test GitHub Release assets normalize to store paths" = {
+      expr =
+        let
+          tool = derivation {
+            name = "tool";
+            system = "x86_64-linux";
+            builder = "/bin/sh";
+          };
+        in
+        (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          publishers.github-release.default = {
+            repository = "owner/project";
+            assets = {
+              file = "${tool}/bin/tool";
+              whole = tool;
+            };
+          };
+        }).publishers.github-release.default.assets;
+      expected =
+        let
+          out = (derivation {
+            name = "tool";
+            system = "x86_64-linux";
+            builder = "/bin/sh";
+          }).outPath;
+        in
+        {
+          file = "${out}/bin/tool";
+          whole = out;
+        };
+    };
+
+    "test GitHub Release assets need a flake output" = {
+      expr = succeeds (mkRelease {
+        sourceRoot = fixtureRoot;
+        versionFiles.cargo.example.cargoToml = cargoToml;
+        publishers.github-release.default = {
+          repository = "owner/project";
+          assets.fake = "/nix/store/00000000000000000000000000000000-fake/bin/fake";
+        };
+      });
+      expected = false;
     };
 
     "test a badge does not define the version" = {
