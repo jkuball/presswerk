@@ -412,15 +412,13 @@ in
       expected = defaults;
     };
 
-    "test Presswerk self release pins its schema while the current library is on schema 0" = {
+    "test Presswerk self release uses the current schema" = {
       expr = {
-        selfSchemaVersion = self.presswerk.default.schemaVersion;
-        currentSchemaVersion = defaults.schemaVersion;
+        schemaMatches = self.presswerk.default.schemaVersion == defaults.schemaVersion;
         versionMatches = self.presswerk.default.version == presswerkVersion;
       };
       expected = {
-        selfSchemaVersion = 1;
-        currentSchemaVersion = 0;
+        schemaMatches = true;
         versionMatches = true;
       };
     };

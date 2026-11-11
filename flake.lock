@@ -345,22 +345,25 @@
         "import-tree": "import-tree_2",
         "nix-unit": "nix-unit_2",
         "nixpkgs": "nixpkgs_2",
+        "presswerk-release": [
+          "presswerk-release"
+        ],
         "rust-flake": "rust-flake",
         "treefmt-nix": "treefmt-nix_3"
       },
       "locked": {
-        "lastModified": 1793994644,
-        "narHash": "sha256-akciUR1bH5InM6NaTxldvVtmSo1yyfUwlwGyferAGg0=",
-        "ref": "refs/tags/v0.1.0",
-        "rev": "cc77c67cb155a4d4d55c58516ea7bcadefdce3d2",
-        "revCount": 28,
-        "type": "git",
-        "url": "ssh://git@github.com/jkuball/presswerk"
+        "lastModified": 1794391408,
+        "narHash": "sha256-+wBVp6PMvoVTf6JXlRmMbs4yoOldtEk0I76TUQY/Zqc=",
+        "owner": "jkuball",
+        "repo": "presswerk",
+        "rev": "678d6a85e32705346cb94da1fd94b23919b93836",
+        "type": "github"
       },
       "original": {
-        "ref": "refs/tags/v0.1.0",
-        "type": "git",
-        "url": "ssh://git@github.com/jkuball/presswerk"
+        "owner": "jkuball",
+        "ref": "v0.3.1",
+        "repo": "presswerk",
+        "type": "github"
       }
     },
     "root": {
