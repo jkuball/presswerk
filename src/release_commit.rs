@@ -1,5 +1,4 @@
 use git2::{ErrorCode, ObjectType, Oid, Repository};
-use semver::Version;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
@@ -113,11 +112,16 @@ impl ReleaseFile {
     }
 }
 
+/// The subject of the release commit that `publish` turns into `tag`.
+pub fn release_subject(tag: &str) -> String {
+    format!("🔖 Release {tag}")
+}
+
 pub fn create_release_commit(
     repository_path: impl AsRef<Path>,
     branch: &str,
     expected_parent: Oid,
-    version: &Version,
+    tag: &str,
     files: &[ReleaseFile],
     trusted_predecessor: Option<&TrustedPredecessor>,
 ) -> Result<Oid, ReleaseCommitError> {
@@ -155,7 +159,7 @@ pub fn create_release_commit(
     let signature = repository.signature().map_err(|source| {
         ReleaseCommitError::git("could not read Git author configuration", source)
     })?;
-    let subject = format!("🔖 Release v{version}");
+    let subject = release_subject(tag);
     let message = trusted_predecessor.map_or_else(
         || subject.clone(),
         |trusted| format!("{subject}\n\n{}", trusted.trailer()),

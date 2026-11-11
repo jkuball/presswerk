@@ -511,3 +511,28 @@ fn a_badge_alone_does_not_carry_the_version() {
 
     assert!(error.to_string().contains("carries the version"));
 }
+
+#[test]
+fn the_release_commit_names_the_declared_tag() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated.declaration.tag.format = "release-{version}".into();
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+    assert_eq!(plan.next_tag.as_deref(), Some("release-0.1.0"));
+
+    let release = prepare_release(&plan).unwrap().unwrap();
+    assert_eq!(
+        repository.git(["show", "--format=%s", "--no-patch", &release.to_string()]),
+        "🔖 Release release-0.1.0"
+    );
+}

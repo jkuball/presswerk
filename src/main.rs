@@ -7,7 +7,7 @@ use presswerk::preparation::{
     prepare_release, render_plan,
 };
 use presswerk::publication::{PublishOutcome, PublisherStep, TagStep, publish};
-use presswerk::release_commit::TrustedPredecessor;
+use presswerk::release_commit::{TrustedPredecessor, release_subject};
 
 fn main() {
     if let Err(error) = run() {
@@ -53,8 +53,9 @@ fn run() -> Result<()> {
             match prepare_release(&plan)? {
                 Some(commit) => {
                     let version = plan.next_version.as_ref().expect("release version exists");
+                    let tag = plan.next_tag.as_ref().expect("release tag exists");
                     println!(
-                        "Preparing v{version} on {}",
+                        "Preparing {tag} on {}",
                         short_commit(&plan.commit.to_string())
                     );
                     let mut rows: Vec<[String; 3]> = plan
@@ -76,7 +77,7 @@ fn run() -> Result<()> {
                     rows.push([
                         "commit".into(),
                         short_commit(&commit.to_string()).into(),
-                        format!("🔖 Release v{version}"),
+                        release_subject(tag),
                     ]);
                     print!("{}", render_steps(&rows));
                 }
