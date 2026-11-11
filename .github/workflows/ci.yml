@@ -110,3 +110,37 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           nix run .#presswerk-release -- publish HEAD
+
+  docs:
+    needs: ci
+    if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.candidate }}
+
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - uses: cachix/cachix-action@v17
+        with:
+          name: jkuball
+          skipPush: true
+
+      - name: Build docs
+        run: |
+          nix build .#docs
+          cp -rL --no-preserve=mode result "$RUNNER_TEMP/site"
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ runner.temp }}/site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
