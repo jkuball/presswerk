@@ -27,7 +27,7 @@ Before Presswerk 1.0, the URLs and formats described here may change with any Pr
 
 - **Content negotiation.** Requesting a page with `Accept: text/markdown` still returns HTML. The
   docs are static files on GitHub Pages, which ignores request headers. Use the `.md` URL instead.
-- **A single full-text file.** There is no `llms-full.txt`. The pages are small, and fetching the
-  ones an agent needs keeps its context focused.
+- **A single full-text file.** There is no `llms-full.txt` yet. It was left out to keep maintenance
+  low and can be added if it turns out to be needed.
 - **Older versions.** The docs always describe the latest release. An agent working with an older
   Presswerk version should read the docs in that version's source tree under `docs/site`.
