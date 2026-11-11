@@ -49,9 +49,9 @@ Declare a release in your flake:
   outputs = { self, presswerk, ... }: {
     presswerk.default = presswerk.lib.mkRelease {
       sourceRoot = self.outPath;
-      # Read the version from Cargo.toml and bump it there and in Cargo.lock.
+      # Read and bump the version of a Cargo package.
       versionFiles.cargo.my-crate = { };
-      # Publish each release as a Git tag and GitHub Release.
+      # Publish a GitHub Release.
       publishers.github-release.default.repository = "me/my-crate";
     };
   };
