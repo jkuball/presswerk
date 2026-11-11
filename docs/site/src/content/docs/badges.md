@@ -28,8 +28,7 @@ GitHub renders `<picture>` in a README. This snippet shows the dark variant on l
 the light variant on dark pages:
 
 ```html title="README.md"
-<a href="https://presswerk.dev/">
-  <picture>
+<a href="https://presswerk.dev/"><picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://presswerk.dev/badge-light.svg">
     <img alt="Released with Presswerk" src="https://presswerk.dev/badge.svg" width="164" height="20">
   </picture></a>

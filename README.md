@@ -16,8 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://presswerk.dev/">
-    <picture>
+  <a href="https://presswerk.dev/"><picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/site/public/badge-light.svg">
       <img alt="Released with Presswerk" src="docs/site/public/badge.svg" width="164" height="20">
     </picture></a>
