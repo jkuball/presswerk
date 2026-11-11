@@ -164,14 +164,46 @@ in
 
       checks.docs-reference = pkgs.runCommand "docs-reference-check" { nativeBuildInputs = [ pkgs.gnugrep ]; } ''
         site=${self'.packages.docs}
+        pages="
+          404
+          badges
+          guide
+          guide/adoption
+          guide/ci-integration
+          guide/github-actions
+          guide/model
+          guide/nixci
+          guide/recovery
+          guide/release-modes
+          guide/walkthrough
+          index
+          reference/analyzers
+          reference/cli
+          reference/declaration-schema
+          reference/options
+          reference/publishers
+          reference/version-files
+        "
+        for page in $pages; do
+          test -s "$site/$page.md" || { echo "missing Markdown page $page.md" >&2; exit 1; }
+        done
         for page in options declaration-schema cli publishers analyzers; do
           test -s "$site/reference/$page/index.html" || { echo "missing reference page $page" >&2; exit 1; }
-          test -s "$site/reference/$page.md" || { echo "missing plain-text reference page $page.md" >&2; exit 1; }
         done
+        test -s "$site/llms.txt"
+        test ! -e "$site/llms-full.txt"
+        for page in $pages; do
+          test "$page" = 404 || grep -Fq "(https://jkuball.github.io/presswerk/$page.md)" "$site/llms.txt"
+        done
+        grep -Fq 'rel="alternate" type="text/markdown" href="/presswerk/index.md"' "$site/index.html"
+        grep -Fq 'rel="alternate" type="text/markdown" href="/presswerk/guide/walkthrough.md"' "$site/guide/walkthrough/index.html"
         grep -q 'id="tag.format"' "$site/reference/options/index.html"
         # Release options in Nix examples link to their reference entries.
         grep -q 'href="/presswerk/reference/options/#versionFiles.cargo" class="pw-code-link"' "$site/index.html"
         grep -q 'id="publishers.github-release.name.token.secret"' "$site/reference/options/index.html"
+        grep -q '^# Presswerk$' "$site/index.md"
+        grep -q '^# Walkthrough: release automatically from GitHub Actions$' "$site/guide/walkthrough.md"
+        grep -Fq '](/presswerk/reference/options.md#versionFiles.cargo)' "$site/reference/version-files.md"
         grep -q '^### `tag.format`$' "$site/reference/options.md"
         grep -q '^### presswerk publish$' "$site/reference/cli.md"
         grep -A20 '^### Minor$' "$site/reference/analyzers.md" | grep -q '`:sparkles:`'
@@ -180,6 +212,10 @@ in
           grep -q 'Copyright (c) 2016-2022 Carlos Cuesta' "$copy"
           grep -q 'copies or substantial portions of the Software' "$copy"
         done
+        if grep -R -n -E '\{\{presswerk\.version\}\}|@@pw-options|<!-- reference:|^:::' "$site" --include='*.md' --include='llms.txt'; then
+          echo "unresolved documentation placeholder" >&2
+          exit 1
+        fi
         if grep -q 'assertions' "$site/reference/options.md"; then
           echo "internal options leaked into the reference" >&2
           exit 1
