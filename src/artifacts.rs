@@ -3,11 +3,12 @@ use anyhow::Context as _;
 use nix_bindings_store::store::Store;
 use std::error::Error;
 use std::fmt;
+use std::process::Command;
 
 /// Fetch every store path that a file in `paths` lies in, from the local store or a substituter.
 ///
-/// The paths are outputs, not derivations, so Nix can only substitute them: `publish` never builds
-/// an artifact. Each entry is reported by its label, such as `github-release.default` and an asset
+/// The paths are outputs, not derivations, so `nix-store --realise` can only substitute them:
+/// `publish` never builds an artifact. Each entry is reported by its label, such as `github-release.default` and an asset
 /// name, when it cannot be obtained.
 pub fn fetch<'a>(paths: impl IntoIterator<Item = (String, &'a str)>) -> Result<(), ArtifactError> {
     let paths: Vec<_> = paths.into_iter().collect();
@@ -33,7 +34,7 @@ pub fn fetch<'a>(paths: impl IntoIterator<Item = (String, &'a str)>) -> Result<(
             label: label.clone(),
             path: path.into(),
         })?;
-        let store_path = store
+        store
             .parse_store_path(&root)
             .context("parse the store path")
             .map_err(|source| ArtifactError::Unavailable {
@@ -41,15 +42,32 @@ pub fn fetch<'a>(paths: impl IntoIterator<Item = (String, &'a str)>) -> Result<(
                 path: path.into(),
                 source,
             })?;
-        store
-            .realise(&store_path)
-            .map_err(|source| ArtifactError::Unavailable {
-                label,
-                path: path.into(),
-                source,
-            })?;
+        substitute(&root).map_err(|source| ArtifactError::Unavailable {
+            label,
+            path: path.into(),
+            source,
+        })?;
     }
     Ok(())
+}
+
+/// Make an output path valid by substituting it; Nix cannot build a path without its derivation.
+fn substitute(store_path: &str) -> anyhow::Result<()> {
+    let output = Command::new("nix-store")
+        .args(["--realise", "--quiet", store_path])
+        .output()
+        .context("run nix-store --realise")?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    anyhow::bail!(
+        "{}",
+        stderr
+            .lines()
+            .rfind(|line| !line.trim().is_empty())
+            .unwrap_or("nix-store --realise failed")
+    )
 }
 
 /// The top-level store path that contains `path`, such as `/nix/store/…-tool` for
