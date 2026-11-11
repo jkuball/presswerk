@@ -191,6 +191,7 @@ in
           test -s "$site/reference/$page/index.html" || { echo "missing reference page $page" >&2; exit 1; }
         done
         test -s "$site/llms.txt"
+        grep -Fxq "Sitemap: https://presswerk.dev/sitemap-index.xml" "$site/robots.txt"
         test ! -e "$site/llms-full.txt"
         for page in $pages; do
           test "$page" = 404 || grep -Fq "(https://presswerk.dev/$page.md)" "$site/llms.txt"
