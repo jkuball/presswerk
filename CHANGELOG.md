@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.3] - 2026-11-11
+
+### 📝 Add or update documentation
+
+- Shorten the README example comments
+- Explain the README release example
+- Show a minimal release declaration in the README
+- Trim the README to an entry point
+
+### 🔥 Remove code or files
+
+- (ci): Remove the Presswerk deploy key setup
+
 ## [0.3.2] - 2026-11-11
 
 ### ⬆️ Upgrade dependencies
