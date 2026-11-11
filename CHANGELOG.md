@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1] - 2026-11-11
+
+### 📝 Add or update documentation
+
+- (docs): Read the version from the release instead of a version file
+
 ## [0.5.0] - 2026-11-11
 
 ### ✨ Introduce new features
