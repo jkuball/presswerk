@@ -25,13 +25,11 @@ does not change with your releases.
 ### Follow the colour scheme
 
 GitHub renders `<picture>` in a README. This snippet shows the dark variant on light pages and
-the light variant on dark pages:
+the light variant on dark pages. It stays on one line, because whitespace inside the link would show
+as an underlined gap next to the badge:
 
 ```html title="README.md"
-<a href="https://presswerk.dev/"><picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://presswerk.dev/badge-light.svg">
-    <img alt="Released with Presswerk" src="https://presswerk.dev/badge.svg" width="164" height="20">
-  </picture></a>
+<a href="https://presswerk.dev/"><picture><source media="(prefers-color-scheme: dark)" srcset="https://presswerk.dev/badge-light.svg"><img alt="Released with Presswerk" src="https://presswerk.dev/badge.svg" width="164" height="20"></picture></a>
 ```
 
 ### One variant
