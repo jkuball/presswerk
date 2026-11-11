@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.5] - 2026-11-11
+
+### ⚡️ Improve performance
+
+- (ci): Link every output in candidate runs instead of building the docs again
+- (ci): Deploy the docs from the ci job's build
+
 ## [0.3.4] - 2026-11-11
 
 ### 📝 Add or update documentation
