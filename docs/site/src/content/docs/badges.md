@@ -32,8 +32,7 @@ the light variant on dark pages:
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://presswerk.dev/badge-light.svg">
     <img alt="Released with Presswerk" src="https://presswerk.dev/badge.svg" width="164" height="20">
-  </picture>
-</a>
+  </picture></a>
 ```
 
 ### One variant
