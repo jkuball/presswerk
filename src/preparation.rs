@@ -1,5 +1,5 @@
 use crate::analysis::{Analysis, Analyzer, CommitRange, render_release_notes};
-use crate::declaration::{ReleaseDeclaration, Tag, VersionFile};
+use crate::declaration::{Publishers, ReleaseDeclaration, Tag, VersionFile};
 use crate::evaluation::{EvaluatedReleaseDeclaration, evaluate_release_declaration};
 use crate::publication::{VerifiedPredecessor, verify_predecessor_with_trust};
 use crate::release_commit::{ReleaseFile, TrustedPredecessor, create_release_commit};
@@ -31,6 +31,7 @@ pub struct ReleasePlan {
     pub version_files: Vec<VersionFileChange>,
     pub notes: String,
     pub changelog_path: String,
+    pub publishers: Publishers,
     release_files: Vec<ReleaseFile>,
     trusted_predecessor: Option<TrustedPredecessor>,
 }
@@ -169,6 +170,7 @@ pub fn build_release_plan(
         version_files,
         notes,
         changelog_path: declaration.changelog.path,
+        publishers: declaration.publishers,
         release_files,
         trusted_predecessor: None,
     })
@@ -296,6 +298,16 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
             }
         }
         None => output.push_str("next version       none (no release-worthy commits)\n"),
+    }
+    if let Some(tag) = &plan.next_tag {
+        output.push_str("\npublishers\n");
+        for (name, publisher) in &plan.publishers.github_release {
+            let _ = writeln!(output, "  github-release.{name}  {}", publisher.repository);
+            let _ = writeln!(output, "    release  {tag}");
+            for (asset, path) in &publisher.assets {
+                let _ = writeln!(output, "    asset    {asset}  {path}");
+            }
+        }
     }
     output.push_str("\nnotes\n");
     for line in plan.notes.lines() {

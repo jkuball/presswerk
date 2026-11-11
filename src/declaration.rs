@@ -368,6 +368,9 @@ pub struct GithubReleasePublisher {
     pub api_url: String,
     pub repository: String,
     pub token: Token,
+    /// Files attached to the release, by asset name. Each is a path in the Nix store.
+    #[serde(default)]
+    pub assets: BTreeMap<String, String>,
 }
 
 impl GithubReleasePublisher {
@@ -397,6 +400,18 @@ impl GithubReleasePublisher {
                 "GitHub API URL {:?} must be an HTTP(S) base URL",
                 self.api_url
             )));
+        }
+        for (name, path) in &self.assets {
+            if name.is_empty() || name.contains('/') {
+                return Err(DeclarationError::Invalid(format!(
+                    "GitHub Release asset name {name:?} must be non-empty and contain no slash"
+                )));
+            }
+            if !path.starts_with('/') {
+                return Err(DeclarationError::Invalid(format!(
+                    "GitHub Release asset {name} must be an absolute store path, not {path:?}"
+                )));
+            }
         }
         self.token.validate()
     }
@@ -697,6 +712,42 @@ mod tests {
         ] {
             let invalid = declaration(|value| {
                 value["versionFiles"][0] = json!({ "path": "Chart.yaml", "regex": pattern });
+            });
+            assert!(
+                ReleaseDeclaration::from_json(&invalid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(message)
+            );
+        }
+    }
+
+    #[test]
+    fn decodes_and_validates_github_release_assets() {
+        let without = ReleaseDeclaration::from_json(&declaration(|_| {})).unwrap();
+        assert!(
+            without.publishers.github_release["default"]
+                .assets
+                .is_empty()
+        );
+
+        let with = declaration(|value| {
+            value["publishers"]["github-release"]["default"]["assets"] =
+                json!({ "tool-x86_64-linux": "/nix/store/abc-tool/bin/tool" });
+        });
+        let decoded = ReleaseDeclaration::from_json(&with).unwrap();
+        assert_eq!(
+            decoded.publishers.github_release["default"].assets["tool-x86_64-linux"],
+            "/nix/store/abc-tool/bin/tool"
+        );
+
+        for (name, path, message) in [
+            ("", "/nix/store/abc-tool", "must be non-empty"),
+            ("a/b", "/nix/store/abc-tool", "contain no slash"),
+            ("tool", "relative/tool", "absolute store path"),
+        ] {
+            let invalid = declaration(|value| {
+                value["publishers"]["github-release"]["default"]["assets"] = json!({ name: path });
             });
             assert!(
                 ReleaseDeclaration::from_json(&invalid)

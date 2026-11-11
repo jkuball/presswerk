@@ -10,6 +10,7 @@ use crate::release_commit::TrustedPredecessor;
 use git2::{ErrorCode, ObjectType, Oid, Repository};
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -96,9 +97,21 @@ enum RemoteTag {
 pub enum PublisherState {
     Missing,
     Draft,
+    /// Published, but some of its artifacts are missing and can be added.
+    Incomplete,
     Published,
     Conflicting(String),
 }
+
+/// What happened to one artifact of a publisher, such as a GitHub Release asset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetStep {
+    Uploaded,
+    AlreadyUploaded,
+}
+
+/// Each artifact of a publisher by name, with what happened to it.
+pub type ArtifactSteps = Vec<(String, AssetStep)>;
 
 pub trait TagPublisher {
     fn state(&self, release: &Release) -> Result<RemoteState, PublicationError>;
@@ -107,7 +120,12 @@ pub trait TagPublisher {
 
 pub trait Publisher {
     fn state(&self, release: &Release) -> Result<PublisherState, PublicationError>;
-    fn publish(&self, release: &Release) -> Result<(), PublicationError>;
+    /// Create every missing part and report each artifact.
+    fn publish(&self, release: &Release) -> Result<ArtifactSteps, PublicationError>;
+    /// The names of the artifacts this publisher publishes.
+    fn artifact_names(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -394,6 +412,57 @@ impl GithubClient {
     }
 }
 
+impl GithubClient {
+    fn upload_asset(
+        &self,
+        repository: &str,
+        release: &Release,
+        github_release: &GithubRelease,
+        asset: &LocalAsset,
+    ) -> Result<(), PublicationError> {
+        let template = github_release.upload_url.as_deref().ok_or_else(|| {
+            PublicationError::new(format!(
+                "GitHub Release {:?} in {repository} has no upload URL",
+                release.tag
+            ))
+        })?;
+        // The upload URL is a URI template such as `…/assets{?name,label}`.
+        let base = template.split('{').next().unwrap_or(template);
+        let mut url = Url::parse(base).map_err(|error| {
+            PublicationError::new(format!("invalid GitHub upload URL {template:?}: {error}"))
+        })?;
+        url.query_pairs_mut().append_pair("name", &asset.name);
+        let bytes = std::fs::read(&asset.path).map_err(|error| {
+            PublicationError::new(format!(
+                "could not read GitHub Release asset {} ({}): {error}",
+                asset.name,
+                asset.path.display()
+            ))
+        })?;
+        let failure = match self
+            .request("POST", &url)
+            .set("Content-Type", "application/octet-stream")
+            .send_bytes(&bytes)
+        {
+            Ok(_) => return Ok(()),
+            Err(ureq::Error::Status(status, _)) => format!("HTTP {status}"),
+            Err(ureq::Error::Transport(error)) => error.to_string(),
+        };
+        // A concurrent run may have uploaded the same asset; accept it only if it matches.
+        if let Some(current) = self.release(repository, &release.tag)?
+            && current.assets.iter().any(|remote| {
+                remote.name == asset.name && remote.digest.as_deref() == Some(&asset.digest)
+            })
+        {
+            return Ok(());
+        }
+        Err(PublicationError::new(format!(
+            "could not upload asset {} to GitHub Release {:?} in {repository}: {failure}",
+            asset.name, release.tag
+        )))
+    }
+}
+
 impl GithubReleaseReader for GithubClient {
     fn release_state(
         &self,
@@ -412,22 +481,74 @@ impl GithubReleaseReader for GithubClient {
     }
 }
 
+/// A file to attach to a GitHub Release, with the digest GitHub reports for an uploaded asset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalAsset {
+    pub name: String,
+    pub path: PathBuf,
+    pub digest: String,
+}
+
+impl LocalAsset {
+    /// Read a fetched artifact; GitHub Release assets must be regular files.
+    pub fn from_file(
+        name: impl Into<String>,
+        path: impl Into<PathBuf>,
+    ) -> Result<Self, PublicationError> {
+        let name = name.into();
+        let path = path.into();
+        let bytes = match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => std::fs::read(&path),
+            Ok(_) => {
+                return Err(PublicationError::new(format!(
+                    "GitHub Release asset {name} ({}) is not a regular file",
+                    path.display()
+                )));
+            }
+            Err(error) => Err(error),
+        }
+        .map_err(|error| {
+            PublicationError::new(format!(
+                "could not read GitHub Release asset {name} ({}): {error}",
+                path.display()
+            ))
+        })?;
+        let digest =
+            Sha256::digest(&bytes)
+                .iter()
+                .fold(String::from("sha256:"), |mut digest, byte| {
+                    use fmt::Write as _;
+                    let _ = write!(digest, "{byte:02x}");
+                    digest
+                });
+        Ok(Self { name, path, digest })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GithubPublisher {
     client: GithubClient,
     repository: String,
+    assets: Vec<LocalAsset>,
 }
 
 impl GithubPublisher {
+    /// Build the publisher from its declaration; its assets must already be fetched.
     pub fn from_declaration(
         declaration: &GithubReleaseDeclaration,
     ) -> Result<Self, PublicationError> {
+        let assets = declaration
+            .assets
+            .iter()
+            .map(|(name, path)| LocalAsset::from_file(name, path))
+            .collect::<Result<_, _>>()?;
         Ok(Self {
             client: GithubClient::from_environment(
                 &declaration.api_url,
                 &declaration.token.secret,
             )?,
             repository: declaration.repository.clone(),
+            assets,
         })
     }
 
@@ -435,31 +556,67 @@ impl GithubPublisher {
         Self {
             client,
             repository: repository.into(),
+            assets: Vec::new(),
         }
     }
 
+    #[must_use]
+    pub fn with_assets(mut self, assets: Vec<LocalAsset>) -> Self {
+        self.assets = assets;
+        self
+    }
+
     fn checked_state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
+        let Some(github_release) = self.client.release(&self.repository, &release.tag)? else {
+            return Ok(PublisherState::Missing);
+        };
         let expected_prerelease = !release.version.pre.is_empty();
-        Ok(
-            match self.client.release_state(&self.repository, &release.tag)? {
-                GithubReleaseState::Missing => PublisherState::Missing,
-                GithubReleaseState::Draft { prerelease } if prerelease == expected_prerelease => {
-                    PublisherState::Draft
-                }
-                GithubReleaseState::Published { prerelease }
-                    if prerelease == expected_prerelease =>
-                {
-                    PublisherState::Published
-                }
-                GithubReleaseState::Draft { prerelease }
-                | GithubReleaseState::Published { prerelease } => {
-                    PublisherState::Conflicting(format!(
-                        "GitHub Release {:?} in {} has prerelease={prerelease}, expected {expected_prerelease}",
-                        release.tag, self.repository
-                    ))
-                }
-            },
-        )
+        if github_release.prerelease != expected_prerelease {
+            return Ok(PublisherState::Conflicting(format!(
+                "GitHub Release {:?} in {} has prerelease={}, expected {expected_prerelease}",
+                release.tag, self.repository, github_release.prerelease
+            )));
+        }
+        let mut missing = false;
+        for asset in &self.assets {
+            match self.remote_asset(release, &github_release, asset) {
+                Ok(true) => {}
+                Ok(false) => missing = true,
+                Err(conflict) => return Ok(PublisherState::Conflicting(conflict)),
+            }
+        }
+        Ok(match (github_release.draft, missing) {
+            (true, _) => PublisherState::Draft,
+            (false, true) => PublisherState::Incomplete,
+            (false, false) => PublisherState::Published,
+        })
+    }
+
+    /// Whether the release already has a matching asset; a different or unverifiable one conflicts.
+    fn remote_asset(
+        &self,
+        release: &Release,
+        github_release: &GithubRelease,
+        asset: &LocalAsset,
+    ) -> Result<bool, String> {
+        let Some(remote) = github_release
+            .assets
+            .iter()
+            .find(|remote| remote.name == asset.name)
+        else {
+            return Ok(false);
+        };
+        match remote.digest.as_deref() {
+            Some(digest) if digest == asset.digest => Ok(true),
+            Some(digest) => Err(format!(
+                "asset {} of GitHub Release {:?} in {} has digest {digest}, expected {}",
+                asset.name, release.tag, self.repository, asset.digest
+            )),
+            None => Err(format!(
+                "asset {} of GitHub Release {:?} in {} has no digest, so Presswerk cannot tell whether it matches",
+                asset.name, release.tag, self.repository
+            )),
+        }
     }
 }
 
@@ -468,7 +625,7 @@ impl Publisher for GithubPublisher {
         self.checked_state(release)
     }
 
-    fn publish(&self, release: &Release) -> Result<(), PublicationError> {
+    fn publish(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
         let github_release = match self.client.release(&self.repository, &release.tag)? {
             None => self.client.create_draft(&self.repository, release)?,
             Some(existing) => existing,
@@ -480,18 +637,37 @@ impl Publisher for GithubPublisher {
                 release.tag, self.repository, github_release.prerelease
             )));
         }
+        // Assets go up before a draft is published, so a release never appears without them.
+        let mut steps = Vec::with_capacity(self.assets.len());
+        for asset in &self.assets {
+            let step = if self
+                .remote_asset(release, &github_release, asset)
+                .map_err(PublicationError::new)?
+            {
+                AssetStep::AlreadyUploaded
+            } else {
+                self.client
+                    .upload_asset(&self.repository, release, &github_release, asset)?;
+                AssetStep::Uploaded
+            };
+            steps.push((asset.name.clone(), step));
+        }
         if github_release.draft {
             self.client
                 .publish_draft(&self.repository, release, github_release.id)?;
         }
 
         match self.checked_state(release)? {
-            PublisherState::Published => Ok(()),
+            PublisherState::Published => Ok(steps),
             state => Err(PublicationError::new(format!(
                 "GitHub Release {:?} in {} was not published: {state:?}",
                 release.tag, self.repository
             ))),
         }
+    }
+
+    fn artifact_names(&self) -> Vec<String> {
+        self.assets.iter().map(|asset| asset.name.clone()).collect()
     }
 }
 
@@ -500,6 +676,18 @@ struct GithubRelease {
     id: u64,
     draft: bool,
     prerelease: bool,
+    #[serde(default)]
+    upload_url: Option<String>,
+    #[serde(default)]
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GithubAsset {
+    name: String,
+    /// The asset's content digest, such as `sha256:…`; GitHub reports it for uploaded assets.
+    #[serde(default)]
+    digest: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -739,8 +927,9 @@ pub struct PublishReport {
     pub commit: String,
     pub tag: String,
     pub tag_step: TagStep,
-    /// One step per publisher, named like its declaration, such as `github-release.default`.
-    pub publisher_steps: Vec<(String, PublisherStep)>,
+    /// One step per publisher, named like its declaration, such as `github-release.default`,
+    /// with one step per artifact of that publisher.
+    pub publisher_steps: Vec<(String, PublisherStep, ArtifactSteps)>,
 }
 
 impl PublishReport {
@@ -751,7 +940,7 @@ impl PublishReport {
             && self
                 .publisher_steps
                 .iter()
-                .all(|(_, step)| *step == PublisherStep::AlreadyPublished)
+                .all(|(_, step, _)| *step == PublisherStep::AlreadyPublished)
     }
 }
 
@@ -765,6 +954,8 @@ pub enum TagStep {
 pub enum PublisherStep {
     Published,
     DraftCompleted,
+    /// The release was published before, and missing artifacts were added.
+    ArtifactsCompleted,
     AlreadyPublished,
 }
 
@@ -831,6 +1022,19 @@ pub fn publish_to_remote(
     };
     let tag_publisher = GitTagPublisher::new(repository_path, remote);
 
+    // Every artifact must be obtainable without building before anything is written.
+    crate::artifacts::fetch(declaration.publishers.github_release.iter().flat_map(
+        |(name, publisher)| {
+            publisher.assets.iter().map(move |(asset, path)| {
+                (
+                    format!("github-release.{name} asset {asset}"),
+                    path.as_str(),
+                )
+            })
+        },
+    ))
+    .map_err(|error| PublicationError::new(error.to_string()))?;
+
     match tag_publisher.state(&release)? {
         RemoteState::Missing => {
             let parent_version =
@@ -867,7 +1071,10 @@ pub fn publish_to_remote(
         commit: release.commit,
         tag: release.tag,
         tag_step,
-        publisher_steps: publisher_names.zip(steps).collect(),
+        publisher_steps: publisher_names
+            .zip(steps)
+            .map(|(name, (step, artifacts))| (name, step, artifacts))
+            .collect(),
     }))
 }
 
@@ -876,7 +1083,7 @@ pub fn publish_ordered(
     tag_publisher: &dyn TagPublisher,
     release: &Release,
     publishers: &[Box<dyn Publisher>],
-) -> Result<(TagStep, Vec<PublisherStep>), PublicationError> {
+) -> Result<(TagStep, Vec<(PublisherStep, ArtifactSteps)>), PublicationError> {
     if publishers.is_empty() {
         return Err(PublicationError::new(
             "at least one GitHub Release publisher is required",
@@ -900,12 +1107,19 @@ pub fn publish_ordered(
             PublisherState::Published => PublisherStep::AlreadyPublished,
             PublisherState::Missing => PublisherStep::Published,
             PublisherState::Draft => PublisherStep::DraftCompleted,
+            PublisherState::Incomplete => PublisherStep::ArtifactsCompleted,
             PublisherState::Conflicting(message) => return Err(PublicationError::new(message)),
         };
-        if step != PublisherStep::AlreadyPublished {
-            publisher.publish(release)?;
-        }
-        publisher_steps.push(step);
+        let artifacts = if step == PublisherStep::AlreadyPublished {
+            publisher
+                .artifact_names()
+                .into_iter()
+                .map(|name| (name, AssetStep::AlreadyUploaded))
+                .collect()
+        } else {
+            publisher.publish(release)?
+        };
+        publisher_steps.push((step, artifacts));
     }
 
     match tag_publisher.state(release)? {

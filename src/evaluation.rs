@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use url::Url;
 
-static NIX_EVALUATION: Mutex<()> = Mutex::new(());
+pub(crate) static NIX_EVALUATION: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct EvaluatedReleaseDeclaration {
