@@ -63,7 +63,9 @@ permissions:
 `GH_TOKEN`, and Presswerk reads it from `GITHUB_TOKEN`, the default secret of the
 [GitHub Release publisher](/reference/publishers/#token).
 
-Branch protection on `main` must allow the workflow to push the release commit.
+Branch protection on `main` must allow the workflow to push the release commit. To require pull
+requests for everyone else, push with a GitHub App as described under
+[Protected main](#protected-main).
 
 ## Extensions
 
@@ -130,6 +132,70 @@ rejected. To skip its preparation right away, compare the tip before `prepare`:
 ```
 
 This only saves work. Without it, the rejected push keeps stale runs from releasing.
+
+### Protected main
+
+A ruleset that requires pull requests on `main` also blocks the workflow's own push of the release
+commit. On personal repositories, GitHub Actions cannot be exempted from a ruleset, but a GitHub
+App can. Create your own app for your repositories:
+
+1. Create a GitHub App under **Settings → Developer settings → GitHub Apps**. It needs no callback
+   URL and no webhook, and only the repository permission **Contents: Read and write**.
+2. Install it on the repository.
+3. Store its app ID as the variable `RELEASE_APP_ID` and a generated private key as the secret
+   `RELEASE_APP_PRIVATE_KEY`.
+4. Add the app as a bypass actor to the ruleset on `main`.
+
+The workflow then creates a token for the app, checks out with it so that `git push` uses it, and
+commits as the app's bot user. Find the bot user's ID with
+`gh api '/users/YOUR-APP[bot]' --jq .id`:
+
+```diff lang="yaml" title=".github/workflows/ci.yml"
+ permissions:
+   actions: write
+-  contents: write
++  contents: read
+
+ jobs:
+   ci:
+     runs-on: ubuntu-latest
+     env:
+       GH_TOKEN: ${{ github.token }}
+       GITHUB_TOKEN: ${{ github.token }}
+     steps:
++      - name: Create release app token
++        id: app
++        uses: actions/create-github-app-token@v2
++        with:
++          app-id: ${{ vars.RELEASE_APP_ID }}
++          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+       - uses: actions/checkout@v7
+         with:
+           fetch-depth: 0
+           ref: ${{ inputs.candidate || github.sha }}
++          token: ${{ steps.app.outputs.token }}
+       - uses: DeterminateSystems/determinate-nix-action@v3
+       - run: |
+-          git config user.name github-actions[bot]
+-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
++          git config user.name YOUR-APP[bot]
++          git config user.email BOT-USER-ID+YOUR-APP[bot]@users.noreply.github.com
+
+       - name: Prepare release
+-        if: github.event_name == 'push'
++        if: github.event_name == 'push' && github.actor != 'YOUR-APP[bot]'
+
+       - name: Publish release
+         if: inputs.candidate
++        env:
++          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+         run: nix run --inputs-from . presswerk -- publish HEAD
+```
+
+Presswerk now pushes, tags, and creates the GitHub Release as the app, so the workflow's own token
+only needs `contents: read`; it still dispatches the candidate run. Unlike pushes made with
+`GITHUB_TOKEN`, the app's push of the release commit starts a push run of its own. That run skips
+`prepare`, because a release is pending.
 
 ## Recovery
 
