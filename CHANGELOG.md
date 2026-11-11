@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.1] - 2026-11-11
+
+### 🐛 Fix a bug
+
+- 🐛 (docs): Advertise the llms index from pages
+
+### 📝 Add or update documentation
+
+- 📝 (docs): Make published docs agent-ingestible
+
 ## [0.3.0] - 2026-11-10
 
 ### 📝 Add or update documentation
