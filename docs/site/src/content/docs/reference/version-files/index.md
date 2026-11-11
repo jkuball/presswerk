@@ -39,30 +39,19 @@ versionFiles.cargo.my-other-crate.cargoToml = "crates/other/Cargo.toml";
 
 ## Badge
 
-[`versionFiles.badge`](/reference/options/#versionFiles.badge) declares a version badge, a small
-SVG image for your README in the style of the [Presswerk badges](/badges/): the Presswerk icon on
-the left and the version on the right.
+[`versionFiles.badge`](/reference/options/#versionFiles.badge) declares a version badge: a small
+SVG with the Presswerk icon and the version, in the style of the [badges](/badges/). One variant
+fits light and dark pages.
 
 ```nix presswerk-module
 versionFiles.badge.default = { };
 ```
 
-![Version badge for Presswerk itself](/version-badge.svg)
+![Version badge](/version-badge.svg)
 
-`prepare` generates the badge from scratch at `.github/presswerk-badge.svg` and commits it in the
-release commit; set `path` to put it elsewhere, or declare several badges under different names.
-Embed it in your README with a relative path:
-
-```md title="README.md"
-![Version](.github/presswerk-badge.svg)
-```
-
-A badge does not carry the version. The flake does not read it, and the CLI does not check it, so
-editing or deleting it never blocks a release; the next release writes it again. A release therefore
-needs at least one other version file, such as Cargo.
-
-Like every version file, the badge shows the version of the commit it is in. Between `prepare` and
-`publish`, it names a version that is not published yet.
+`prepare` generates the badge at `.github/presswerk-badge.svg`; set `path` to put it elsewhere.
+Presswerk only writes it: the badge does not carry the version, so a release needs another version
+file, and editing or deleting the badge never blocks a release.
 
 ## Other formats
 
