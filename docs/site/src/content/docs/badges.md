@@ -53,7 +53,7 @@ release; declare it as a [version file](/reference/version-files/#badge). By def
 follows the viewer's system colour scheme:
 
 ```md title="README.md"
-[![Version](.github/presswerk-badge.svg)](https://github.com/OWNER/REPO/releases/latest)
+![Version](.github/presswerk-badge.svg)
 ```
 
 The system colour scheme can differ from GitHub's theme. To follow GitHub's theme exactly, declare
@@ -61,10 +61,8 @@ one badge per [`colorScheme`](/reference/options/#versionFiles.badge.name.colorS
 between them with `<picture>`:
 
 ```html title="README.md"
-<a href="https://github.com/OWNER/REPO/releases/latest">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/badge-dark.svg">
-    <img alt="Version" src=".github/badge-light.svg" height="20">
-  </picture>
-</a>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/badge-dark.svg">
+  <img alt="Version" src=".github/badge-light.svg" height="20">
+</picture>
 ```
