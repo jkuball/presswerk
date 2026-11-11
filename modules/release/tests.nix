@@ -11,6 +11,12 @@ let
     version = "2.0.0"
   '';
   cargoLockFixture = builtins.toFile "Cargo.lock" "";
+  pyprojectFixture = builtins.toFile "pyproject.toml" ''
+    [project]
+    version = "1.2.3"
+  '';
+  packageJsonFixture = builtins.toFile "package.json" ''{ "nested": { "version": "1.2.3" } }'';
+  versionFixture = builtins.toFile "VERSION" "1.2.3\n";
   fixtureRoot = builtins.dirOf cargoTomlFixture;
   cargoToml = builtins.baseNameOf cargoTomlFixture;
   otherToml = builtins.baseNameOf otherTomlFixture;
@@ -144,6 +150,71 @@ in
           badge.colorScheme = "auto";
         }
       ];
+    };
+
+    "test TOML, JSON, and plain files define the version and normalize" = {
+      expr =
+        let
+          release = mkRelease {
+            sourceRoot = fixtureRoot;
+            versionFiles = {
+              toml.pyproject = {
+                path = builtins.baseNameOf pyprojectFixture;
+                key = "project.version";
+              };
+              json.package = {
+                path = builtins.baseNameOf packageJsonFixture;
+                key = "nested.version";
+              };
+              plain.default.path = builtins.baseNameOf versionFixture;
+            };
+          };
+        in
+        {
+          inherit (release) version;
+          kinds = map (file: builtins.attrNames (builtins.removeAttrs file [ "path" ])) release.versionFiles;
+        };
+      expected = {
+        version = "1.2.3";
+        kinds = [ [ "toml" ] [ "json" ] [ "plain" ] ];
+      };
+    };
+
+    "test a disagreeing JSON file fails" = {
+      expr = succeeds (mkRelease {
+        sourceRoot = fixtureRoot;
+        versionFiles.cargo.example.cargoToml = otherToml;
+        versionFiles.json.package = {
+          path = builtins.baseNameOf packageJsonFixture;
+          key = "nested.version";
+        };
+      }).version;
+      expected = false;
+    };
+
+    "test regex files normalize without defining the version" = {
+      expr =
+        let
+          release = mkRelease {
+            sourceRoot = fixtureRoot;
+            versionFiles.cargo.example.cargoToml = cargoToml;
+            versionFiles.regex.chart = {
+              path = "Chart.yaml";
+              pattern = "^version: (?<version>\\S+)$";
+            };
+          };
+        in
+        {
+          inherit (release) version;
+          regex = builtins.elemAt release.versionFiles 2;
+        };
+      expected = {
+        version = "1.2.3";
+        regex = {
+          path = "Chart.yaml";
+          regex = "^version: (?<version>\\S+)$";
+        };
+      };
     };
 
     "test a badge does not define the version" = {

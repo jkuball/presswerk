@@ -41,6 +41,30 @@ in
           )
           releaseConfig.versionFiles.cargo)
       ++ lib.mapAttrsToList
+        (_name: file: {
+          inherit (file) path;
+          toml = file.key;
+        })
+        releaseConfig.versionFiles.toml
+      ++ lib.mapAttrsToList
+        (_name: file: {
+          inherit (file) path;
+          json = file.key;
+        })
+        releaseConfig.versionFiles.json
+      ++ lib.mapAttrsToList
+        (_name: file: {
+          inherit (file) path;
+          plain = { };
+        })
+        releaseConfig.versionFiles.plain
+      ++ lib.mapAttrsToList
+        (_name: file: {
+          inherit (file) path;
+          regex = file.pattern;
+        })
+        releaseConfig.versionFiles.regex
+      ++ lib.mapAttrsToList
         (_name: badge: {
           inherit (badge) path;
           badge = { inherit (badge) colorScheme; };
