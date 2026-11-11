@@ -43,7 +43,7 @@ in
       ++ lib.mapAttrsToList
         (_name: badge: {
           inherit (badge) path;
-          badge = { };
+          badge = { inherit (badge) colorScheme; };
         })
         releaseConfig.versionFiles.badge;
 

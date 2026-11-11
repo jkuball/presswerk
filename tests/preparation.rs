@@ -464,7 +464,7 @@ fn prepare_keeps_unrelated_local_changes_and_checks_out_the_release_files() {
 fn badge() -> VersionFile {
     VersionFile::Badge(BadgeVersionFile {
         path: ".github/presswerk-badge.svg".into(),
-        badge: BadgeOptions {},
+        badge: BadgeOptions::default(),
     })
 }
 

@@ -1,3 +1,4 @@
+use crate::declaration::ColorScheme;
 use semver::Version;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -35,10 +36,22 @@ fn data() -> &'static BadgeData {
     DATA_CELL.get_or_init(|| serde_json::from_str(DATA).expect("badge data is valid"))
 }
 
-/// Render the version badge: the reduced icon on the ink field, the version on the accent, in the
-/// style of the "Released with Presswerk" badge.
-pub fn render(version: &Version) -> String {
+/// Render the version badge: the reduced icon on its own field, the version on the accent, in the
+/// style of the "Released with Presswerk" badge. Like that badge's label field, the icon field is
+/// ink for light pages and the paper colour for dark pages; `Auto` switches with a media query.
+pub fn render(version: &Version, color_scheme: ColorScheme) -> String {
     let data = data();
+    let (field, icon_fill) = match color_scheme {
+        ColorScheme::Auto | ColorScheme::Light => (&data.field, &data.ink),
+        ColorScheme::Dark => (&data.ink, &data.field),
+    };
+    let style = match color_scheme {
+        ColorScheme::Auto => format!(
+            "<style>@media (prefers-color-scheme: dark){{.field{{fill:{}}}.icon{{fill:{}}}}}</style>",
+            data.ink, data.field
+        ),
+        ColorScheme::Light | ColorScheme::Dark => String::new(),
+    };
     let text = format!("v{version}");
     let scale = CAP / data.cap_height;
     let split = PAD + ICON + PAD;
@@ -70,22 +83,23 @@ pub fn render(version: &Version) -> String {
         concat!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width:.2}" height="{height:.2}" "#,
             r#"viewBox="0 0 {width:.2} {height:.2}" role="img" aria-label="{title}">"#,
-            r#"<title>{title}</title>"#,
-            r#"<rect width="{split:.2}" height="{height}" fill="{field}"/>"#,
+            r#"<title>{title}</title>{style}"#,
+            r#"<rect class="field" width="{split:.2}" height="{height}" fill="{field}"/>"#,
             r#"<rect x="{split:.2}" width="{accent_width:.2}" height="{height}" fill="{accent}"/>"#,
-            r#"<path d="{icon}" fill="{ink}" fill-rule="evenodd" "#,
+            r#"<path class="icon" d="{icon}" fill="{icon_fill}" fill-rule="evenodd" "#,
             r#"transform="translate({pad:.2},{icon_top:.2}) scale({icon_scale:.4})"/>"#,
             "{glyphs}</svg>\n"
         ),
         width = width,
         height = HEIGHT,
         title = title,
+        style = style,
         split = split,
-        field = data.field,
+        field = field,
         accent_width = width - split,
         accent = data.accent,
         icon = data.icon,
-        ink = data.ink,
+        icon_fill = icon_fill,
         pad = PAD,
         icon_top = (HEIGHT - ICON) / 2.0,
         icon_scale = ICON / 100.0,
@@ -107,7 +121,10 @@ mod tests {
 
     #[test]
     fn badge_names_the_version() {
-        let badge = render(&Version::parse("1.2.3-rc.1+build.5").unwrap());
+        let badge = render(
+            &Version::parse("1.2.3-rc.1+build.5").unwrap(),
+            ColorScheme::Light,
+        );
 
         assert!(badge.starts_with(r#"<svg xmlns="http://www.w3.org/2000/svg" width=""#));
         assert!(
@@ -123,12 +140,31 @@ mod tests {
     #[test]
     fn longer_versions_make_wider_badges() {
         let width = |version: &str| {
-            let badge = render(&Version::parse(version).unwrap());
+            let badge = render(&Version::parse(version).unwrap(), ColorScheme::Auto);
             let start = badge.find(r#"width=""#).unwrap() + 7;
             let end = start + badge[start..].find('"').unwrap();
             badge[start..end].parse::<f64>().unwrap()
         };
 
         assert!(width("10.20.30") > width("1.2.3"));
+    }
+
+    #[test]
+    fn color_schemes_swap_the_icon_field() {
+        let version = Version::new(1, 0, 0);
+        let light = render(&version, ColorScheme::Light);
+        let dark = render(&version, ColorScheme::Dark);
+        let auto = render(&version, ColorScheme::Auto);
+
+        assert!(
+            light.contains(r##"<rect class="field" width="25.00" height="20" fill="#111111"/>"##)
+        );
+        assert!(
+            dark.contains(r##"<rect class="field" width="25.00" height="20" fill="#ECECEA"/>"##)
+        );
+        assert!(!light.contains("<style>") && !dark.contains("<style>"));
+        assert!(auto.contains(
+            "<style>@media (prefers-color-scheme: dark){.field{fill:#ECECEA}.icon{fill:#111111}}</style>"
+        ));
     }
 }

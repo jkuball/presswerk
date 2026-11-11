@@ -120,7 +120,10 @@ in
         versionFiles.cargo.example.cargoToml = cargoToml;
         versionFiles.badge = {
           default = { };
-          docs.path = "docs/version.svg";
+          dark = {
+            colorScheme = "dark";
+            path = "docs/version.svg";
+          };
         };
       }).versionFiles;
       expected = [
@@ -133,12 +136,12 @@ in
           cargoLock = "example";
         }
         {
-          path = ".github/presswerk-badge.svg";
-          badge = { };
+          path = "docs/version.svg";
+          badge.colorScheme = "dark";
         }
         {
-          path = "docs/version.svg";
-          badge = { };
+          path = ".github/presswerk-badge.svg";
+          badge.colorScheme = "auto";
         }
       ];
     };

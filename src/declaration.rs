@@ -140,8 +140,21 @@ pub struct BadgeVersionFile {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BadgeOptions {}
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BadgeOptions {
+    pub color_scheme: ColorScheme,
+}
+
+/// The page colour scheme a badge is made for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorScheme {
+    /// Follow the viewer's system colour scheme.
+    #[default]
+    Auto,
+    Light,
+    Dark,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -591,14 +604,16 @@ mod tests {
             value["versionFiles"]
                 .as_array_mut()
                 .unwrap()
-                .push(json!({ "path": ".github/presswerk-badge.svg", "badge": {} }));
+                .push(json!({ "path": ".github/presswerk-badge.svg", "badge": { "colorScheme": "dark" } }));
         });
         let decoded = ReleaseDeclaration::from_json(&badge).unwrap();
         assert_eq!(
             decoded.version_files[2],
             VersionFile::Badge(BadgeVersionFile {
                 path: ".github/presswerk-badge.svg".into(),
-                badge: BadgeOptions {},
+                badge: BadgeOptions {
+                    color_scheme: ColorScheme::Dark,
+                },
             })
         );
 

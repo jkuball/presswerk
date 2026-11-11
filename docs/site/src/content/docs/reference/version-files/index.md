@@ -40,14 +40,15 @@ versionFiles.cargo.my-other-crate.cargoToml = "crates/other/Cargo.toml";
 ## Badge
 
 [`versionFiles.badge`](/reference/options/#versionFiles.badge) declares a version badge: a small
-SVG with the Presswerk icon and the version, in the style of the [badges](/badges/). One variant
-fits light and dark pages.
+SVG with the Presswerk icon and the version, in the style of the [badges](/badges/). By default,
+the badge follows the viewer's system colour scheme; set `colorScheme` to `"light"` or `"dark"` for
+a badge made for one scheme, for example to choose between two with `<picture>`.
 
 ```nix presswerk-module
 versionFiles.badge.default = { };
 ```
 
-![Version badge](/version-badge.svg)
+![Version badge](/version-badge-auto.svg)
 
 `prepare` generates the badge at `.github/presswerk-badge.svg`; set `path` to put it elsewhere.
 Presswerk only writes it: the badge does not carry the version, so a release needs another version

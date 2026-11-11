@@ -154,7 +154,7 @@ impl VersionFileWriter for BadgeVersionFile {
         _contents: &str,
         version: &Version,
     ) -> Result<String, VersionFileError> {
-        Ok(crate::badge::render(version))
+        Ok(crate::badge::render(version, self.badge.color_scheme))
     }
 }
 
