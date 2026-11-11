@@ -16,8 +16,15 @@ A version file is a file in your repository that carries the project's version, 
 
 A [badge](#badge) is the exception: Presswerk only writes it and never reads it.
 
-Because the version comes from committed files, it is an ordinary input of your flake, and your
-build can use it like any other value.
+Because the version comes from committed files, it is an ordinary input of your flake. Read it
+from the release instead of parsing a version file again, so every package uses the version that
+all version files agree on:
+
+```nix
+version = self.presswerk.default.version;
+```
+
+In a flake-parts module, use `config.flake.presswerk.default.version`.
 
 :::caution[Every release rebuilds what reads the version]
 A derivation that reads the version is rebuilt for every release, and so is everything that depends
