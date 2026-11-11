@@ -112,16 +112,8 @@ in
           version = self.presswerk.default.version;
           cargoArtifacts = self'.packages.presswerk.cargoArtifacts;
           doInstallCargoArtifacts = false;
-          buildPhaseCargoCommand = ''
-            cargoWithProfile run --locked --example cli-reference > cli.json
-            for scheme in light dark; do
-              cargoWithProfile run --locked --example version-badge -- ${self.presswerk.default.version} $scheme > version-badge-$scheme.svg
-            done
-          '';
-          installPhaseCommand = ''
-            install -Dm644 cli.json $out/cli.json
-            install -Dm644 -t $out version-badge-*.svg
-          '';
+          buildPhaseCargoCommand = "cargoWithProfile run --locked --example cli-reference > cli.json";
+          installPhaseCommand = "install -Dm644 cli.json $out/cli.json";
         }
       );
     in
@@ -131,7 +123,6 @@ in
       packages.docs-reference = pkgs.runCommand "presswerk-docs-reference" { } ''
         mkdir -p $out
         cp ${cliReference}/cli.json $out/cli.json
-        cp ${cliReference}/version-badge-*.svg $out/
         cp ${pkgs.writeText "options.json" (builtins.toJSON optionsReference)} $out/options.json
         cp ${pkgs.writeText "declaration.json" (builtins.toJSON schemaExample)} $out/declaration.json
         cp ${./release/gitmoji/catalog.json} $out/gitmoji.json
@@ -168,7 +159,8 @@ in
           runHook preInstall
           mkdir -p $out
           cp -r dist/. $out/
-          cp ${self'.packages.docs-reference}/version-badge-*.svg $out/
+          cp ${../.github/presswerk-badge-light.svg} $out/version-badge-light.svg
+          cp ${../.github/presswerk-badge-dark.svg} $out/version-badge-dark.svg
           runHook postInstall
         '';
       });
