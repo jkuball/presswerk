@@ -16,11 +16,7 @@
         path = ".github/presswerk-badge-dark.svg";
       };
     };
-    publishers.github-release.default = {
-      repository = "jkuball/presswerk";
-      # The CLI links Nix libraries from /nix/store, so it runs where Nix is installed.
-      assets."presswerk-x86_64-linux" = "${self.packages.x86_64-linux.presswerk}/bin/presswerk";
-    };
+    publishers.github-release.default.repository = "jkuball/presswerk";
     analyzer.gitmoji.catalog.memo.semver = "patch";
   };
 }
