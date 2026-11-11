@@ -4,6 +4,7 @@
     sourceRoot = self.outPath;
     versionFiles.cargo.presswerk = { };
     publishers.github-release.default.repository = "jkuball/presswerk";
+    analyzer.gitmoji.catalog.memo.semver = "patch";
   };
 
   perSystem = { system, ... }: {
