@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0] - 2026-11-11
+
+### 📝 Add or update documentation
+
+- (docs): Show the version badge that matches the docs theme
+- (docs): Leave the version badge's link to the README
+- (docs): Show all badges side by side and trim the badge reference
+
+### ✨ Introduce new features
+
+- (release): Make version badges for light, dark, or both colour schemes
+- (release): Generate a version badge as a version file
+
 ## [0.3.5] - 2026-11-11
 
 ### ⚡️ Improve performance
