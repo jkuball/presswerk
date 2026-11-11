@@ -1,6 +1,6 @@
 [package]
 name = "presswerk"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2024"
 description = "Controlled releases for software built with Nix flakes"
 license = "MIT OR Apache-2.0"

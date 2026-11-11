@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.0] - 2026-11-11
+
+### 🐛 Fix a bug
+
+- (release): Substitute artifacts with nix-store instead of realising them as derivations
+
+### 🔥 Remove code or files
+
+- (release): Stop attaching Presswerk's own CLI
+
+### 📝 Add or update documentation
+
+- (docs): Document GitHub Release assets
+
+### ✨ Introduce new features
+
+- (release): Attach build artifacts to GitHub Releases
+
 ## [0.5.1] - 2026-11-11
 
 ### 📝 Add or update documentation
