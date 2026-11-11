@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.1] - 2026-11-11
+
+### 🐛 Fix a bug
+
+- (release): Name the declared tag in the release commit subject
+
+### ♻️ Refactor code
+
+- (release): Release Presswerk with its own module and CLI
+
 ## [0.4.0] - 2026-11-11
 
 ### 📝 Add or update documentation
