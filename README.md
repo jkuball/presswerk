@@ -34,12 +34,9 @@ or hosted state of its own.
 
 ## Documentation
 
-The canonical documentation is at <https://presswerk.dev/>.
-
-Start with the [guide](https://presswerk.dev/guide/), including the
-[walkthrough](https://presswerk.dev/guide/walkthrough/) and
-[release recovery](https://presswerk.dev/guide/recovery/). The repository also keeps
-current design notes under [`docs/conception`](docs/conception/) as design references.
+Start with the [guide](https://presswerk.dev/guide/) and its
+[walkthrough](https://presswerk.dev/guide/walkthrough/). Design notes live in
+[`docs/conception`](docs/conception/).
 
 ## Quick look
 
@@ -62,10 +59,6 @@ $ nix flake check
 
 Commit subjects follow [Gitmoji](https://gitmoji.dev/), which Presswerk also uses to determine
 its own release version and notes.
-
-## Security
-
-Report vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
 
 ## License
 
