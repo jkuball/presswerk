@@ -21,6 +21,7 @@ export default defineConfig({
       },
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/jkuball/presswerk' }],
       routeMiddleware: './src/routeData.ts',
+      components: { Head: './src/components/Head.astro' },
       head: [
         ...['option-filter', 'catalog-filter'].map((script) => ({
           tag: 'script',

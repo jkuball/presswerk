@@ -55,6 +55,7 @@ export interface ReferenceData {
   gitmoji: Record<string, GitmojiEntry>;
   /** The upstream MIT notice of the vendored Gitmoji catalog. */
   gitmojiLicense: string;
+  version: string;
 }
 
 let cached: ReferenceData | undefined;
@@ -75,6 +76,7 @@ export function referenceData(): ReferenceData {
     declaration: read('declaration.json'),
     gitmoji: read('gitmoji.json'),
     gitmojiLicense: readFileSync(join(directory, 'gitmoji-license.txt'), 'utf8'),
+    version: readFileSync(join(directory, 'version'), 'utf8').trim(),
   };
   return cached;
 }
