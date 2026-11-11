@@ -40,15 +40,32 @@ Start with the [guide](https://presswerk.dev/guide/) and its
 
 ## Quick look
 
-```console
-$ nix run --inputs-from . presswerk -- plan
-$ nix run --inputs-from . presswerk -- prepare
-$ nix run --inputs-from . presswerk -- publish HEAD
+Declare a release in your flake:
+
+```nix
+{
+  inputs.presswerk.url = "github:jkuball/presswerk";
+
+  outputs = { self, presswerk, ... }: {
+    presswerk.default = presswerk.lib.mkRelease {
+      sourceRoot = self.outPath;
+      versionFiles.cargo.my-crate = { };
+      publishers.github-release.default.repository = "me/my-crate";
+    };
+  };
+}
 ```
 
-Run the CLI from the Presswerk input locked in your flake (named `presswerk` here) so it matches
-your `mkRelease`. `plan` is read-only. `prepare` creates a release commit, and `publish` releases
-an exact candidate after CI has checked it.
+Then let Presswerk take it from there:
+
+```console
+$ presswerk plan          # show the next version and notes, change nothing
+$ presswerk prepare       # commit the version bump and changelog
+$ presswerk publish HEAD  # tag and release the checked commit
+```
+
+The [walkthrough](https://presswerk.dev/guide/walkthrough/) sets this up end to end, including
+CI and how to run the CLI from your locked input.
 
 ## Development
 
