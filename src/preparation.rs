@@ -124,8 +124,14 @@ pub fn build_release_plan(
 
     if let Some(next_version) = &next_version {
         for writer in &declaration.version_files {
-            let contents = read_required_text(&repository, &tree, writer.path())?;
-            let current = writer.read_version(&contents)?;
+            let (contents, current) = if writer.reads_version() {
+                let contents = read_required_text(&repository, &tree, writer.path())?;
+                let current = writer.read_version(&contents)?;
+                (contents, current)
+            } else {
+                let contents = read_optional_text(&repository, &tree, writer.path())?;
+                (contents.unwrap_or_default(), declaration.version.clone())
+            };
             let written = writer.write_version(&contents, next_version)?;
             version_files.push(VersionFileChange {
                 path: writer.path().into(),
@@ -360,12 +366,15 @@ fn read_version(
     tree: &git2::Tree<'_>,
     version_files: &[VersionFile],
 ) -> Result<Version> {
-    let Some(first) = version_files.first() else {
-        bail!("release declaration must contain at least one version file");
+    let mut sources = version_files.iter().filter(|file| file.reads_version());
+    let Some(first) = sources.next() else {
+        bail!(
+            "release declaration must contain at least one version file that carries the version"
+        );
     };
     let first_contents = read_required_text(repository, tree, first.path())?;
     let expected = first.read_version(&first_contents)?;
-    for writer in &version_files[1..] {
+    for writer in sources {
         let contents = read_required_text(repository, tree, writer.path())?;
         let actual = writer.read_version(&contents)?;
         if actual != expected {

@@ -14,6 +14,8 @@ A version file is a file in your repository that carries the project's version, 
 - **Writing.** `prepare` writes the new version into every version file and commits them together in
   the release commit.
 
+A [badge](#badge) is the exception: Presswerk only writes it and never reads it.
+
 Because the version comes from committed files, it is an ordinary input of your flake, and your
 build can use it like any other value.
 
@@ -35,7 +37,34 @@ versionFiles.cargo.my-crate = { };
 versionFiles.cargo.my-other-crate.cargoToml = "crates/other/Cargo.toml";
 ```
 
+## Badge
+
+[`versionFiles.badge`](/reference/options/#versionFiles.badge) declares a version badge, a small
+SVG image for your README in the style of the [Presswerk badges](/badges/): the Presswerk icon on
+the left and the version on the right.
+
+```nix presswerk-module
+versionFiles.badge.default = { };
+```
+
+![Version badge for Presswerk itself](/version-badge.svg)
+
+`prepare` generates the badge from scratch at `.github/presswerk-badge.svg` and commits it in the
+release commit; set `path` to put it elsewhere, or declare several badges under different names.
+Embed it in your README with a relative path:
+
+```md title="README.md"
+![Version](.github/presswerk-badge.svg)
+```
+
+A badge does not carry the version. The flake does not read it, and the CLI does not check it, so
+editing or deleting it never blocks a release; the next release writes it again. A release therefore
+needs at least one other version file, such as Cargo.
+
+Like every version file, the badge shows the version of the commit it is in. Between `prepare` and
+`publish`, it names a version that is not published yet.
+
 ## Other formats
 
-Cargo is the only built-in version file today. Declaring version files for other formats in the
-flake itself is planned.
+Cargo and the badge are the only built-in version files today. Declaring version files for other
+formats in the flake itself is planned.

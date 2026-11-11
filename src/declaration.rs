@@ -89,6 +89,7 @@ impl ReleaseDeclaration {
 pub enum VersionFile {
     Toml(TomlVersionFile),
     CargoLock(CargoLockVersionFile),
+    Badge(BadgeVersionFile),
 }
 
 impl VersionFile {
@@ -110,6 +111,7 @@ impl VersionFile {
                     ));
                 }
             }
+            Self::Badge(file) => validate_relative_path(&file.path)?,
         }
         Ok(())
     }
@@ -128,6 +130,18 @@ pub struct CargoLockVersionFile {
     pub path: String,
     pub cargo_lock: String,
 }
+
+/// A version badge, generated from scratch on every release and never read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BadgeVersionFile {
+    pub path: String,
+    pub badge: BadgeOptions,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BadgeOptions {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -569,6 +583,29 @@ mod tests {
                 .to_string()
                 .contains("must not be empty")
         );
+    }
+
+    #[test]
+    fn decodes_badge_version_files() {
+        let badge = declaration(|value| {
+            value["versionFiles"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({ "path": ".github/presswerk-badge.svg", "badge": {} }));
+        });
+        let decoded = ReleaseDeclaration::from_json(&badge).unwrap();
+        assert_eq!(
+            decoded.version_files[2],
+            VersionFile::Badge(BadgeVersionFile {
+                path: ".github/presswerk-badge.svg".into(),
+                badge: BadgeOptions {},
+            })
+        );
+
+        let unknown = declaration(|value| {
+            value["versionFiles"][0] = json!({ "path": "badge.svg", "badge": { "style": "flat" } });
+        });
+        assert!(ReleaseDeclaration::from_json(&unknown).is_err());
     }
 
     #[test]

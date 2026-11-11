@@ -33,3 +33,10 @@ Where HTML is not rendered, use one variant in Markdown:
 For the light variant, use `badge-light.svg` instead.
 
 The badges are fixed images. They do not change with your releases.
+
+## Version badge
+
+To show your current version in the same style, let Presswerk keep a
+[version badge](/reference/version-files/#badge) in your repository:
+
+![Version badge for Presswerk itself](/version-badge.svg)

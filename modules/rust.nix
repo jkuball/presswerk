@@ -33,6 +33,7 @@
           src = ../.;
           filter = path: type:
             lib.hasSuffix "/src/release-notes.md.j2" path
+            || lib.hasSuffix "/src/badge.json" path
             || config.rust-project.crane-lib.filterCargoSources path type;
         };
 

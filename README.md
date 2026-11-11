@@ -51,6 +51,8 @@ Declare a release in your flake:
       sourceRoot = self.outPath;
       # Read and bump the version of a Cargo package.
       versionFiles.cargo.my-crate = { };
+      # Keep a version badge in the repository.
+      versionFiles.badge.default = { };
       # Publish a GitHub Release.
       publishers.github-release.default.repository = "me/my-crate";
     };

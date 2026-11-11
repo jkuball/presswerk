@@ -11,6 +11,10 @@ the dark theme on the light theme's accent. It is a fixed image for READMEs,
 which do not follow the docs theme. Its label field comes in ink (badge.svg,
 for light pages) and in the paper colour (badge-light.svg, for dark pages).
 
+The version badge is written by `presswerk prepare`, which has no font, so the
+generator stores what it needs in src/badge.json: the reduced icon and the
+outlines of every character a version can contain, in the badge's typeface.
+
 Every asset is a single filled path with one colour and a transparent
 background. The shapes are combined as geometry instead of SVG masks, because
 WebKit rasterises masked SVG images at low resolution and they turn blurry.
@@ -19,7 +23,8 @@ The wordmark is set in Archivo (SIL Open Font License) at width 62 and weight
 800 and converted to outlines, so the assets need no font at runtime.
 
 Run it through the flake, which pins Python, its libraries and the variable
-Archivo font, and writes the assets into the current checkout:
+Archivo font, and writes the assets and the badge data into the current
+checkout:
 
     nix run .#brand-assets
 
@@ -29,6 +34,7 @@ generator produces.
 Direct use: python3 generate.py ARCHIVO_VARIABLE_TTF REPOSITORY_ROOT
 """
 
+import json
 import math
 import sys
 from pathlib import Path
@@ -47,6 +53,10 @@ ACCENT_LIGHT = "#B82E1C"  # accent on the light theme
 
 ASSETS = Path("docs/site/src/assets/brand")
 PUBLIC = Path("docs/site/public")
+BADGE_DATA = Path("src/badge.json")
+
+# Every character of a SemVer version, plus the "v" in front of it.
+VERSION_CHARACTERS = "0123456789.-+ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 CENTRE = (50, 50)
 SEGMENTS = 96  # per quarter circle; smooth even at hero size
@@ -180,6 +190,28 @@ def badge(heavy, regular, field, label_ink):
     return svg(width, height, body, "Released with Presswerk", sized=True)
 
 
+def badge_data(heavy):
+    """Outlines for the version badge at 100 units per em, with the cap height at y = 0."""
+    glyphs, cmap, hmtx = heavy.getGlyphSet(), heavy.getBestCmap(), heavy["hmtx"]
+    scale = 100 / heavy["head"].unitsPerEm
+    cap = heavy["OS/2"].sCapHeight * scale
+    characters = {}
+    for ch in VERSION_CHARACTERS:
+        name = cmap[ord(ch)]
+        pen = SVGPathPen(glyphs, ntos=lambda n: f"{n:.2f}")
+        glyphs[name].draw(TransformPen(pen, (scale, 0, 0, -scale, 0, cap)))
+        characters[ch] = {"advance": round(hmtx[name][0] * scale, 2), "path": pen.getCommands()}
+    data = {
+        "accent": ACCENT_LIGHT,
+        "capHeight": round(cap, 2),
+        "characters": characters,
+        "field": INK_LIGHT,
+        "icon": to_path(mark_geometry(False)),
+        "ink": INK_DARK,
+    }
+    return json.dumps(data, indent=2, sort_keys=True) + "\n"
+
+
 def favicon():
     """The reduced icon; the browser tab follows the OS theme, so a media query is right here."""
     style = (
@@ -202,6 +234,7 @@ def main(archivo_path, root):
     (public / "favicon.svg").write_text(favicon())
     (public / "badge.svg").write_text(badge(font, regular, INK_LIGHT, INK_DARK))
     (public / "badge-light.svg").write_text(badge(font, regular, INK_DARK, INK_LIGHT))
+    (Path(root) / BADGE_DATA).write_text(badge_data(font))
 
 
 if __name__ == "__main__":
