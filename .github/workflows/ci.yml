@@ -51,7 +51,8 @@ jobs:
         run: >
           nix run --inputs-from . nixpkgs#nix-fast-build --
           --flake ".#" --select 'flake: { inherit (flake) packages checks; }'
-          --no-nom --skip-cached --push-build-closure --out-link "$RUNNER_TEMP/result"
+          --no-nom --push-build-closure --out-link "$RUNNER_TEMP/result"
+          ${{ !(github.event_name == 'workflow_dispatch' && inputs.candidate != '') && '--skip-cached' || '' }}
           ${{ secrets.CACHIX_AUTH_TOKEN != '' && '--cachix-cache jkuball' || '' }}
 
       - name: Plan release
@@ -111,9 +112,7 @@ jobs:
       - name: Collect docs
         if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
         run: |
-          docs="$RUNNER_TEMP/result-packages.x86_64-linux.docs"
-          test -e "$docs" || nix build .#docs --out-link "$docs"
-          cp -rL --no-preserve=mode "$docs" "$RUNNER_TEMP/site"
+          cp -rL --no-preserve=mode "$RUNNER_TEMP/result-packages.x86_64-linux.docs" "$RUNNER_TEMP/site"
 
       - uses: actions/upload-pages-artifact@v4
         if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
