@@ -114,7 +114,7 @@ in
           doInstallCargoArtifacts = false;
           buildPhaseCargoCommand = ''
             cargoWithProfile run --locked --example cli-reference > cli.json
-            for scheme in auto light dark; do
+            for scheme in light dark; do
               cargoWithProfile run --locked --example version-badge -- ${self.presswerk.default.version} $scheme > version-badge-$scheme.svg
             done
           '';
