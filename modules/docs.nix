@@ -166,6 +166,7 @@ in
         site=${self'.packages.docs}
         pages="
           404
+          agents
           badges
           guide
           guide/adoption
