@@ -34,24 +34,40 @@ or hosted state of its own.
 
 ## Documentation
 
-The canonical documentation is at <https://presswerk.dev/>.
-
-Start with the [guide](https://presswerk.dev/guide/), including the
-[walkthrough](https://presswerk.dev/guide/walkthrough/) and
-[release recovery](https://presswerk.dev/guide/recovery/). The repository also keeps
-current design notes under [`docs/conception`](docs/conception/) as design references.
+Start with the [guide](https://presswerk.dev/guide/) and its
+[walkthrough](https://presswerk.dev/guide/walkthrough/). Design notes live in
+[`docs/conception`](docs/conception/).
 
 ## Quick look
 
-```console
-$ nix run --inputs-from . presswerk -- plan
-$ nix run --inputs-from . presswerk -- prepare
-$ nix run --inputs-from . presswerk -- publish HEAD
+Declare a release in your flake:
+
+```nix
+{
+  inputs.presswerk.url = "github:jkuball/presswerk";
+
+  outputs = { self, presswerk, ... }: {
+    presswerk.default = presswerk.lib.mkRelease {
+      sourceRoot = self.outPath;
+      # Read and bump the version of a Cargo package.
+      versionFiles.cargo.my-crate = { };
+      # Publish a GitHub Release.
+      publishers.github-release.default.repository = "me/my-crate";
+    };
+  };
+}
 ```
 
-Run the CLI from the Presswerk input locked in your flake (named `presswerk` here) so it matches
-your `mkRelease`. `plan` is read-only. `prepare` creates a release commit, and `publish` releases
-an exact candidate after CI has checked it.
+Then let Presswerk take it from there:
+
+```console
+$ presswerk plan          # show the next version and notes, change nothing
+$ presswerk prepare       # commit the version bump and changelog
+$ presswerk publish HEAD  # tag and release the checked commit
+```
+
+The [walkthrough](https://presswerk.dev/guide/walkthrough/) sets this up end to end, including
+CI and how to run the CLI from your locked input.
 
 ## Development
 
@@ -62,10 +78,6 @@ $ nix flake check
 
 Commit subjects follow [Gitmoji](https://gitmoji.dev/), which Presswerk also uses to determine
 its own release version and notes.
-
-## Security
-
-Report vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
 
 ## License
 

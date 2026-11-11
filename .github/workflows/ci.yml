@@ -28,21 +28,6 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.candidate || github.sha }}
 
-      - name: Configure Presswerk deploy key
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        env:
-          PRESSWERK_DEPLOY_KEY: ${{ secrets.PRESSWERK_DEPLOY_KEY }}
-        run: |
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$PRESSWERK_DEPLOY_KEY" > ~/.ssh/presswerk
-          chmod 600 ~/.ssh/presswerk
-          ssh-keyscan github.com > ~/.ssh/known_hosts
-          cat > ~/.ssh/config <<'EOF'
-          Host github.com
-            IdentityFile ~/.ssh/presswerk
-            IdentitiesOnly yes
-          EOF
-
       - uses: DeterminateSystems/determinate-nix-action@v3
       - uses: cachix/cachix-action@v17
         with:
