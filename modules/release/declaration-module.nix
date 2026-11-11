@@ -169,7 +169,7 @@
           type = tagFormat;
           default = "v{version}";
           example = "release-{version}";
-          description = "Release tag format; must contain {version} exactly once, not adjacent to another brace.";
+          description = "Release tag format; must contain {version} exactly once, not adjacent to another brace. The release commit subject names the tag, such as `🔖 Release v1.2.0`.";
         };
 
         analyzer = {

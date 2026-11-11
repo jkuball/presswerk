@@ -4,7 +4,6 @@ use git2::Oid;
 use presswerk::release_commit::{
     ReleaseCommitError, ReleaseFile, TrustedPredecessor, create_release_commit,
 };
-use semver::Version;
 use support::GitRepo;
 
 #[test]
@@ -26,7 +25,7 @@ fn creates_a_bookmark_commit_from_the_parent_tree_without_using_the_index() {
         repository.path(),
         &branch,
         Oid::from_str(&parent).unwrap(),
-        &Version::new(0, 1, 0),
+        "v0.1.0",
         &[
             ReleaseFile::new(
                 "Cargo.toml",
@@ -78,7 +77,7 @@ fn writes_and_parses_the_trusted_predecessor_trailer() {
         repository.path(),
         &branch,
         parent.parse().unwrap(),
-        &Version::new(0, 1, 0),
+        "v0.1.0",
         &[ReleaseFile::new("VERSION", "0.1.0\n")],
         Some(&trusted),
     )
@@ -138,7 +137,7 @@ fn keeps_a_branch_that_no_longer_points_to_the_expected_parent() {
         repository.path(),
         &branch,
         Oid::from_str(&expected).unwrap(),
-        &Version::new(0, 1, 0),
+        "v0.1.0",
         &[ReleaseFile::new("VERSION", "0.1.0\n")],
         None,
     )

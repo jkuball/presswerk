@@ -26,6 +26,8 @@ pub struct ReleasePlan {
     pub previous_release: Option<VerifiedPredecessor>,
     pub analysis: Analysis,
     pub next_version: Option<Version>,
+    /// The tag that `publish` creates for the next version.
+    pub next_tag: Option<String>,
     pub version_files: Vec<VersionFileChange>,
     pub notes: String,
     pub changelog_path: String,
@@ -151,6 +153,11 @@ pub fn build_release_plan(
         release_files.push(ReleaseFile::new(&declaration.changelog.path, changelog));
     }
 
+    let next_tag = next_version
+        .as_ref()
+        .map(|version| declaration.tag.render(version))
+        .transpose()?;
+
     Ok(ReleasePlan {
         repository: repository_path.into(),
         commit: evaluated.commit,
@@ -158,6 +165,7 @@ pub fn build_release_plan(
         previous_release,
         analysis,
         next_version,
+        next_tag,
         version_files,
         notes,
         changelog_path: declaration.changelog.path,
@@ -167,7 +175,7 @@ pub fn build_release_plan(
 }
 
 pub fn prepare_release(plan: &ReleasePlan) -> Result<Option<Oid>> {
-    let Some(version) = &plan.next_version else {
+    let Some(tag) = &plan.next_tag else {
         return Ok(None);
     };
 
@@ -197,7 +205,7 @@ pub fn prepare_release(plan: &ReleasePlan) -> Result<Option<Oid>> {
         &plan.repository,
         &reference,
         plan.commit,
-        version,
+        tag,
         &plan.release_files,
         plan.trusted_predecessor.as_ref(),
     )?;
