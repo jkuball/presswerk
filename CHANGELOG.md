@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.2] - 2026-11-11
+
+### ⬆️ Upgrade dependencies
+
+- (release): Self-release with Presswerk v0.3.1 from the public GitHub URL
+
+### 👷 Add or update CI build system
+
+- (ci): Deploy the docs to GitHub Pages from each release
+
+### 🌐 Internationalization and localization
+
+- (docs): Serve the docs from presswerk.dev
+
+### 🔧 Add or update configuration files
+
+- (release): Release documentation-only changes as patches
+
 ## [0.3.1] - 2026-11-11
 
 ### 🐛 Fix a bug
