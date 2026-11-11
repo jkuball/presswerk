@@ -5,7 +5,7 @@ description: How the walkthrough's workflow releases from GitHub Actions, and ho
 
 The [walkthrough](../walkthrough/#3-add-the-workflow) sets up a minimal workflow for
 [automatic releases](../release-modes/#automatic-releases) from GitHub Actions. This page explains
-how it works and how to extend it. The [CLI reference](/presswerk/reference/cli/) documents the
+how it works and how to extend it. The [CLI reference](/reference/cli/) documents the
 commands it runs.
 
 ## How the workflow works
@@ -61,7 +61,7 @@ permissions:
 `contents: write` allows pushing the release commit and the tag, and creating the GitHub Release.
 `actions: write` allows the dispatch. The job passes the workflow's token twice: `gh` reads it from
 `GH_TOKEN`, and Presswerk reads it from `GITHUB_TOKEN`, the default secret of the
-[GitHub Release publisher](/presswerk/reference/publishers/#token).
+[GitHub Release publisher](/reference/publishers/#token).
 
 Branch protection on `main` must allow the workflow to push the release commit.
 

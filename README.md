@@ -10,13 +10,13 @@
 </p>
 
 <p align="center">
-  <a href="https://jkuball.github.io/presswerk/">Documentation</a> ·
+  <a href="https://presswerk.dev/">Documentation</a> ·
   <a href="https://github.com/jkuball/presswerk/releases">Releases</a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 <p align="center">
-  <a href="https://jkuball.github.io/presswerk/">
+  <a href="https://presswerk.dev/">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/site/public/badge-light.svg">
       <img alt="Released with Presswerk" src="docs/site/public/badge.svg" width="164" height="20">
@@ -34,11 +34,11 @@ or hosted state of its own.
 
 ## Documentation
 
-The canonical documentation is at <https://jkuball.github.io/presswerk/>.
+The canonical documentation is at <https://presswerk.dev/>.
 
-Start with the [guide](https://jkuball.github.io/presswerk/guide/), including the
-[walkthrough](https://jkuball.github.io/presswerk/guide/walkthrough/) and
-[release recovery](https://jkuball.github.io/presswerk/guide/recovery/). The repository also keeps
+Start with the [guide](https://presswerk.dev/guide/), including the
+[walkthrough](https://presswerk.dev/guide/walkthrough/) and
+[release recovery](https://presswerk.dev/guide/recovery/). The repository also keeps
 current design notes under [`docs/conception`](docs/conception/) as design references.
 
 ## Quick look

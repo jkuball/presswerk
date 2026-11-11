@@ -111,7 +111,7 @@
 }
 /* Links that leave the documentation end in a small outward arrow */
 .sl-markdown-content
-  a[href^='http']:not([href^='https://jkuball.github.io/presswerk']):not(:where(.not-content *))::after {
+  a[href^='http']:not([href^='https://presswerk.dev']):not(:where(.not-content *))::after {
   content: '';
   display: inline-block;
   width: 0.65em;
@@ -273,7 +273,7 @@ nav.sidebar ul ul .group-label .large {
   margin-left: 0.2em;
   vertical-align: -0.1em;
   background-color: var(--pw-ink);
-  mask: url('/presswerk/favicon.svg') center / contain no-repeat;
+  mask: url('/favicon.svg') center / contain no-repeat;
 }
 
 /* Filters added by src/scripts/option-filter.js and src/scripts/catalog-filter.js. */

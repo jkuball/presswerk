@@ -193,18 +193,18 @@ in
         test -s "$site/llms.txt"
         test ! -e "$site/llms-full.txt"
         for page in $pages; do
-          test "$page" = 404 || grep -Fq "(https://jkuball.github.io/presswerk/$page.md)" "$site/llms.txt"
+          test "$page" = 404 || grep -Fq "(https://presswerk.dev/$page.md)" "$site/llms.txt"
         done
-        grep -Fq 'rel="alternate" type="text/markdown" href="/presswerk/index.md"' "$site/index.html"
-        grep -Fq 'rel="describedby" href="/presswerk/llms.txt"' "$site/index.html"
-        grep -Fq 'rel="alternate" type="text/markdown" href="/presswerk/guide/walkthrough.md"' "$site/guide/walkthrough/index.html"
+        grep -Fq 'rel="alternate" type="text/markdown" href="/index.md"' "$site/index.html"
+        grep -Fq 'rel="describedby" href="/llms.txt"' "$site/index.html"
+        grep -Fq 'rel="alternate" type="text/markdown" href="/guide/walkthrough.md"' "$site/guide/walkthrough/index.html"
         grep -q 'id="tag.format"' "$site/reference/options/index.html"
         # Release options in Nix examples link to their reference entries.
-        grep -q 'href="/presswerk/reference/options/#versionFiles.cargo" class="pw-code-link"' "$site/index.html"
+        grep -q 'href="/reference/options/#versionFiles.cargo" class="pw-code-link"' "$site/index.html"
         grep -q 'id="publishers.github-release.name.token.secret"' "$site/reference/options/index.html"
         grep -q '^# Presswerk$' "$site/index.md"
         grep -q '^# Walkthrough: release automatically from GitHub Actions$' "$site/guide/walkthrough.md"
-        grep -Fq '](/presswerk/reference/options.md#versionFiles.cargo)' "$site/reference/version-files.md"
+        grep -Fq '](/reference/options.md#versionFiles.cargo)' "$site/reference/version-files.md"
         grep -q '^### `tag.format`$' "$site/reference/options.md"
         grep -q '^### presswerk publish$' "$site/reference/cli.md"
         grep -A20 '^### Minor$' "$site/reference/analyzers.md" | grep -q '`:sparkles:`'

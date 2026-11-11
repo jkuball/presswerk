@@ -6,8 +6,7 @@ import pelePlugin from './src/plugins/pele.mjs';
 import versionPlugin from './src/plugins/version.mjs';
 
 export default defineConfig({
-  site: 'https://jkuball.github.io',
-  base: '/presswerk/',
+  site: 'https://presswerk.dev',
   markdown: {
     processor: satteri({ mdastPlugins: [versionPlugin(), pelePlugin()] }),
   },

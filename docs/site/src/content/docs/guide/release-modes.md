@@ -17,7 +17,7 @@ Every release takes the same two steps, whatever runs them:
    credentials that let the publishers create releases.
 
 :::caution[GitHub is required for now]
-Every release currently needs a [GitHub Release publisher](/presswerk/reference/publishers/),
+Every release currently needs a [GitHub Release publisher](/reference/publishers/),
 so publication talks to GitHub.
 :::
 

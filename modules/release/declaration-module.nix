@@ -115,7 +115,7 @@
 
         version = mkOption {
           type = types.nonEmptyStr;
-          defaultText = lib.literalMD "read from the [version files](https://jkuball.github.io/presswerk/reference/version-files/)";
+          defaultText = lib.literalMD "read from the [version files](https://presswerk.dev/reference/version-files/)";
           description = "Release version; every version file must declare the same one.";
         };
 
@@ -148,7 +148,7 @@
           gitmoji.catalog = mkOption {
             type = types.attrsOf (types.nullOr (types.submodule gitmojiModule));
             default = { };
-            defaultText = lib.literalMD "the [default Gitmoji catalog](https://jkuball.github.io/presswerk/reference/analyzers/#default-catalog)";
+            defaultText = lib.literalMD "the [default Gitmoji catalog](https://presswerk.dev/reference/analyzers/#default-catalog)";
             example = lib.literalExpression ''
               {
                 # Release CI changes as patches.

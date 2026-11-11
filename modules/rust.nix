@@ -39,7 +39,7 @@
         crates.presswerk.crane.args = nixBindingsEnvironment // {
           meta = {
             description = "Controlled releases for software built with Nix flakes";
-            homepage = "https://jkuball.github.io/presswerk/";
+            homepage = "https://presswerk.dev/";
             license = with lib.licenses; [ mit asl20 ];
             mainProgram = "presswerk";
           };

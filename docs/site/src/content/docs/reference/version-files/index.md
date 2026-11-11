@@ -6,7 +6,7 @@ description: The files in your repository that carry the version, and how Pressw
 A version file is a file in your repository that carries the project's version, such as
 `Cargo.toml`. Presswerk uses version files in two directions:
 
-- **Reading.** Each version file defines the release's [`version`](/presswerk/reference/options/#version)
+- **Reading.** Each version file defines the release's [`version`](/reference/options/#version)
   with the version it carries. The module system merges these definitions like any others, so every
   version file must carry the same version: if two disagree, their definitions conflict and the flake
   fails to evaluate, naming both files. The CLI also checks files that the flake does not read, such
@@ -26,7 +26,7 @@ derivations that much of your build depends on.
 
 ## Cargo
 
-[`versionFiles.cargo`](/presswerk/reference/options/#versionFiles.cargo) declares one entry per
+[`versionFiles.cargo`](/reference/options/#versionFiles.cargo) declares one entry per
 crate. The flake reads `package.version` from the crate's `Cargo.toml`. Presswerk writes that field
 and the crate's package entry in `Cargo.lock`, and checks that both carry the same version.
 

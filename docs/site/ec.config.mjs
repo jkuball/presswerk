@@ -137,7 +137,7 @@ function actionsExpressions() {
   };
 }
 
-const OPTIONS_PAGE = '/presswerk/reference/options/';
+const OPTIONS_PAGE = '/reference/options/';
 
 /** Wrap a column range of a line in a link. */
 class LinkAnnotation extends ExpressiveCodeAnnotation {
