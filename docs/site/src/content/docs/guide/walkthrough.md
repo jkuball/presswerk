@@ -90,12 +90,11 @@ Create `flake.nix`. Replace `YOUR-OWNER/YOUR-REPO` with the repository you creat
       packages = eachSystem (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          cargoPackage = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package;
         in
         {
           default = pkgs.rustPlatform.buildRustPackage {
-            inherit (cargoPackage) version;
-            pname = cargoPackage.name;
+            pname = "YOUR-CRATE";
+            version = self.presswerk.default.version;
             src = self;
             cargoLock.lockFile = ./Cargo.lock;
           };
@@ -106,7 +105,8 @@ Create `flake.nix`. Replace `YOUR-OWNER/YOUR-REPO` with the repository you creat
 
 `mkRelease` reads the version from `Cargo.toml`, updates that file and the matching `Cargo.lock`
 package during preparation, uses the default Gitmoji catalog, writes `CHANGELOG.md`, and configures
-the default `GITHUB_TOKEN` secret for publication. The [options reference](/reference/options/)
+the default `GITHUB_TOKEN` secret for publication. The package takes its version from the release
+with `self.presswerk.default.version` instead of reading `Cargo.toml` again. The [options reference](/reference/options/)
 documents every supported authoring field.
 
 Lock and check the flake:
