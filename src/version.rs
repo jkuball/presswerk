@@ -1,4 +1,4 @@
-use crate::declaration::{CargoLockVersionFile, TomlVersionFile, VersionFile};
+use crate::declaration::{BadgeVersionFile, CargoLockVersionFile, TomlVersionFile, VersionFile};
 use semver::Version;
 use std::error::Error;
 use std::fmt;
@@ -6,6 +6,12 @@ use toml_edit::{Document, Item, Table, Value};
 
 pub trait VersionFileWriter {
     fn path(&self) -> &str;
+
+    /// Whether the file carries the current version. A file that does not is only written, and
+    /// `write_version` must not depend on its previous contents, which may be missing.
+    fn reads_version(&self) -> bool {
+        true
+    }
 
     fn read_version(&self, contents: &str) -> Result<Version, VersionFileError>;
 
@@ -17,6 +23,15 @@ impl VersionFileWriter for VersionFile {
         match self {
             Self::Toml(file) => file.path(),
             Self::CargoLock(file) => file.path(),
+            Self::Badge(file) => file.path(),
+        }
+    }
+
+    fn reads_version(&self) -> bool {
+        match self {
+            Self::Toml(file) => file.reads_version(),
+            Self::CargoLock(file) => file.reads_version(),
+            Self::Badge(file) => file.reads_version(),
         }
     }
 
@@ -24,6 +39,7 @@ impl VersionFileWriter for VersionFile {
         match self {
             Self::Toml(file) => file.read_version(contents),
             Self::CargoLock(file) => file.read_version(contents),
+            Self::Badge(file) => file.read_version(contents),
         }
     }
 
@@ -31,6 +47,7 @@ impl VersionFileWriter for VersionFile {
         match self {
             Self::Toml(file) => file.write_version(contents, version),
             Self::CargoLock(file) => file.write_version(contents, version),
+            Self::Badge(file) => file.write_version(contents, version),
         }
     }
 }
@@ -116,17 +133,43 @@ impl VersionFileWriter for CargoLockVersionFile {
     }
 }
 
+impl VersionFileWriter for BadgeVersionFile {
+    fn path(&self) -> &str {
+        &self.path
+    }
+
+    fn reads_version(&self) -> bool {
+        false
+    }
+
+    fn read_version(&self, _contents: &str) -> Result<Version, VersionFileError> {
+        Err(VersionFileError::Invalid(format!(
+            "{} is a badge and does not carry the version",
+            self.path
+        )))
+    }
+
+    fn write_version(
+        &self,
+        _contents: &str,
+        version: &Version,
+    ) -> Result<String, VersionFileError> {
+        Ok(crate::badge::render(version, self.badge.color_scheme))
+    }
+}
+
 pub fn check_consistent_versions(
     files: &[(&dyn VersionFileWriter, &str)],
 ) -> Result<Version, VersionFileError> {
-    let Some((first_writer, first_contents)) = files.first() else {
+    let mut sources = files.iter().filter(|(writer, _)| writer.reads_version());
+    let Some((first_writer, first_contents)) = sources.next() else {
         return Err(VersionFileError::Invalid(
-            "at least one version file is required".into(),
+            "at least one version file that carries the version is required".into(),
         ));
     };
     let expected = first_writer.read_version(first_contents)?;
 
-    for (writer, contents) in &files[1..] {
+    for (writer, contents) in sources {
         let actual = writer.read_version(contents)?;
         if actual != expected {
             return Err(VersionFileError::Invalid(format!(

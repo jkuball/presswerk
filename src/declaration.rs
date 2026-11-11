@@ -89,6 +89,7 @@ impl ReleaseDeclaration {
 pub enum VersionFile {
     Toml(TomlVersionFile),
     CargoLock(CargoLockVersionFile),
+    Badge(BadgeVersionFile),
 }
 
 impl VersionFile {
@@ -110,6 +111,7 @@ impl VersionFile {
                     ));
                 }
             }
+            Self::Badge(file) => validate_relative_path(&file.path)?,
         }
         Ok(())
     }
@@ -127,6 +129,31 @@ pub struct TomlVersionFile {
 pub struct CargoLockVersionFile {
     pub path: String,
     pub cargo_lock: String,
+}
+
+/// A version badge, generated from scratch on every release and never read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BadgeVersionFile {
+    pub path: String,
+    pub badge: BadgeOptions,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BadgeOptions {
+    pub color_scheme: ColorScheme,
+}
+
+/// The page colour scheme a badge is made for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorScheme {
+    /// Follow the viewer's system colour scheme.
+    #[default]
+    Auto,
+    Light,
+    Dark,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -569,6 +596,31 @@ mod tests {
                 .to_string()
                 .contains("must not be empty")
         );
+    }
+
+    #[test]
+    fn decodes_badge_version_files() {
+        let badge = declaration(|value| {
+            value["versionFiles"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({ "path": ".github/presswerk-badge.svg", "badge": { "colorScheme": "dark" } }));
+        });
+        let decoded = ReleaseDeclaration::from_json(&badge).unwrap();
+        assert_eq!(
+            decoded.version_files[2],
+            VersionFile::Badge(BadgeVersionFile {
+                path: ".github/presswerk-badge.svg".into(),
+                badge: BadgeOptions {
+                    color_scheme: ColorScheme::Dark,
+                },
+            })
+        );
+
+        let unknown = declaration(|value| {
+            value["versionFiles"][0] = json!({ "path": "badge.svg", "badge": { "style": "flat" } });
+        });
+        assert!(ReleaseDeclaration::from_json(&unknown).is_err());
     }
 
     #[test]

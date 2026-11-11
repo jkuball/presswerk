@@ -37,18 +37,20 @@
       packages.brand-assets = brandAssets;
 
       checks.brand-assets = pkgs.runCommand "brand-assets-check" { nativeBuildInputs = [ python ]; } ''
+        mkdir -p generated/src
         python3 ${generator} ${archivo} generated
         diff -r ${../docs/site/src/assets/brand} generated/docs/site/src/assets/brand
         diff ${../docs/site/public/favicon.svg} generated/docs/site/public/favicon.svg
         diff ${../docs/site/public/badge.svg} generated/docs/site/public/badge.svg
         diff ${../docs/site/public/badge-light.svg} generated/docs/site/public/badge-light.svg
+        diff ${../src/badge.json} generated/src/badge.json
         touch $out
       '';
 
       devshells.default.commands = [
         {
           name = "brand-assets";
-          help = "Regenerate the logo, icon, lockup, favicon and badge";
+          help = "Regenerate the logo, icon, lockup, favicon, badge and version badge data";
           command = lib.getExe config.packages.brand-assets;
         }
       ];

@@ -31,8 +31,10 @@ Every field is required, and unknown fields are rejected.
 - `tag.format`: the release tag format, containing `{version}` exactly once.
 - `changelog.path`: the repository-relative path of the changelog.
 - `versionFiles`: the files whose version `prepare` updates. Each entry has a repository-relative
-  `path` and either `toml`, a dotted key selector such as `"package.version"`, or `cargoLock`, the
-  name of the package whose entry in `Cargo.lock` is updated.
+  `path` and either `toml`, a dotted key selector such as `"package.version"`, `cargoLock`, the
+  name of the package whose entry in `Cargo.lock` is updated, or `badge` for a version badge
+  that `prepare` generates and never reads, with the `colorScheme` it is made for: `"auto"`,
+  `"light"`, or `"dark"`.
 - `analyzer`: the commit `convention`, currently always `"gitmoji"`, and the Gitmoji `catalog`
   keyed by shortcode. Each entry has an `emoji`, a `description`, and a `semver` level of
   `"major"`, `"minor"`, `"patch"`, or `null`.

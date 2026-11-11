@@ -4,8 +4,9 @@ use anyhow::bail;
 use git2::Oid;
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::declaration::{
-    Analyzer, AnalyzerConvention, Changelog, GithubReleasePublisher, GitmojiAnalyzer, Publishers,
-    ReleaseDeclaration, Tag, Token, TomlVersionFile, VersionFile,
+    Analyzer, AnalyzerConvention, BadgeOptions, BadgeVersionFile, Changelog,
+    GithubReleasePublisher, GitmojiAnalyzer, Publishers, ReleaseDeclaration, Tag, Token,
+    TomlVersionFile, VersionFile,
 };
 use presswerk::evaluation::EvaluatedReleaseDeclaration;
 use presswerk::preparation::{build_release_plan, is_worktree_dirty, prepare_release, render_plan};
@@ -458,4 +459,55 @@ fn prepare_keeps_unrelated_local_changes_and_checks_out_the_release_files() {
         std::fs::read_to_string(repository.path().join("Cargo.toml")).unwrap(),
         "[package]\nname = \"example\"\nversion = \"0.1.0\"\n"
     );
+}
+
+fn badge() -> VersionFile {
+    VersionFile::Badge(BadgeVersionFile {
+        path: ".github/presswerk-badge.svg".into(),
+        badge: BadgeOptions::default(),
+    })
+}
+
+#[test]
+fn prepare_generates_the_version_badge_without_reading_it() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated.declaration.version_files.push(badge());
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+    assert!(render_plan(&plan).contains(".github/presswerk-badge.svg  0.0.0 -> 0.1.0"));
+
+    let release = prepare_release(&plan).unwrap().unwrap();
+    let svg = repository.git(["show", &format!("{release}:.github/presswerk-badge.svg")]);
+    assert!(svg.starts_with("<svg "));
+    assert!(svg.contains("<title>Version 0.1.0, released with Presswerk</title>"));
+}
+
+#[test]
+fn a_badge_alone_does_not_carry_the_version() {
+    let repository = GitRepo::new();
+    repository.write(".github/presswerk-badge.svg", "<svg>stale</svg>\n");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated.declaration.version_files = vec![badge()];
+
+    let error = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("carries the version"));
 }

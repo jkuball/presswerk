@@ -53,6 +53,22 @@
         };
       };
 
+      badgeModule = {
+        options = {
+          path = mkOption {
+            type = relativePath;
+            default = ".github/presswerk-badge.svg";
+            description = "Repository-relative path of the generated badge.";
+          };
+
+          colorScheme = mkOption {
+            type = types.enum [ "auto" "light" "dark" ];
+            default = "auto";
+            description = "Page colour scheme the badge is made for: `light` or `dark` pages, or `auto` to follow the viewer's system colour scheme.";
+          };
+        };
+      };
+
       gitmojiModule = { name, ... }: {
         options = {
           shortcode = mkOption {
@@ -129,6 +145,24 @@
             }
           '';
           description = "Cargo version sources and writers.";
+        };
+
+        versionFiles.badge = mkOption {
+          type = types.attrsOf (types.submodule badgeModule);
+          default = { };
+          example = lib.literalExpression ''
+            {
+              light = {
+                colorScheme = "light";
+                path = ".github/badge-light.svg";
+              };
+              dark = {
+                colorScheme = "dark";
+                path = ".github/badge-dark.svg";
+              };
+            }
+          '';
+          description = "Version badges that `prepare` generates for every release; they do not carry the version.";
         };
 
         tag.format = mkOption {

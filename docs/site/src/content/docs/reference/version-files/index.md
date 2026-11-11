@@ -14,6 +14,8 @@ A version file is a file in your repository that carries the project's version, 
 - **Writing.** `prepare` writes the new version into every version file and commits them together in
   the release commit.
 
+A [badge](#badge) is the exception: Presswerk only writes it and never reads it.
+
 Because the version comes from committed files, it is an ordinary input of your flake, and your
 build can use it like any other value.
 
@@ -35,7 +37,27 @@ versionFiles.cargo.my-crate = { };
 versionFiles.cargo.my-other-crate.cargoToml = "crates/other/Cargo.toml";
 ```
 
+## Badge
+
+[`versionFiles.badge`](/reference/options/#versionFiles.badge) declares a version badge: a small
+SVG with the Presswerk icon and the version, in the style of the [badges](/badges/). By default,
+the badge follows the viewer's system colour scheme; set `colorScheme` to `"light"` or `"dark"` for
+a badge made for one scheme, for example to choose between two with `<picture>`.
+
+```nix presswerk-module
+versionFiles.badge.default = { };
+```
+
+<p>
+  <img class="dark:sl-hidden" alt="Version badge" src="/version-badge-light.svg" height="20">
+  <img class="light:sl-hidden" alt="Version badge" src="/version-badge-dark.svg" height="20">
+</p>
+
+`prepare` generates the badge at `.github/presswerk-badge.svg`; set `path` to put it elsewhere.
+Presswerk only writes it: the badge does not carry the version, so a release needs another version
+file, and editing or deleting the badge never blocks a release.
+
 ## Other formats
 
-Cargo is the only built-in version file today. Declaring version files for other formats in the
-flake itself is planned.
+Cargo and the badge are the only built-in version files today. Declaring version files for other
+formats in the flake itself is planned.

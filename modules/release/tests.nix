@@ -114,6 +114,46 @@ in
       expected = false;
     };
 
+    "test badges normalize to written-only version files" = {
+      expr = (mkRelease {
+        sourceRoot = fixtureRoot;
+        versionFiles.cargo.example.cargoToml = cargoToml;
+        versionFiles.badge = {
+          default = { };
+          dark = {
+            colorScheme = "dark";
+            path = "docs/version.svg";
+          };
+        };
+      }).versionFiles;
+      expected = [
+        {
+          path = cargoToml;
+          toml = "package.version";
+        }
+        {
+          path = "Cargo.lock";
+          cargoLock = "example";
+        }
+        {
+          path = "docs/version.svg";
+          badge.colorScheme = "dark";
+        }
+        {
+          path = ".github/presswerk-badge.svg";
+          badge.colorScheme = "auto";
+        }
+      ];
+    };
+
+    "test a badge does not define the version" = {
+      expr = succeeds (mkRelease {
+        sourceRoot = fixtureRoot;
+        versionFiles.badge.default = { };
+      }).version;
+      expected = false;
+    };
+
     "test schemaVersion cannot be authored" = {
       expr = succeeds (mkRelease {
         inherit sourceRoot;

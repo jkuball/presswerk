@@ -24,21 +24,28 @@ in
       schemaVersion = 0;
       inherit (releaseConfig) version;
 
-      versionFiles = lib.concatLists (lib.mapAttrsToList
-        (
-          _name: cargo:
-            [
-              {
-                path = cargo.cargoToml;
-                toml = "package.version";
-              }
-              {
-                path = cargo.cargoLock;
-                cargoLock = cargo.crate;
-              }
-            ]
-        )
-        releaseConfig.versionFiles.cargo);
+      versionFiles = lib.concatLists
+        (lib.mapAttrsToList
+          (
+            _name: cargo:
+              [
+                {
+                  path = cargo.cargoToml;
+                  toml = "package.version";
+                }
+                {
+                  path = cargo.cargoLock;
+                  cargoLock = cargo.crate;
+                }
+              ]
+          )
+          releaseConfig.versionFiles.cargo)
+      ++ lib.mapAttrsToList
+        (_name: badge: {
+          inherit (badge) path;
+          badge = { inherit (badge) colorScheme; };
+        })
+        releaseConfig.versionFiles.badge;
 
       tag.format = releaseConfig.tag.format;
       analyzer = {
