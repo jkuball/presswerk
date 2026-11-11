@@ -196,6 +196,7 @@ in
           test "$page" = 404 || grep -Fq "(https://jkuball.github.io/presswerk/$page.md)" "$site/llms.txt"
         done
         grep -Fq 'rel="alternate" type="text/markdown" href="/presswerk/index.md"' "$site/index.html"
+        grep -Fq 'rel="describedby" href="/presswerk/llms.txt"' "$site/index.html"
         grep -Fq 'rel="alternate" type="text/markdown" href="/presswerk/guide/walkthrough.md"' "$site/guide/walkthrough/index.html"
         grep -q 'id="tag.format"' "$site/reference/options/index.html"
         # Release options in Nix examples link to their reference entries.

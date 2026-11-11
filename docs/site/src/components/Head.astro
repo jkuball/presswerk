@@ -8,4 +8,11 @@ const markdown = slug === null ? null : `${base}${slug}.md`;
 ---
 
 <DefaultHead />
-{markdown && <link rel="alternate" type="text/markdown" href={markdown} title="Markdown" />}
+{
+  markdown && (
+    <>
+      <link rel="alternate" type="text/markdown" href={markdown} title="Markdown" />
+      <link rel="describedby" href={`${base}llms.txt`} />
+    </>
+  )
+}
