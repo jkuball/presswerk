@@ -59,6 +59,12 @@ in
         })
         releaseConfig.versionFiles.plain
       ++ lib.mapAttrsToList
+        (_name: file: {
+          inherit (file) path;
+          regex = file.pattern;
+        })
+        releaseConfig.versionFiles.regex
+      ++ lib.mapAttrsToList
         (_name: badge: {
           inherit (badge) path;
           badge = { inherit (badge) colorScheme; };

@@ -1,5 +1,6 @@
 use presswerk::declaration::{
-    CargoLockVersionFile, JsonVersionFile, PlainOptions, PlainVersionFile, TomlVersionFile,
+    CargoLockVersionFile, JsonVersionFile, PlainOptions, PlainVersionFile, RegexVersionFile,
+    TomlVersionFile,
 };
 use presswerk::version::{VersionFileWriter, check_consistent_versions};
 use semver::Version;
@@ -215,4 +216,47 @@ fn keeps_the_line_break_of_a_plain_version_file() {
         );
     }
     assert!(writer.read_version("1.2.3\nmore\n").is_err());
+}
+
+#[test]
+fn replaces_only_the_version_group_of_a_regex_match() {
+    let writer = RegexVersionFile {
+        path: "Chart.yaml".into(),
+        regex: r"^version: (?<version>\S+)$".into(),
+    };
+    let contents = "apiVersion: v2\nversion: 1.2.3\nappVersion: 1.2.3\n";
+
+    let written = writer
+        .write_version(contents, &Version::new(1, 3, 0))
+        .unwrap();
+
+    assert_eq!(
+        written,
+        "apiVersion: v2\nversion: 1.3.0\nappVersion: 1.2.3\n"
+    );
+    assert_eq!(
+        writer.read_version(&written).unwrap(),
+        Version::new(1, 3, 0)
+    );
+}
+
+#[test]
+fn a_regex_must_match_exactly_once() {
+    let writer = RegexVersionFile {
+        path: "Chart.yaml".into(),
+        regex: r"(?<version>\d+\.\d+\.\d+)".into(),
+    };
+
+    for (contents, message) in [
+        ("no version here\n", "does not match"),
+        ("1.2.3 and 4.5.6\n", "matches more than once"),
+    ] {
+        assert!(
+            writer
+                .read_version(contents)
+                .unwrap_err()
+                .to_string()
+                .contains(message)
+        );
+    }
 }

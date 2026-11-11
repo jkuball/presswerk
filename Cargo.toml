@@ -18,6 +18,7 @@ nix-bindings-fetchers = "0.2.1"
 nix-bindings-flake = "0.2.1"
 nix-bindings-store = "0.2.1"
 nix-bindings-util = "0.2.1"
+regex = "1.13.1"
 semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

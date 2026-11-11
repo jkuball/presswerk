@@ -192,6 +192,31 @@ in
       expected = false;
     };
 
+    "test regex files normalize without defining the version" = {
+      expr =
+        let
+          release = mkRelease {
+            sourceRoot = fixtureRoot;
+            versionFiles.cargo.example.cargoToml = cargoToml;
+            versionFiles.regex.chart = {
+              path = "Chart.yaml";
+              pattern = "^version: (?<version>\\S+)$";
+            };
+          };
+        in
+        {
+          inherit (release) version;
+          regex = builtins.elemAt release.versionFiles 2;
+        };
+      expected = {
+        version = "1.2.3";
+        regex = {
+          path = "Chart.yaml";
+          regex = "^version: (?<version>\\S+)$";
+        };
+      };
+    };
+
     "test a badge does not define the version" = {
       expr = succeeds (mkRelease {
         sourceRoot = fixtureRoot;

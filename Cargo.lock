@@ -1727,6 +1727,7 @@ dependencies = [
  "nix-bindings-flake",
  "nix-bindings-store",
  "nix-bindings-util",
+ "regex",
  "semver",
  "serde",
  "serde_json",

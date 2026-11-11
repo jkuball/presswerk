@@ -32,7 +32,8 @@ Every field is required, and unknown fields are rejected.
 - `changelog.path`: the repository-relative path of the changelog.
 - `versionFiles`: the files whose version `prepare` updates. Each entry has a repository-relative
   `path` and either `toml` or `json`, a dotted key selector such as `"package.version"`, `plain`,
-  an empty object for a file that contains only the version, `cargoLock`, the name of the package
+  an empty object for a file that contains only the version, `regex`, a pattern with a `version`
+  capture group, `cargoLock`, the name of the package
   whose entry in `Cargo.lock` is updated, or `badge` for a version badge
   that `prepare` generates and never reads, with the `colorScheme` it is made for: `"auto"`,
   `"light"`, or `"dark"`.

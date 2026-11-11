@@ -1,6 +1,6 @@
 use crate::declaration::{
-    BadgeVersionFile, CargoLockVersionFile, JsonVersionFile, PlainVersionFile, TomlVersionFile,
-    VersionFile,
+    BadgeVersionFile, CargoLockVersionFile, JsonVersionFile, PlainVersionFile, RegexVersionFile,
+    TomlVersionFile, VersionFile,
 };
 use jsonc_parser::ast::Value as JsonValue;
 use jsonc_parser::{CollectOptions, ParseOptions, parse_to_ast};
@@ -29,6 +29,7 @@ impl VersionFileWriter for VersionFile {
             Self::Toml(file) => file.path(),
             Self::Json(file) => file.path(),
             Self::Plain(file) => file.path(),
+            Self::Regex(file) => file.path(),
             Self::CargoLock(file) => file.path(),
             Self::Badge(file) => file.path(),
         }
@@ -39,6 +40,7 @@ impl VersionFileWriter for VersionFile {
             Self::Toml(file) => file.reads_version(),
             Self::Json(file) => file.reads_version(),
             Self::Plain(file) => file.reads_version(),
+            Self::Regex(file) => file.reads_version(),
             Self::CargoLock(file) => file.reads_version(),
             Self::Badge(file) => file.reads_version(),
         }
@@ -49,6 +51,7 @@ impl VersionFileWriter for VersionFile {
             Self::Toml(file) => file.read_version(contents),
             Self::Json(file) => file.read_version(contents),
             Self::Plain(file) => file.read_version(contents),
+            Self::Regex(file) => file.read_version(contents),
             Self::CargoLock(file) => file.read_version(contents),
             Self::Badge(file) => file.read_version(contents),
         }
@@ -59,6 +62,7 @@ impl VersionFileWriter for VersionFile {
             Self::Toml(file) => file.write_version(contents, version),
             Self::Json(file) => file.write_version(contents, version),
             Self::Plain(file) => file.write_version(contents, version),
+            Self::Regex(file) => file.write_version(contents, version),
             Self::CargoLock(file) => file.write_version(contents, version),
             Self::Badge(file) => file.write_version(contents, version),
         }
@@ -175,6 +179,52 @@ impl VersionFileWriter for PlainVersionFile {
     fn write_version(&self, contents: &str, version: &Version) -> Result<String, VersionFileError> {
         let (_, line_break) = split_line_break(contents);
         Ok(format!("{version}{line_break}"))
+    }
+}
+
+impl RegexVersionFile {
+    /// The byte range of the `version` group in the pattern's only match.
+    fn locate(&self, contents: &str) -> Result<std::ops::Range<usize>, VersionFileError> {
+        let pattern = self
+            .compile()
+            .map_err(|error| VersionFileError::Invalid(error.to_string()))?;
+        let mut matches = pattern.captures_iter(contents);
+        let found = matches.next().ok_or_else(|| {
+            VersionFileError::Invalid(format!("pattern for {} does not match", self.path))
+        })?;
+        if matches.next().is_some() {
+            return Err(VersionFileError::Invalid(format!(
+                "pattern for {} matches more than once",
+                self.path
+            )));
+        }
+        found
+            .name("version")
+            .map(|group| group.range())
+            .ok_or_else(|| {
+                VersionFileError::Invalid(format!(
+                    "pattern for {} matches without its version group",
+                    self.path
+                ))
+            })
+    }
+}
+
+impl VersionFileWriter for RegexVersionFile {
+    fn path(&self) -> &str {
+        &self.path
+    }
+
+    fn read_version(&self, contents: &str) -> Result<Version, VersionFileError> {
+        let range = self.locate(contents)?;
+        parse_version(&self.path, &contents[range])
+    }
+
+    fn write_version(&self, contents: &str, version: &Version) -> Result<String, VersionFileError> {
+        let range = self.locate(contents)?;
+        let mut written = contents.to_owned();
+        written.replace_range(range, &version.to_string());
+        Ok(written)
     }
 }
 

@@ -90,6 +90,7 @@ pub enum VersionFile {
     Toml(TomlVersionFile),
     Json(JsonVersionFile),
     Plain(PlainVersionFile),
+    Regex(RegexVersionFile),
     CargoLock(CargoLockVersionFile),
     Badge(BadgeVersionFile),
 }
@@ -114,6 +115,10 @@ impl VersionFile {
                 }
             }
             Self::Plain(file) => validate_relative_path(&file.path)?,
+            Self::Regex(file) => {
+                validate_relative_path(&file.path)?;
+                file.compile()?;
+            }
             Self::CargoLock(file) => {
                 validate_relative_path(&file.path)?;
                 if file.cargo_lock.is_empty() {
@@ -153,6 +158,37 @@ pub struct PlainVersionFile {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlainOptions {}
+
+/// A version found by a pattern with a capture group named `version` that matches exactly once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegexVersionFile {
+    pub path: String,
+    pub regex: String,
+}
+
+impl RegexVersionFile {
+    /// Compile the pattern with `^` and `$` matching at line boundaries.
+    pub fn compile(&self) -> Result<regex::Regex, DeclarationError> {
+        let pattern = regex::RegexBuilder::new(&self.regex)
+            .multi_line(true)
+            .build()
+            .map_err(|error| {
+                DeclarationError::Invalid(format!("invalid pattern for {}: {error}", self.path))
+            })?;
+        if !pattern
+            .capture_names()
+            .flatten()
+            .any(|name| name == "version")
+        {
+            return Err(DeclarationError::Invalid(format!(
+                "pattern for {} must have a capture group named version",
+                self.path
+            )));
+        }
+        Ok(pattern)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -651,6 +687,24 @@ mod tests {
             value["versionFiles"][0] = json!({ "path": "badge.svg", "badge": { "style": "flat" } });
         });
         assert!(ReleaseDeclaration::from_json(&unknown).is_err());
+    }
+
+    #[test]
+    fn regex_version_files_need_a_valid_pattern_with_a_version_group() {
+        for (pattern, message) in [
+            ("(?<version>", "invalid pattern"),
+            (r"^version: (\S+)$", "capture group named version"),
+        ] {
+            let invalid = declaration(|value| {
+                value["versionFiles"][0] = json!({ "path": "Chart.yaml", "regex": pattern });
+            });
+            assert!(
+                ReleaseDeclaration::from_json(&invalid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(message)
+            );
+        }
     }
 
     #[test]

@@ -76,6 +76,21 @@
         };
       };
 
+      regexModule = {
+        options = {
+          path = mkOption {
+            type = relativePath;
+            description = "Repository-relative path to the file.";
+          };
+
+          pattern = mkOption {
+            type = types.nonEmptyStr;
+            example = "^version: (?<version>\\S+)$";
+            description = "Rust regular expression that matches the file exactly once, with a capture group named `version`; `^` and `$` match at line boundaries.";
+          };
+        };
+      };
+
       badgeModule = {
         options = {
           path = mkOption {
@@ -207,6 +222,20 @@
             }
           '';
           description = "Version sources and writers for files that contain nothing but the version.";
+        };
+
+        versionFiles.regex = mkOption {
+          type = types.attrsOf (types.submodule regexModule);
+          default = { };
+          example = lib.literalExpression ''
+            {
+              chart = {
+                path = "chart/Chart.yaml";
+                pattern = "^version: (?<version>\\S+)$";
+              };
+            }
+          '';
+          description = "Version writers for any text file, found by a regular expression; the CLI checks them, but the flake does not read them.";
         };
 
         versionFiles.badge = mkOption {
