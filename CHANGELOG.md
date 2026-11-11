@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1] - 2026-11-11
+
+### 🐛 Fix a bug
+
+- (docs): Put the badge link on one line
+- (docs): Keep the opening line break out of the badge link
+- (docs): Keep whitespace out of the badge link
+
 ## [0.6.0] - 2026-11-11
 
 ### 🐛 Fix a bug
