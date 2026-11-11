@@ -1,4 +1,9 @@
-use crate::declaration::{BadgeVersionFile, CargoLockVersionFile, TomlVersionFile, VersionFile};
+use crate::declaration::{
+    BadgeVersionFile, CargoLockVersionFile, JsonVersionFile, PlainVersionFile, TomlVersionFile,
+    VersionFile,
+};
+use jsonc_parser::ast::Value as JsonValue;
+use jsonc_parser::{CollectOptions, ParseOptions, parse_to_ast};
 use semver::Version;
 use std::error::Error;
 use std::fmt;
@@ -22,6 +27,8 @@ impl VersionFileWriter for VersionFile {
     fn path(&self) -> &str {
         match self {
             Self::Toml(file) => file.path(),
+            Self::Json(file) => file.path(),
+            Self::Plain(file) => file.path(),
             Self::CargoLock(file) => file.path(),
             Self::Badge(file) => file.path(),
         }
@@ -30,6 +37,8 @@ impl VersionFileWriter for VersionFile {
     fn reads_version(&self) -> bool {
         match self {
             Self::Toml(file) => file.reads_version(),
+            Self::Json(file) => file.reads_version(),
+            Self::Plain(file) => file.reads_version(),
             Self::CargoLock(file) => file.reads_version(),
             Self::Badge(file) => file.reads_version(),
         }
@@ -38,6 +47,8 @@ impl VersionFileWriter for VersionFile {
     fn read_version(&self, contents: &str) -> Result<Version, VersionFileError> {
         match self {
             Self::Toml(file) => file.read_version(contents),
+            Self::Json(file) => file.read_version(contents),
+            Self::Plain(file) => file.read_version(contents),
             Self::CargoLock(file) => file.read_version(contents),
             Self::Badge(file) => file.read_version(contents),
         }
@@ -46,6 +57,8 @@ impl VersionFileWriter for VersionFile {
     fn write_version(&self, contents: &str, version: &Version) -> Result<String, VersionFileError> {
         match self {
             Self::Toml(file) => file.write_version(contents, version),
+            Self::Json(file) => file.write_version(contents, version),
+            Self::Plain(file) => file.write_version(contents, version),
             Self::CargoLock(file) => file.write_version(contents, version),
             Self::Badge(file) => file.write_version(contents, version),
         }
@@ -91,6 +104,88 @@ impl VersionFileWriter for TomlVersionFile {
             )));
         }
         replace_string(&self.path, contents, item, version)
+    }
+}
+
+impl JsonVersionFile {
+    /// The byte range of the version string, including its quotes, and its value.
+    fn locate(&self, contents: &str) -> Result<(std::ops::Range<usize>, String), VersionFileError> {
+        let parsed = parse_to_ast(
+            contents,
+            &CollectOptions::default(),
+            &ParseOptions::default(),
+        )
+        .map_err(|error| {
+            VersionFileError::Invalid(format!("could not parse {}: {error}", self.path))
+        })?;
+        let mut value = parsed.value.as_ref();
+        for key in self.json.split('.') {
+            value = match value {
+                Some(JsonValue::Object(object)) => object.get(key).map(|property| &property.value),
+                _ => None,
+            };
+        }
+        let missing = || {
+            VersionFileError::Invalid(format!(
+                "{} does not contain JSON key {}",
+                self.path, self.json
+            ))
+        };
+        match value.ok_or_else(missing)? {
+            JsonValue::StringLit(string) => Ok((
+                string.range.start..string.range.end,
+                string.value.to_string(),
+            )),
+            _ => Err(VersionFileError::Invalid(format!(
+                "JSON key {} in {} must be a string",
+                self.json, self.path
+            ))),
+        }
+    }
+}
+
+impl VersionFileWriter for JsonVersionFile {
+    fn path(&self) -> &str {
+        &self.path
+    }
+
+    fn read_version(&self, contents: &str) -> Result<Version, VersionFileError> {
+        let (_, version) = self.locate(contents)?;
+        parse_version(&self.path, &version)
+    }
+
+    fn write_version(&self, contents: &str, version: &Version) -> Result<String, VersionFileError> {
+        let (range, _) = self.locate(contents)?;
+        let mut written = contents.to_owned();
+        written.replace_range(range, &format!("\"{version}\""));
+        Ok(written)
+    }
+}
+
+impl VersionFileWriter for PlainVersionFile {
+    fn path(&self) -> &str {
+        &self.path
+    }
+
+    fn read_version(&self, contents: &str) -> Result<Version, VersionFileError> {
+        let (version, _) = split_line_break(contents);
+        parse_version(&self.path, version)
+    }
+
+    fn write_version(&self, contents: &str, version: &Version) -> Result<String, VersionFileError> {
+        let (_, line_break) = split_line_break(contents);
+        Ok(format!("{version}{line_break}"))
+    }
+}
+
+/// Split off one trailing line break, keeping whether it is LF or CRLF.
+fn split_line_break(contents: &str) -> (&str, &str) {
+    if let Some(version) = contents.strip_suffix("\r\n") {
+        (version, "\r\n")
+    } else if let Some(version) = contents.strip_suffix('\n') {
+        (version, "\n")
+    } else {
+        (contents, "")
     }
 }
 

@@ -88,6 +88,8 @@ impl ReleaseDeclaration {
 #[serde(untagged)]
 pub enum VersionFile {
     Toml(TomlVersionFile),
+    Json(JsonVersionFile),
+    Plain(PlainVersionFile),
     CargoLock(CargoLockVersionFile),
     Badge(BadgeVersionFile),
 }
@@ -103,6 +105,15 @@ impl VersionFile {
                     ));
                 }
             }
+            Self::Json(file) => {
+                validate_relative_path(&file.path)?;
+                if file.json.is_empty() {
+                    return Err(DeclarationError::Invalid(
+                        "JSON key selector must not be empty".into(),
+                    ));
+                }
+            }
+            Self::Plain(file) => validate_relative_path(&file.path)?,
             Self::CargoLock(file) => {
                 validate_relative_path(&file.path)?;
                 if file.cargo_lock.is_empty() {
@@ -123,6 +134,25 @@ pub struct TomlVersionFile {
     pub path: String,
     pub toml: String,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JsonVersionFile {
+    pub path: String,
+    pub json: String,
+}
+
+/// A file that contains nothing but the version, optionally followed by a line break.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlainVersionFile {
+    pub path: String,
+    pub plain: PlainOptions,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlainOptions {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

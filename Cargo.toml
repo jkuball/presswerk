@@ -11,6 +11,7 @@ anyhow = "1"
 clap = { version = "4.5.53", features = ["derive"] }
 git-cliff-core = { version = "2.14.2", default-features = false, features = ["repo"] }
 git2 = { version = "0.21", default-features = false }
+jsonc-parser = "0.34.0"
 minijinja = { version = "3.0.5", features = ["serde"] }
 nix-bindings-expr = "0.2.1"
 nix-bindings-fetchers = "0.2.1"

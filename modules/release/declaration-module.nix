@@ -53,6 +53,29 @@
         };
       };
 
+      keyedFileModule = format: {
+        options = {
+          path = mkOption {
+            type = relativePath;
+            description = "Repository-relative path to the ${format} file.";
+          };
+
+          key = mkOption {
+            type = types.strMatching "[^.]+([.][^.]+)*";
+            example = "project.version";
+            description = "Dotted key of the version string in the ${format} file.";
+          };
+        };
+      };
+
+      plainModule = {
+        options.path = mkOption {
+          type = relativePath;
+          default = "VERSION";
+          description = "Repository-relative path to the file that contains nothing but the version.";
+        };
+      };
+
       badgeModule = {
         options = {
           path = mkOption {
@@ -145,6 +168,45 @@
             }
           '';
           description = "Cargo version sources and writers.";
+        };
+
+        versionFiles.toml = mkOption {
+          type = types.attrsOf (types.submodule (keyedFileModule "TOML"));
+          default = { };
+          example = lib.literalExpression ''
+            {
+              pyproject = {
+                path = "pyproject.toml";
+                key = "project.version";
+              };
+            }
+          '';
+          description = "Version sources and writers for a dotted key in a TOML file.";
+        };
+
+        versionFiles.json = mkOption {
+          type = types.attrsOf (types.submodule (keyedFileModule "JSON"));
+          default = { };
+          example = lib.literalExpression ''
+            {
+              package = {
+                path = "package.json";
+                key = "version";
+              };
+            }
+          '';
+          description = "Version sources and writers for a dotted key in a JSON file.";
+        };
+
+        versionFiles.plain = mkOption {
+          type = types.attrsOf (types.submodule plainModule);
+          default = { };
+          example = lib.literalExpression ''
+            {
+              default = { };
+            }
+          '';
+          description = "Version sources and writers for files that contain nothing but the version.";
         };
 
         versionFiles.badge = mkOption {
@@ -249,15 +311,41 @@
           }
         ];
 
-        version = lib.mkMerge (lib.mapAttrsToList
-          (
-            name: cargo:
-              lib.mkDefinition {
-                file = "versionFiles.cargo.${name} (${cargo.cargoToml})";
-                value = (builtins.fromTOML (builtins.readFile (config.sourceRoot + "/${cargo.cargoToml}"))).package.version;
-              }
-          )
-          config.versionFiles.cargo);
+        version =
+          let
+            read = path: builtins.readFile (config.sourceRoot + "/${path}");
+            keyed = kind: parse: lib.mapAttrsToList
+              (
+                name: file:
+                  lib.mkDefinition {
+                    file = "versionFiles.${kind}.${name} (${file.path})";
+                    value = lib.getAttrFromPath (lib.splitString "." file.key) (parse (read file.path));
+                  }
+              )
+              config.versionFiles.${kind};
+          in
+          lib.mkMerge (
+            lib.mapAttrsToList
+              (
+                name: cargo:
+                  lib.mkDefinition {
+                    file = "versionFiles.cargo.${name} (${cargo.cargoToml})";
+                    value = (builtins.fromTOML (read cargo.cargoToml)).package.version;
+                  }
+              )
+              config.versionFiles.cargo
+            ++ keyed "toml" builtins.fromTOML
+            ++ keyed "json" builtins.fromJSON
+            ++ lib.mapAttrsToList
+              (
+                name: plain:
+                  lib.mkDefinition {
+                    file = "versionFiles.plain.${name} (${plain.path})";
+                    value = lib.removeSuffix "\r" (lib.removeSuffix "\n" (read plain.path));
+                  }
+              )
+              config.versionFiles.plain
+          );
       };
     };
 }

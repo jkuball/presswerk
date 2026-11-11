@@ -1,4 +1,6 @@
-use presswerk::declaration::{CargoLockVersionFile, TomlVersionFile};
+use presswerk::declaration::{
+    CargoLockVersionFile, JsonVersionFile, PlainOptions, PlainVersionFile, TomlVersionFile,
+};
 use presswerk::version::{VersionFileWriter, check_consistent_versions};
 use semver::Version;
 
@@ -146,4 +148,71 @@ fn checks_that_all_version_files_agree() {
         .to_string()
         .contains("version files disagree")
     );
+}
+
+#[test]
+fn writes_a_nested_json_version_without_reformatting_the_file() {
+    let writer = JsonVersionFile {
+        path: "plugin.json".into(),
+        json: "plugin.version".into(),
+    };
+    let contents = "{\n    \"name\": \"example\",\n    \"plugin\": { \"version\": \"1.2.3\", \"tags\": [\"a\"] },\n    \"version\": \"9.9.9\"\n}\n";
+
+    let written = writer
+        .write_version(contents, &Version::new(1, 3, 0))
+        .unwrap();
+
+    assert_eq!(written, contents.replace("\"1.2.3\"", "\"1.3.0\""));
+    assert_eq!(
+        writer.read_version(&written).unwrap(),
+        Version::new(1, 3, 0)
+    );
+}
+
+#[test]
+fn rejects_missing_and_non_string_json_versions() {
+    let missing = JsonVersionFile {
+        path: "package.json".into(),
+        json: "version".into(),
+    };
+    assert!(
+        missing
+            .read_version("{\"name\": \"example\"}")
+            .unwrap_err()
+            .to_string()
+            .contains("does not contain JSON key version")
+    );
+    assert!(
+        missing
+            .write_version("{\"version\": 1}", &Version::new(1, 0, 0))
+            .unwrap_err()
+            .to_string()
+            .contains("must be a string")
+    );
+}
+
+#[test]
+fn keeps_the_line_break_of_a_plain_version_file() {
+    let writer = PlainVersionFile {
+        path: "VERSION".into(),
+        plain: PlainOptions {},
+    };
+
+    for (contents, written) in [
+        ("1.2.3\n", "1.3.0\n"),
+        ("1.2.3\r\n", "1.3.0\r\n"),
+        ("1.2.3", "1.3.0"),
+    ] {
+        assert_eq!(
+            writer.read_version(contents).unwrap(),
+            Version::new(1, 2, 3)
+        );
+        assert_eq!(
+            writer
+                .write_version(contents, &Version::new(1, 3, 0))
+                .unwrap(),
+            written
+        );
+    }
+    assert!(writer.read_version("1.2.3\nmore\n").is_err());
 }

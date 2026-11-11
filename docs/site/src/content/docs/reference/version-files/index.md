@@ -37,6 +37,35 @@ versionFiles.cargo.my-crate = { };
 versionFiles.cargo.my-other-crate.cargoToml = "crates/other/Cargo.toml";
 ```
 
+## TOML and JSON
+
+[`versionFiles.toml`](/reference/options/#versionFiles.toml) and
+[`versionFiles.json`](/reference/options/#versionFiles.json) declare a version string under a
+dotted `key`. The flake reads the key, and Presswerk replaces only that string, so comments,
+indentation, and key order stay as they are.
+
+```nix presswerk-module
+versionFiles.toml.pyproject = {
+  path = "pyproject.toml";
+  key = "project.version";
+};
+versionFiles.json.package = {
+  path = "package.json";
+  key = "version";
+};
+```
+
+## Plain
+
+[`versionFiles.plain`](/reference/options/#versionFiles.plain) declares a file that contains
+nothing but the version, optionally followed by a line break. It defaults to `VERSION`. This is the
+simplest way to give a project without a manifest a version: read the file in your flake with
+`lib.fileContents ./VERSION`.
+
+```nix presswerk-module
+versionFiles.plain.default = { };
+```
+
 ## Badge
 
 [`versionFiles.badge`](/reference/options/#versionFiles.badge) declares a version badge: a small
@@ -59,5 +88,4 @@ file, and editing or deleting the badge never blocks a release.
 
 ## Other formats
 
-Cargo and the badge are the only built-in version files today. Declaring version files for other
-formats in the flake itself is planned.
+Declaring version files for other formats, such as YAML, in the flake itself is planned.
