@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.4] - 2026-11-11
+
+### 📝 Add or update documentation
+
+- (docs): Give the real reason for the missing llms-full.txt
+- (docs): Explain what agents can read from the docs
+
+### 👷 Add or update CI build system
+
+- (ci): Release as the Presswerk-Releases app
+
+### 🔍️ Improve SEO
+
+- (docs): Allow crawling and point crawlers to the sitemap
+
 ## [0.3.3] - 2026-11-11
 
 ### 📝 Add or update documentation
