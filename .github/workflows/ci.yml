@@ -14,6 +14,8 @@ on:
 permissions:
   actions: write
   contents: read
+  id-token: write
+  pages: write
 
 concurrency:
   group: ${{ github.event_name == 'pull_request' && github.ref || 'presswerk-release' }}
@@ -22,6 +24,7 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate != '' && 'github-pages' || '' }}
     steps:
       - name: Create release app token
         id: app
@@ -48,7 +51,7 @@ jobs:
         run: >
           nix run --inputs-from . nixpkgs#nix-fast-build --
           --flake ".#" --select 'flake: { inherit (flake) packages checks; }'
-          --no-nom --skip-cached --push-build-closure
+          --no-nom --skip-cached --push-build-closure --out-link "$RUNNER_TEMP/result"
           ${{ secrets.CACHIX_AUTH_TOKEN != '' && '--cachix-cache jkuball' || '' }}
 
       - name: Plan release
@@ -105,36 +108,18 @@ jobs:
           git config user.email 355333992+presswerk-releases[bot]@users.noreply.github.com
           nix run .#presswerk-release -- publish HEAD
 
-  docs:
-    needs: ci
-    if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.candidate }}
-
-      - uses: DeterminateSystems/determinate-nix-action@v3
-      - uses: cachix/cachix-action@v17
-        with:
-          name: jkuball
-          skipPush: true
-
-      - name: Build docs
+      - name: Collect docs
+        if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
         run: |
-          nix build .#docs
-          cp -rL --no-preserve=mode result "$RUNNER_TEMP/site"
+          docs="$RUNNER_TEMP/result-packages.x86_64-linux.docs"
+          test -e "$docs" || nix build .#docs --out-link "$docs"
+          cp -rL --no-preserve=mode "$docs" "$RUNNER_TEMP/site"
 
       - uses: actions/upload-pages-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
         with:
           path: ${{ runner.temp }}/site
 
-      - id: deploy
+      - name: Deploy docs
+        if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
         uses: actions/deploy-pages@v4
