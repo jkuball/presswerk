@@ -195,9 +195,10 @@
       ociModule = {
         options = {
           repository = mkOption {
-            type = types.strMatching "([^/]*[.:][^/]*|localhost)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
+            # A plain host and optional port: no credentials, query, or fragment in the declaration.
+            type = types.strMatching "(([A-Za-z0-9-]+[.])+[A-Za-z0-9-]+(:[0-9]+)?|[A-Za-z0-9.-]+:[0-9]+|localhost|\\[[0-9A-Fa-f:]+](:[0-9]+)?)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
             example = "ghcr.io/owner/project";
-            description = "Registry host and repository path the images are pushed to. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
+            description = "Registry host, with an optional port, and repository path the images are pushed to. Credentials never go here, only into `username` and `password`. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
           };
 
           images = mkOption {

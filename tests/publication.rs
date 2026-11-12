@@ -119,6 +119,43 @@ fn publishes_the_tag_before_completing_missing_publishers() {
 }
 
 #[test]
+fn pending_aliases_do_not_keep_a_release_from_completing() {
+    let writes = Rc::new(RefCell::new(Vec::new()));
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        writes: writes.clone(),
+    };
+    // A publisher whose aliases stay pending, such as after a failed `latest` update.
+    let publisher = FakePublisher {
+        state: Rc::new(RefCell::new(PublisherState::AliasesPending)),
+        writes: writes.clone(),
+    };
+
+    struct Stuck(FakePublisher);
+    impl Publisher for Stuck {
+        fn state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
+            self.0.state(release)
+        }
+        fn publish(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
+            self.0.writes.borrow_mut().push("aliases");
+            Ok(Vec::new())
+        }
+    }
+
+    let steps = publish_ordered(
+        &tag,
+        &release("0123456789012345678901234567890123456789".into()),
+        &[Box::new(Stuck(publisher))],
+    )
+    .unwrap();
+    assert_eq!(writes.borrow().last(), Some(&"aliases"));
+    assert_eq!(
+        steps.1,
+        vec![(PublisherStep::ArtifactsCompleted, Vec::new())]
+    );
+}
+
+#[test]
 fn reports_complete_publication_without_writing_again() {
     let writes = Rc::new(RefCell::new(Vec::new()));
     let tag = FakeTagPublisher {

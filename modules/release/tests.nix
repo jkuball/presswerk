@@ -310,9 +310,17 @@ in
           { }
           { repository = "localhost:5000/project"; }
           { tags = [ "{version}" "latest" ]; }
+          { repository = "[::1]:5000/project"; }
+          { repository = "europe-docker.pkg.dev/project/repo/image"; }
           # Without a registry host.
           { repository = "owner/project"; }
           { repository = "ghcr.io/Owner/project"; }
+          # Credentials, queries, and fragments never enter the declaration.
+          { repository = "user:secret@ghcr.io/owner/project"; }
+          { repository = "token@ghcr.io/owner/project"; }
+          { repository = "ghcr.io/owner/project?x=1"; }
+          { repository = "ghcr.io/owner/project#fragment"; }
+          { repository = "ghcr.io?x=1/owner/project"; }
           { images = { }; }
           { images."linux/amd64" = "/nix/store/00000000000000000000000000000000-fake.tar.gz"; }
           # Every release needs a tag of its own.
@@ -321,7 +329,7 @@ in
           { tags = [ "{version}" "{major}" ]; }
           { tags = [ "-{version}" ]; }
         ];
-      expected = [ true true true false false false false false false false false ];
+      expected = [ true true true true true false false false false false false false false false false false false false ];
     };
 
     "test a badge does not define the version" = {

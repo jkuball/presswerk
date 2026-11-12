@@ -100,6 +100,9 @@ pub enum PublisherState {
     /// Published, but some of its artifacts are missing and can be added.
     Incomplete,
     Published,
+    /// Published, but best-effort aliases such as an OCI `latest` tag still need to move. The
+    /// release counts as complete; a publish moves them, and a failure there is only a warning.
+    AliasesPending,
     Conflicting(String),
 }
 
@@ -110,6 +113,8 @@ pub enum AssetStep {
     AlreadyUploaded,
     /// Deliberately left as it is, such as an alias that points to a higher version.
     Kept(String),
+    /// A best-effort step that failed, such as an alias that could not be moved; a rerun repairs it.
+    Warning(String),
 }
 
 /// The kind of artifact a publisher reports.
@@ -968,6 +973,19 @@ pub struct PublishReport {
 }
 
 impl PublishReport {
+    /// The best-effort steps that failed, by artifact name, with their reason.
+    #[must_use]
+    pub fn warnings(&self) -> Vec<(&str, &str)> {
+        self.publisher_steps
+            .iter()
+            .flat_map(|(_, _, artifacts)| artifacts)
+            .filter_map(|artifact| match &artifact.step {
+                AssetStep::Warning(reason) => Some((artifact.name.as_str(), reason.as_str())),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Whether every step was already complete before this run.
     #[must_use]
     pub fn changed_nothing(&self) -> bool {
@@ -1156,7 +1174,9 @@ pub fn publish_ordered(
             PublisherState::Published => PublisherStep::AlreadyPublished,
             PublisherState::Missing => PublisherStep::Published,
             PublisherState::Draft => PublisherStep::DraftCompleted,
-            PublisherState::Incomplete => PublisherStep::ArtifactsCompleted,
+            PublisherState::Incomplete | PublisherState::AliasesPending => {
+                PublisherStep::ArtifactsCompleted
+            }
             PublisherState::Conflicting(message) => return Err(PublicationError::new(message)),
         };
         let artifacts = if step == PublisherStep::AlreadyPublished {
@@ -1178,7 +1198,7 @@ pub fn publish_ordered(
     }
     for publisher in publishers {
         match publisher.state(release)? {
-            PublisherState::Published => {}
+            PublisherState::Published | PublisherState::AliasesPending => {}
             state => {
                 return Err(PublicationError::new(format!(
                     "publisher did not complete {:?}: {state:?}",

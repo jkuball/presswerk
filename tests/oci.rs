@@ -218,6 +218,10 @@ enum Fault {
     HijackTag(&'static str),
     /// Answer every inspection of a manifest with this status.
     InspectStatus(u16),
+    /// Answer a write of this tag with 500 without storing it.
+    RejectTag(&'static str),
+    /// Answer every inspection of this tag with 500.
+    UnreadableTag(&'static str),
 }
 
 #[derive(Default)]
@@ -390,6 +394,12 @@ fn handle(mut stream: TcpStream, state: &Mutex<RegistryState>, realm: &str) {
                     respond(&mut stream, status, &[], b"");
                     return;
                 }
+                if let Some(Fault::UnreadableTag(tag)) = fault
+                    && tag == reference
+                {
+                    respond(&mut stream, 500, &[], b"");
+                    return;
+                }
                 let digest = state
                     .tags
                     .get(reference)
@@ -420,6 +430,13 @@ fn handle(mut stream: TcpStream, state: &Mutex<RegistryState>, realm: &str) {
             }
             "PUT" => {
                 let digest = digest(&body);
+                if let Some(Fault::RejectTag(tag)) = fault
+                    && tag == reference
+                {
+                    take_fault(state);
+                    respond(&mut stream, 500, &[], b"");
+                    return;
+                }
                 if let Some(Fault::HijackTag(tag)) = fault
                     && tag == reference
                 {
@@ -819,5 +836,66 @@ fn credentials_are_checked_and_never_printed() {
     assert!(
         missing.contains("PRESSWERK_TEST_UNSET_USERNAME"),
         "{missing}"
+    );
+}
+
+#[test]
+fn a_failed_alias_is_a_warning_that_a_rerun_repairs() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    let repository = registry.repository();
+    let tags = ["{version}", "latest"];
+    let release = release("1.0.0");
+    registry.fault(Fault::RejectTag("latest"));
+
+    let publisher = registry.publisher(images.load(), &tags);
+    let steps = publisher.publish(&release).unwrap();
+    let alias = steps.last().unwrap();
+    assert_eq!(alias.name, format!("{repository}:latest"));
+    let AssetStep::Warning(reason) = &alias.step else {
+        panic!("expected a warning, got {alias:?}");
+    };
+    assert!(reason.contains("HTTP 500"), "{reason}");
+    assert_eq!(
+        steps[2].step,
+        AssetStep::Uploaded,
+        "the version tag is pushed"
+    );
+    assert!(registry.tag("latest").is_none());
+    assert_eq!(
+        publisher.state(&release).unwrap(),
+        PublisherState::AliasesPending
+    );
+
+    let rerun = registry.publisher(images.load(), &tags);
+    let steps = rerun.publish(&release).unwrap();
+    assert_eq!(steps[2].step, AssetStep::AlreadyUploaded);
+    assert_eq!(steps.last().unwrap().step, AssetStep::Uploaded);
+    assert_eq!(registry.tag("latest"), registry.tag("1.0.0"));
+    assert_eq!(rerun.state(&release).unwrap(), PublisherState::Published);
+}
+
+#[test]
+fn an_unreadable_alias_is_a_warning_while_the_release_completes() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    let release = release("1.0.0");
+    registry.fault(Fault::UnreadableTag("latest"));
+
+    let publisher = registry.publisher(images.load(), &["{version}", "latest"]);
+    assert_eq!(publisher.state(&release).unwrap(), PublisherState::Missing);
+    let steps = publisher.publish(&release).unwrap();
+    assert_eq!(steps[2].step, AssetStep::Uploaded);
+    let AssetStep::Warning(reason) = &steps.last().unwrap().step else {
+        panic!("expected a warning");
+    };
+    assert!(reason.contains("cannot tell"), "{reason}");
+    assert!(
+        registry.tag("latest").is_none(),
+        "an unreadable alias is not overwritten"
+    );
+    assert_eq!(
+        publisher.state(&release).unwrap(),
+        PublisherState::AliasesPending
     );
 }

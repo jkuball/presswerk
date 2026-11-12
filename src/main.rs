@@ -121,11 +121,26 @@ fn run() -> Result<()> {
                             AssetStep::Uploaded => done.to_owned(),
                             AssetStep::AlreadyUploaded => already.to_owned(),
                             AssetStep::Kept(reason) => format!("kept ({reason})"),
+                            AssetStep::Warning(reason) => {
+                                format!("not moved: {reason}; rerun to repair")
+                            }
                         };
                         [kind.into(), artifact.name.clone(), status]
                     }));
                 }
                 print!("{}", render_steps(&rows));
+                let warnings = report.warnings();
+                if !warnings.is_empty() {
+                    eprintln!(
+                        "warning: {} could not be updated; {} is complete, publish it again to repair",
+                        warnings
+                            .iter()
+                            .map(|(name, _)| *name)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        report.tag
+                    );
+                }
                 if report.changed_nothing() {
                     println!(
                         "{} from {commit} was already released; nothing changed.",

@@ -85,8 +85,20 @@ Before anything is written, Presswerk compares every tag with the index digest o
 - **Matching:** the tag already points to exactly this index. It is left as it is.
 - **Conflicting:** a version tag, or an alias for the same version, points to another digest.
   Presswerk stops before the release tag is pushed and never overwrites it.
-- **Unknown:** the registry does not answer whether the tag exists, such as with a server error.
-  Presswerk stops.
+- **Unknown:** the registry does not answer whether a version tag exists, such as with a server
+  error. Presswerk stops.
+
+Aliases are written last and are best effort, as described under
+[mutable aliases](https://github.com/jkuball/presswerk/blob/main/docs/conception/publication.md#mutable-aliases).
+An alias that cannot be read or moved does not fail the release: once the version tags exist, the
+images count as published, `publish` continues with the next publishers, and the alias row reports
+the reason:
+
+```console
+  alias     ghcr.io/owner/project:latest  not moved: could not push ghcr.io/owner/project:latest: HTTP 500; rerun to repair
+```
+
+`publish` then also prints a warning. The next run of the release moves the alias.
 
 When a tag is missing, Presswerk uploads every layer and config the registry does not have yet,
 puts each platform's manifest and the index by digest, and then points the version tags and
@@ -115,7 +127,8 @@ most registries use.
 - **Google Artifact Registry:** the username `oauth2accesstoken` and an access token, such as from
   `gcloud auth print-access-token`.
 
-The repository must start with the registry host. Loopback registries such as
+The repository must start with the registry host and an optional port, and must not contain
+credentials such as `user:token@`, a query, or a fragment. Loopback registries such as
 `localhost:5000/project` are reached over plain HTTP, every other registry over HTTPS.
 
 ### Options

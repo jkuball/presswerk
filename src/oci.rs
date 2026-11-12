@@ -57,6 +57,13 @@ impl RepositoryReference {
                 "must start with a registry host, such as ghcr.io/owner/project",
             ));
         }
+        // Only a host and port: credentials belong in environment variables, never in the
+        // declaration, and a query or fragment has no meaning for a registry.
+        if !valid_host(host) {
+            return Err(invalid(
+                "must start with a plain registry host and optional port, without credentials, query, or fragment",
+            ));
+        }
         if name.is_empty()
             || !name.split('/').all(|component| {
                 !component.is_empty()
@@ -100,6 +107,38 @@ impl RepositoryReference {
         }
         Ok(Self { registry, name })
     }
+}
+
+/// A registry host: a DNS name, IPv4 address, or bracketed IPv6 address, with an optional port.
+fn valid_host(host: &str) -> bool {
+    let (name_valid, port) = if let Some(rest) = host.strip_prefix('[') {
+        let Some((address, port)) = rest.split_once(']') else {
+            return false;
+        };
+        (
+            !address.is_empty()
+                && address
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() || byte == b':'),
+            port,
+        )
+    } else {
+        let (name, port) = host
+            .find(':')
+            .map_or((host, ""), |index| (&host[..index], &host[index..]));
+        (
+            !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-')),
+            port,
+        )
+    };
+    name_valid
+        && (port.is_empty()
+            || port.strip_prefix(':').is_some_and(|digits| {
+                !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+            }))
 }
 
 /// The platform an image runs on, such as `linux/amd64` or `linux/arm/v7`.
@@ -931,6 +970,8 @@ pub enum TagState {
     Behind,
     /// An alias that is left alone, with the reason.
     Kept(String),
+    /// An alias whose state could not be read; it is left alone and repaired by a later run.
+    Unknown(String),
     Conflicting(String),
 }
 
@@ -1018,7 +1059,12 @@ impl OciPublisher {
             }),
             OciTag::Alias(name) => {
                 let prerelease = !release.version.pre.is_empty();
-                let Some((actual, manifest)) = self.registry.manifest(name)? else {
+                // Aliases are best effort: an alias that cannot be read is reported, not fatal.
+                let current = match self.registry.manifest(name) {
+                    Ok(current) => current,
+                    Err(error) => return Ok(TagState::Unknown(error.to_string())),
+                };
+                let Some((actual, manifest)) = current else {
                     return Ok(if prerelease {
                         TagState::Kept("pre-release".into())
                     } else {
@@ -1075,6 +1121,31 @@ impl OciPublisher {
         })
     }
 
+    /// Point an alias at the index if it still needs to move; the error is the warning text.
+    fn move_alias(
+        &self,
+        tag: &OciTag,
+        release: &Release,
+        inspection: &Inspection,
+    ) -> Result<(), String> {
+        match self
+            .tag_state(tag, release, &inspection.digest)
+            .map_err(|error| error.to_string())?
+        {
+            TagState::Missing | TagState::Behind => self
+                .registry
+                .put_manifest(
+                    tag.name(),
+                    INDEX_MEDIA_TYPE,
+                    &inspection.index,
+                    &inspection.digest,
+                )
+                .map_err(|error| error.to_string()),
+            TagState::Unknown(reason) | TagState::Conflicting(reason) => Err(reason),
+            TagState::Matching | TagState::Kept(_) => Ok(()),
+        }
+    }
+
     fn steps(&self, inspection: &Inspection, images: Vec<AssetStep>) -> ArtifactSteps {
         let mut steps: ArtifactSteps = self
             .images
@@ -1094,6 +1165,7 @@ impl OciPublisher {
             name: self.reference(tag.name()),
             step: match state {
                 TagState::Kept(reason) => AssetStep::Kept(reason.clone()),
+                TagState::Unknown(reason) => AssetStep::Warning(reason.clone()),
                 _ => AssetStep::AlreadyUploaded,
             },
         }));
@@ -1144,6 +1216,11 @@ impl Publisher for OciPublisher {
                 .all(|(_, state)| *state == TagState::Missing)
             {
                 PublisherState::Missing
+            } else if !version_tags
+                .iter()
+                .all(|(_, state)| *state == TagState::Matching)
+            {
+                PublisherState::Incomplete
             } else if inspection
                 .tags
                 .iter()
@@ -1151,7 +1228,8 @@ impl Publisher for OciPublisher {
             {
                 PublisherState::Published
             } else {
-                PublisherState::Incomplete
+                // The release is complete; only best-effort aliases still need to move.
+                PublisherState::AliasesPending
             },
         )
     }
@@ -1178,7 +1256,29 @@ impl Publisher for OciPublisher {
         let mut steps = self.steps(&inspection, images);
         let tag_steps = steps.len() - inspection.tags.len();
         for ((tag, state), step) in inspection.tags.iter().zip(&mut steps[tag_steps..]) {
-            if !matches!(state, TagState::Missing | TagState::Behind) {
+            if !matches!(
+                state,
+                TagState::Missing | TagState::Behind | TagState::Unknown(_)
+            ) {
+                continue;
+            }
+            if let OciTag::Alias(_) = tag {
+                // Aliases come last and are best effort: a failure is a warning that a rerun
+                // repairs, and never stops the release.
+                if let Err(reason) = self.move_alias(tag, release, &inspection) {
+                    step.step = AssetStep::Warning(reason);
+                } else if let Ok(state) = self.tag_state(tag, release, &inspection.digest) {
+                    step.step = match state {
+                        TagState::Matching => AssetStep::Uploaded,
+                        TagState::Kept(reason) => AssetStep::Kept(reason),
+                        TagState::Unknown(reason) | TagState::Conflicting(reason) => {
+                            AssetStep::Warning(reason)
+                        }
+                        TagState::Missing | TagState::Behind => {
+                            AssetStep::Warning("the registry did not keep the alias".into())
+                        }
+                    };
+                }
                 continue;
             }
             // Look again right before writing: a concurrent run may have pushed the tag, and a
@@ -1197,12 +1297,14 @@ impl Publisher for OciPublisher {
                 }
                 TagState::Matching => step.step = AssetStep::Uploaded,
                 TagState::Kept(reason) => step.step = AssetStep::Kept(reason),
-                TagState::Conflicting(message) => return Err(PublicationError::new(message)),
+                TagState::Conflicting(message) | TagState::Unknown(message) => {
+                    return Err(PublicationError::new(message));
+                }
             }
         }
 
         match self.state(release)? {
-            PublisherState::Published => Ok(steps),
+            PublisherState::Published | PublisherState::AliasesPending => Ok(steps),
             state => Err(PublicationError::new(format!(
                 "{} was not published: {state:?}",
                 self.repository
@@ -1236,6 +1338,9 @@ mod tests {
         assert_eq!(hub.registry.as_str(), "https://registry-1.docker.io/");
         assert_eq!(hub.name, "library/nginx");
 
+        let ipv6 = RepositoryReference::parse("[::1]:5000/image").unwrap();
+        assert_eq!(ipv6.registry.as_str(), "http://[::1]:5000/");
+
         let gar = RepositoryReference::parse("europe-docker.pkg.dev/project/repo/image").unwrap();
         assert_eq!(gar.name, "project/repo/image");
 
@@ -1247,6 +1352,13 @@ mod tests {
             "ghcr.io/owner//project",
             "ghcr.io/owner/project:tag",
             "ghcr.io/-owner/project",
+            "user:secret@ghcr.io/owner/project",
+            "token@ghcr.io/owner/project",
+            "ghcr.io?x=1/owner/project",
+            "ghcr.io#fragment/owner/project",
+            "ghcr.io:port/owner/project",
+            "ghcr.io/owner/project?x=1",
+            "ghcr.io/owner/project#fragment",
         ] {
             assert!(RepositoryReference::parse(invalid).is_err(), "{invalid}");
         }
