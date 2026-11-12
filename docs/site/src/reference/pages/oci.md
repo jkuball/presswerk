@@ -98,7 +98,9 @@ same tag in the moment between the last inspection and the write is overwritten;
 reports it as a conflict.
 
 A rerun of a complete release only inspects the tags and reports `already pushed`. A tag that
-was deleted is restored on the next run, without uploading the layers again.
+was deleted is restored on the next run, without uploading layers the registry still has. GitHub
+Container Registry restores a deleted version together with its tags as soon as its index is
+pushed again.
 
 ### Credentials
 

@@ -1182,7 +1182,9 @@ impl Publisher for OciPublisher {
                 continue;
             }
             // Look again right before writing: a concurrent run may have pushed the tag, and a
-            // tag that now points elsewhere must not be overwritten.
+            // tag that now points elsewhere must not be overwritten. A tag that was missing is
+            // reported as pushed even if it reappeared meanwhile, such as when a registry restores
+            // a deleted version's tags once its index is pushed again.
             match self.tag_state(tag, release, &inspection.digest)? {
                 TagState::Missing | TagState::Behind => {
                     self.registry.put_manifest(
@@ -1193,7 +1195,7 @@ impl Publisher for OciPublisher {
                     )?;
                     step.step = AssetStep::Uploaded;
                 }
-                TagState::Matching => {}
+                TagState::Matching => step.step = AssetStep::Uploaded,
                 TagState::Kept(reason) => step.step = AssetStep::Kept(reason),
                 TagState::Conflicting(message) => return Err(PublicationError::new(message)),
             }
