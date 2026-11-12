@@ -8,16 +8,14 @@
       conventionalCatalog = builtins.fromJSON (builtins.readFile ./conventional/catalog.json);
       variationSelector = builtins.fromJSON ''"\uFE0F"'';
       normalizedEmoji = emoji: builtins.replaceStrings [ variationSelector ] [ "" ] emoji;
-      # Every commit analyzer is an option under `analyzer`; a release declares exactly one of them.
+      # Every commit analyzer lives under `analyzer` and has an `enable` option; a release enables
+      # exactly one of them. A disabled analyzer's settings are ignored.
       analyzerNames = [ "gitmoji" "conventional" ];
-      declaredAnalyzers = builtins.filter (name: config.analyzer.${name} != null) analyzerNames;
-      analyzerOptions = names: lib.concatMapStringsSep ", " (name: "analyzer.${name}") names;
-      catalogEntries =
-        if config.analyzer.gitmoji == null then [ ]
-        else builtins.filter (entry: entry != null) (builtins.attrValues config.analyzer.gitmoji.catalog);
-      conventionalTypes =
-        if config.analyzer.conventional == null then [ ]
-        else builtins.attrNames (lib.filterAttrs (_type: entry: entry != null) config.analyzer.conventional.catalog);
+      enabledAnalyzers = builtins.filter (name: config.analyzer.${name}.enable) analyzerNames;
+      catalogEntries = lib.optionals config.analyzer.gitmoji.enable
+        (builtins.filter (entry: entry != null) (builtins.attrValues config.analyzer.gitmoji.catalog));
+      conventionalTypes = lib.optionals config.analyzer.conventional.enable
+        (builtins.attrNames (lib.filterAttrs (_type: entry: entry != null) config.analyzer.conventional.catalog));
       catalogEmojis = map (entry: normalizedEmoji entry.emoji) catalogEntries;
       catalogShortcodes = map (entry: entry.shortcode) catalogEntries;
 
@@ -146,8 +144,10 @@
         };
       };
 
-      gitmojiAnalyzerModule = {
-        options.catalog = mkOption {
+      gitmojiAnalyzerOptions = {
+        enable = lib.mkEnableOption "the Gitmoji analyzer; a release enables exactly one commit analyzer";
+
+        catalog = mkOption {
           type = types.attrsOf (types.nullOr (types.submodule gitmojiModule));
           default = { };
           defaultText = lib.literalMD "the [default Gitmoji catalog](https://presswerk.dev/reference/analyzers/#default-gitmoji-catalog)";
@@ -161,8 +161,6 @@
           '';
           description = "Gitmoji catalog keyed by entry identifier; each entry's shortcode defaults to its identifier. Setting an entry to `lib.mkForce null` removes it.";
         };
-
-        config.catalog = lib.mapAttrs (_shortcode: lib.mapAttrs (_field: lib.mkDefault)) gitmojiCatalog;
       };
 
       conventionalTypeModule = {
@@ -183,8 +181,10 @@
         };
       };
 
-      conventionalAnalyzerModule = {
-        options.catalog = mkOption {
+      conventionalAnalyzerOptions = {
+        enable = lib.mkEnableOption "the Conventional Commits analyzer; a release enables exactly one commit analyzer";
+
+        catalog = mkOption {
           type = types.attrsOf (types.nullOr (types.submodule conventionalTypeModule));
           default = { };
           defaultText = lib.literalMD "the [default Conventional Commits catalog](https://presswerk.dev/reference/analyzers/#default-type-catalog)";
@@ -203,8 +203,6 @@
           '';
           description = "Conventional Commits types keyed by their lowercase name. Setting a type to `lib.mkForce null` removes it.";
         };
-
-        config.catalog = lib.mapAttrs (_type: lib.mapAttrs (_field: lib.mkDefault)) conventionalCatalog;
       };
 
       # A file in a flake output: a derivation, or a string built from one, such as "${pkg}/bin/tool".
@@ -354,19 +352,8 @@
         };
 
         analyzer = {
-          gitmoji = mkOption {
-            type = types.nullOr (types.submodule gitmojiAnalyzerModule);
-            default = null;
-            example = lib.literalExpression "{ }";
-            description = "Gitmoji analyzer; declare it, for example as `{ }`, to analyze Gitmoji commits. A release declares exactly one commit analyzer.";
-          };
-
-          conventional = mkOption {
-            type = types.nullOr (types.submodule conventionalAnalyzerModule);
-            default = null;
-            example = lib.literalExpression "{ }";
-            description = "Conventional Commits analyzer; declare it, for example as `{ }`, to analyze Conventional Commits. A release declares exactly one commit analyzer.";
-          };
+          gitmoji = gitmojiAnalyzerOptions;
+          conventional = conventionalAnalyzerOptions;
         };
 
         changelog.path = mkOption {
@@ -402,14 +389,17 @@
       };
 
       config = {
+        analyzer.gitmoji.catalog = lib.mapAttrs (_shortcode: lib.mapAttrs (_field: lib.mkDefault)) gitmojiCatalog;
+        analyzer.conventional.catalog = lib.mapAttrs (_type: lib.mapAttrs (_field: lib.mkDefault)) conventionalCatalog;
+
         assertions = [
           {
-            assertion = builtins.length declaredAnalyzers == 1;
+            assertion = builtins.length enabledAnalyzers == 1;
             message =
-              if declaredAnalyzers == [ ] then
-                "declare a commit analyzer, exactly one of ${analyzerOptions analyzerNames}, for example analyzer.gitmoji = { };"
+              if enabledAnalyzers == [ ] then
+                "enable a commit analyzer, for example analyzer.gitmoji.enable = true;"
               else
-                "declare exactly one commit analyzer; found ${analyzerOptions declaredAnalyzers}";
+                "enable exactly one commit analyzer; enabled: ${lib.concatMapStringsSep ", " (name: "analyzer.${name}") enabledAnalyzers}";
           }
           {
             assertion = lib.all (type: builtins.match "[a-z0-9][a-z0-9_-]*" type != null) conventionalTypes;

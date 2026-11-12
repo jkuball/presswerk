@@ -86,7 +86,7 @@ Create `flake.nix`. Replace `YOUR-OWNER/YOUR-REPO` with the repository you creat
         sourceRoot = self.outPath;
         versionFiles.cargo.YOUR-CRATE = { };
         publishers.github-release.default.repository = "YOUR-OWNER/YOUR-REPO";
-        analyzer.gitmoji = { };
+        analyzer.gitmoji.enable = true;
       };
 
       packages = eachSystem (system:
@@ -107,7 +107,7 @@ Create `flake.nix`. Replace `YOUR-OWNER/YOUR-REPO` with the repository you creat
 
 `mkRelease` reads the version from `Cargo.toml`, updates that file and the matching `Cargo.lock`
 package during preparation, analyzes Gitmoji commits with the default catalog (declare
-`analyzer.conventional = { };` instead for [Conventional Commits](/reference/analyzers/#conventional-commits)),
+`analyzer.conventional.enable = true;` instead for [Conventional Commits](/reference/analyzers/#conventional-commits)),
 writes `CHANGELOG.md`, and configures
 the default `GITHUB_TOKEN` secret for publication. The package takes its version from the release
 with `self.presswerk.default.version` instead of reading `Cargo.toml` again. The [options reference](/reference/options/)

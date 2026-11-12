@@ -6,7 +6,7 @@ let
     imports = [
       module
       ({ config, ... }: {
-        analyzer.gitmoji = lib.mkIf (config.analyzer.conventional == null) (lib.mkDefault { });
+        analyzer.gitmoji.enable = lib.mkIf (!config.analyzer.conventional.enable) (lib.mkDefault true);
       })
     ];
   };
@@ -438,7 +438,7 @@ in
       expr = (mkRelease {
         inherit sourceRoot;
         version = "1.2.3";
-        analyzer.conventional = { };
+        analyzer.conventional.enable = true;
       }).analyzer;
       expected = {
         convention = "conventional";
@@ -469,6 +469,7 @@ in
           catalog = (mkRelease {
             inherit sourceRoot;
             version = "1.2.3";
+            analyzer.conventional.enable = true;
             analyzer.conventional.catalog = {
               docs.semver = "patch";
               deps = {
@@ -498,6 +499,7 @@ in
       expr = builtins.attrNames (mkRelease {
         inherit sourceRoot;
         version = "1.2.3";
+        analyzer.conventional.enable = true;
         analyzer.conventional.catalog = lib.mkForce {
           feat = conventionalCatalog.feat;
         };
@@ -512,6 +514,7 @@ in
           succeeds (mkRelease {
             inherit sourceRoot;
             version = "1.2.3";
+            analyzer.conventional.enable = true;
             analyzer.conventional.catalog.${type} = {
               title = "Custom";
               semver = null;
@@ -539,7 +542,7 @@ in
           (mkBareRelease {
             inherit sourceRoot;
             version = "1.2.3";
-            analyzer.${analyzer} = { };
+            analyzer.${analyzer}.enable = true;
           }).analyzer.convention
         )
         [
@@ -552,44 +555,56 @@ in
       ];
     };
 
-    "test setting an option inside an analyzer declares it" = {
+    "test a release without an enabled analyzer fails" = {
+      expr = succeeds (mkBareRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        # Configuring an analyzer does not enable it.
+        analyzer.gitmoji.catalog.memo.semver = "patch";
+      });
+      expected = false;
+    };
+
+    "test a missing analyzer is reported" = {
+      expr = failedAssertion { };
+      expected = "enable a commit analyzer, for example analyzer.gitmoji.enable = true;";
+    };
+
+    "test two enabled analyzers fail" = {
+      expr = succeeds (mkBareRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.gitmoji.enable = true;
+        analyzer.conventional.enable = true;
+      });
+      expected = false;
+    };
+
+    "test two enabled analyzers are named in the assertion" = {
+      expr = failedAssertion {
+        analyzer.gitmoji.enable = true;
+        analyzer.conventional.enable = true;
+      };
+      expected = "enable exactly one commit analyzer; enabled: analyzer.gitmoji, analyzer.conventional";
+    };
+
+    "test a configured but disabled analyzer is ignored" = {
       expr = (mkBareRelease {
         inherit sourceRoot;
         version = "1.2.3";
-        analyzer.gitmoji.catalog.memo.semver = "patch";
-      }).analyzer.convention;
-      expected = "gitmoji";
-    };
-
-    "test a release without an analyzer fails" = {
-      expr = succeeds (mkBareRelease {
-        inherit sourceRoot;
-        version = "1.2.3";
-      });
-      expected = false;
-    };
-
-    "test a missing analyzer is named in the assertion" = {
-      expr = failedAssertion { };
-      expected = "declare a commit analyzer, exactly one of analyzer.gitmoji, analyzer.conventional, for example analyzer.gitmoji = { };";
-    };
-
-    "test two analyzers fail" = {
-      expr = succeeds (mkBareRelease {
-        inherit sourceRoot;
-        version = "1.2.3";
-        analyzer.conventional = { };
-        analyzer.gitmoji.catalog.memo.semver = "patch";
-      });
-      expected = false;
-    };
-
-    "test two analyzers are named in the assertion" = {
-      expr = failedAssertion {
-        analyzer.conventional = { };
-        analyzer.gitmoji = { };
+        analyzer.conventional.enable = true;
+        # Invalid as an enabled catalog: the shortcode repeats memo.
+        analyzer.gitmoji.catalog.other_memo = {
+          shortcode = "memo";
+          emoji = "📚";
+          description = "Duplicate the resolved memo shortcode.";
+          semver = "major";
+        };
+      }).analyzer;
+      expected = {
+        convention = "conventional";
+        conventional.catalog = conventionalCatalog;
       };
-      expected = "declare exactly one commit analyzer; found analyzer.gitmoji, analyzer.conventional";
     };
 
     "test sourceRoot is required" = {

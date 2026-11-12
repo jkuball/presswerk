@@ -54,7 +54,7 @@ Declare a release in your flake:
       # Publish a GitHub Release.
       publishers.github-release.default.repository = "me/my-crate";
       # Analyze Gitmoji commits.
-      analyzer.gitmoji = { };
+      analyzer.gitmoji.enable = true;
     };
   };
 }

@@ -40,7 +40,7 @@ To use Presswerk, add a release declaration to the flake that already builds you
       # publish a GitHub Release here
       publishers.github-release.default.repository = "owner/project";
       # the commits follow Gitmoji
-      analyzer.gitmoji = { };
+      analyzer.gitmoji.enable = true;
     };
   };
 }

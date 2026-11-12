@@ -52,7 +52,7 @@ let
     versionFiles.cargo.presswerk = { };
     versionFiles.badge.default = { };
     publishers.github-release.default.repository = "jkuball/presswerk";
-    analyzer.gitmoji = { };
+    analyzer.gitmoji.enable = true;
   };
 in
 {
@@ -216,7 +216,7 @@ in
         grep -q '^### presswerk publish$' "$site/reference/cli.md"
         grep -A20 '^### Minor$' "$site/reference/analyzers.md" | grep -q '`:sparkles:`'
         grep -Fxq '| `feat` | `minor` | Features |' "$site/reference/analyzers.md"
-        grep -q 'id="analyzer.conventional"' "$site/reference/options/index.html"
+        grep -q 'id="analyzer.conventional.enable"' "$site/reference/options/index.html"
         # The vendored catalog is MIT licensed; its notice must travel with the published copy.
         for copy in "$site/reference/analyzers.md" "$site/reference/analyzers/index.html"; do
           grep -q 'Copyright (c) 2016-2022 Carlos Cuesta' "$copy"

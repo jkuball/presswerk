@@ -12,26 +12,27 @@ smaller than the analysis requires.
 ## Choose an analyzer
 
 Presswerk has two built-in analyzers: [Gitmoji](#gitmoji) and
-[Conventional Commits](#conventional-commits). A release declares exactly one of the analyzers by
-declaring its block, such as [`analyzer.gitmoji`](/reference/options/#analyzer.gitmoji):
+[Conventional Commits](#conventional-commits). A release enables exactly one of the analyzers,
+such as [`analyzer.gitmoji.enable`](/reference/options/#analyzer.gitmoji.enable):
 
 ```nix presswerk-module
 {
-  analyzer.gitmoji = { };
+  analyzer.gitmoji.enable = true;
 }
 ```
 
-or [`analyzer.conventional`](/reference/options/#analyzer.conventional):
+or [`analyzer.conventional.enable`](/reference/options/#analyzer.conventional.enable):
 
 ```nix presswerk-module
 {
-  analyzer.conventional = { };
+  analyzer.conventional.enable = true;
 }
 ```
 
-Setting an option inside the block, such as `analyzer.gitmoji.catalog.memo.semver`, declares it too.
-A release without an analyzer, or with more than one, fails evaluation with a message that names
-the analyzers.
+No analyzer is enabled by default. A release without an enabled analyzer, or with more than one,
+fails evaluation with a message that names them. The catalogs of every analyzer stay configurable
+whether it is enabled or not. Presswerk ignores the settings of a disabled analyzer, so switching
+analyzers flips one option.
 
 Both analyzers treat history the same way. A subject that their convention does not describe, or
 that uses an intention missing from the catalog, contributes neither a bump nor a release note.
@@ -211,6 +212,7 @@ flake.presswerk.default = presswerk.lib.mkRelease ({ lib, ... }: {
   versionFiles.cargo.my-project = { };
   publishers.github-release.default.repository = "owner/my-project";
 
+  analyzer.gitmoji.enable = true;
   analyzer.gitmoji.catalog = lib.mkForce {
     sparkles = {
       emoji = "✨";

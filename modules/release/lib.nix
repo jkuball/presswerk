@@ -73,7 +73,7 @@ in
 
       tag.format = releaseConfig.tag.format;
       analyzer =
-        if releaseConfig.analyzer.conventional != null then {
+        if releaseConfig.analyzer.conventional.enable then {
           convention = "conventional";
           conventional.catalog = lib.filterAttrs (_type: entry: entry != null) releaseConfig.analyzer.conventional.catalog;
         } else {
