@@ -386,16 +386,33 @@ nav.sidebar ul ul .group-label .large {
   background: #0d1117;
 }
 
-/* Hero actions: hard edges like the rest; the secondary action is outlined in ink, not merged into the ground. */
-.hero .sl-link-button {
+/* Starlight's own controls get the hard edges of the rest of the design. */
+:root {
+  --sl-search-corners: 0;
+  --pagefind-ui-border-radius: 0;
+}
+.pagination-links a,
+site-search button[data-open-modal],
+site-search dialog,
+mobile-starlight-toc .toggle,
+mobile-starlight-toc .dropdown,
+:is(starlight-toc, mobile-starlight-toc) a,
+nav.sidebar a,
+.sl-menu-button {
   border-radius: 0;
 }
-.hero .sl-link-button.secondary {
-  border: 1px solid var(--pw-ink);
-  color: var(--pw-ink);
-  background: transparent;
+/* Links between pages read as quiet frames, not as floating cards. */
+.pagination-links a {
+  box-shadow: none;
 }
-.hero .sl-link-button.secondary:hover {
+.pagination-links a:hover {
   border-color: var(--pw-accent);
+}
+
+/* The GitHub icon in the header stays ink, like the wordmark, and takes the accent on hover. */
+.social-icons a {
+  color: var(--pw-ink);
+}
+.social-icons a:hover {
   color: var(--pw-accent);
 }

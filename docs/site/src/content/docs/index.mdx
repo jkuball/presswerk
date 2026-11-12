@@ -8,20 +8,13 @@ hero:
     light: ../../assets/brand/mark-light.svg
     dark: ../../assets/brand/mark-dark.svg
     alt: The Presswerk mark, a record held in a split hexagonal die.
-  actions:
-    - text: GitHub
-      link: https://github.com/jkuball/presswerk
-      icon: github
-      variant: secondary
-    - text: Why Presswerk
-      link: ./guide/
-      icon: right-arrow
 ---
 
 Nix makes building your software reproducible, but not releasing it. Version bumps, release notes,
 tags, and published releases change the outside world, and they easily drift apart from what was
 actually built and tested. Presswerk keeps them together: it records the new version and
 frozen notes in a release commit for your checks to run on, and publishes exactly that commit.
+[Why Presswerk](./guide/) explains the idea in depth.
 
 :::caution
 Presswerk is early, work-in-progress software. It releases itself, but its commands,
@@ -100,5 +93,6 @@ gitGraph
   commit id: "🔖 7b3e5f1" tag: "v0.3.0"
 ```
 
-Presswerk needs only a flake and a Git repository. [Release modes](./guide/release-modes/) shows both
+Presswerk needs only a flake and a Git repository, and its source is on
+[GitHub](https://github.com/jkuball/presswerk). [Release modes](./guide/release-modes/) shows both
 ways to run it, and the [walkthrough](./guide/walkthrough/) sets up a project from scratch.
