@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.6.2] - 2026-11-12
+
+### 💄 Add or update the UI and style files
+
+- (docs): Square Starlight's controls and link from the text instead of hero buttons
+- (docs): Lead the hero to Why Presswerk
+- (docs): Put the GitHub action before Get started
+- (docs): Give the hero actions hard edges and an ink outline
+
+### 📝 Add or update documentation
+
+- Describe Presswerk as reproducible releases in the README
+- (docs): Describe Presswerk in llms.txt like on GitHub
+- (docs): Title the homepage after what Presswerk does
+- Sharpen the introduction and add a contributing guide
+
+### 🔥 Remove code or files
+
+- (docs): Drop the page list from the homepage
+
+### ✅ Add, update, or pass tests
+
+- (docs): Expect the new homepage title in its Markdown copy
+
 ## [0.6.1] - 2026-11-11
 
 ### 🐛 Fix a bug
