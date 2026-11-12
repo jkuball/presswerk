@@ -385,3 +385,17 @@ nav.sidebar ul ul .group-label .large {
 .pw-badge-preview-dark {
   background: #0d1117;
 }
+
+/* Hero actions: hard edges like the rest; the secondary action is outlined in ink, not merged into the ground. */
+.hero .sl-link-button {
+  border-radius: 0;
+}
+.hero .sl-link-button.secondary {
+  border: 1px solid var(--pw-ink);
+  color: var(--pw-ink);
+  background: transparent;
+}
+.hero .sl-link-button.secondary:hover {
+  border-color: var(--pw-accent);
+  color: var(--pw-accent);
+}
