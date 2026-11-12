@@ -11,6 +11,7 @@ image per platform:
     images."linux/amd64" = self.packages.x86_64-linux.image;
     images."linux/arm64" = self.packages.aarch64-linux.image;
     tags = [ "{version}" "latest" ];
+    public = true;
     username.secret = "GITHUB_ACTOR";
     password.secret = "GITHUB_TOKEN";
   };
@@ -106,6 +107,13 @@ both succeed. Registries offer no conditional tag update, so a different image p
 same tag in the moment between the last inspection and the write is overwritten; a later run
 reports it as a conflict.
 
+A release's images are complete once every version tag points to an index whose
+`org.opencontainers.image.version` annotation is the release version. Aliases do not count, since
+they are best effort and may already point to a later release. Before `plan` and `prepare` start the
+next release, they check this for every OCI publisher of the previous release, without fetching
+images or comparing digests; a missing tag or a different annotation stops them, so a release
+whose `publish` broke off is rerun first.
+
 A rerun of a complete release only inspects the tags and reports `already pushed`. A tag that
 was deleted is restored on the next run, without uploading layers the registry still has. GitHub
 Container Registry restores a deleted version together with its tags as soon as its index is
@@ -118,6 +126,16 @@ username and password or token. Neither enters the declaration or the Nix store;
 them at run time, stops if one is unset or empty, and never prints them. They answer the registry's
 authentication challenge, either with HTTP basic authentication or with the bearer token flow that
 most registries use.
+
+`publish` always needs the credentials. `plan` and `prepare` only read the previous release's tags,
+and how they read depends on `public`:
+
+- `public = true`: anyone may pull the images, so the tags are read anonymously, with a token for
+  pull access only. The credential variables are never read, even if they are set. If the registry
+  refuses the anonymous read, Presswerk stops and reports that the repository does not seem to be
+  publicly readable.
+- `public = false`, the default: the tags are read with the credentials, so `plan` and `prepare`
+  need them as soon as a previous release declared this publisher.
 
 - **GitHub Container Registry:** `GITHUB_ACTOR` and `GITHUB_TOKEN` in GitHub Actions. The workflow
   needs the `packages: write` permission.

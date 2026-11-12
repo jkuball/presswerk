@@ -77,9 +77,10 @@ time and stops if the variable is unset or empty.
 
 `presswerk publish` needs the token whenever it publishes or retries a release commit. On an
 ordinary commit it reports that there is nothing to publish without reading the token. Once a
-previous release exists, `presswerk plan` and `presswerk prepare` need it too: they check that the
-previous release's GitHub Release is complete before planning the next one. Only the very first
-release can be planned and prepared without it. In GitHub Actions, the token needs the
+previous release declared a GitHub Release publisher, `presswerk plan` and `presswerk prepare` need
+it too: they check that the previous release's GitHub Release is complete before planning the next
+one. The very first release, and a release whose predecessor declared no GitHub Release publisher,
+can be planned and prepared without it. In GitHub Actions, the token needs the
 `contents: write` permission to publish.
 
 ## Options

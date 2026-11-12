@@ -10,8 +10,12 @@ Every publisher follows the same rules on a retry:
 - missing state is created;
 - conflicting state fails the run.
 
-A release is complete once its tag and every publisher's release exist. `prepare` refuses to start
-the next release before the previous release's tag and GitHub Releases are complete.
+No publisher is required: a release without publishers consists of its tag alone. A release is
+complete once its tag points to the release commit on the remote and every publisher it declared
+reports its own part as complete. Before `plan` and `prepare` start the next release, they check the
+previous release's tag and every publisher declared in the previous release's own declaration, and
+refuse to continue if any of them is incomplete. What counts as complete is described on each
+publisher's page.
 
 ## Built-in publishers
 
@@ -22,6 +26,5 @@ Presswerk has two built-in publishers:
 - [OCI](/reference/publishers/oci/) for container images, declared under
   [`publishers.oci`](/reference/options/#publishers.oci)
 
-Every release currently needs a GitHub Release publisher. `publish` runs the OCI publishers before
-the GitHub Releases, so a release is never announced while its images are still missing. Declaring
+`publish` runs the OCI publishers before the GitHub Releases, so a release is never announced while its images are still missing. Declaring
 publishers for other targets in the flake itself is planned.

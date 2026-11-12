@@ -42,12 +42,13 @@ Every field is required, and unknown fields are rejected.
   `emoji`, a `description`, and a `semver` level of `"major"`, `"minor"`, `"patch"`, or `null`.
   `conventional.catalog` is keyed by lowercase type, and each entry has a `title` and a `semver`
   level.
-- `publishers`: keyed by publisher type, `github-release` or `oci`, and then by name. At least one
-  `github-release` publisher is required. Each has an `apiUrl`, a `repository` in `owner/name`
-  form, a `token.secret` naming the environment variable that holds the token, and `assets`, which
-  maps asset names to absolute store paths of files and may be missing in older declarations.
+- `publishers`: keyed by publisher type, `github-release` or `oci`, and then by name. Both may be
+  empty. Each GitHub Release publisher has an `apiUrl`, a `repository` in `owner/name` form, a
+  `token.secret` naming the environment variable that holds the token, and `assets`, which maps
+  asset names to absolute store paths of files and may be missing in older declarations.
   `oci` may be missing in older declarations. Each OCI publisher has a `repository` starting with
   the registry host, `images`, which maps platforms such as `linux/amd64` to absolute store paths
   of image archives or scripts that stream one, `tags`, a list of tag templates where `{version}`
-  stands for the version, and `username.secret` and `password.secret` naming the environment
-  variables that hold the registry credentials.
+  stands for the version, `public`, whether the images may be pulled anonymously, which may be
+  missing in older declarations and then means `false`, and `username.secret` and
+  `password.secret` naming the environment variables that hold the registry credentials.
