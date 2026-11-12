@@ -177,6 +177,58 @@
           };
         };
       };
+
+      secretModule = what: example: {
+        options.secret = mkOption {
+          type = types.nonEmptyStr;
+          inherit example;
+          description = "Name of the environment variable that holds the ${what}.";
+        };
+      };
+
+      # Rendered with a stand-in version, a tag must be a valid OCI tag.
+      ociTag = types.addCheck types.nonEmptyStr
+        (
+          template: builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" (builtins.replaceStrings [ "{version}" ] [ "0.0.0" ] template) != null
+        ) // { description = "OCI tag, optionally containing {version}"; };
+
+      ociModule = {
+        options = {
+          repository = mkOption {
+            type = types.strMatching "([^/]*[.:][^/]*|localhost)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
+            example = "ghcr.io/owner/project";
+            description = "Registry host and repository path the images are pushed to. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
+          };
+
+          images = mkOption {
+            type = types.attrsOf artifactFile;
+            example = lib.literalExpression ''
+              {
+                "linux/amd64" = self.packages.x86_64-linux.image;
+                "linux/arm64" = self.packages.aarch64-linux.image;
+              }
+            '';
+            description = "One image per platform, keyed by `os/architecture[/variant]`, which must match the image's config. Each is the output of `dockerTools.buildImage`, `buildLayeredImage`, or `streamLayeredImage`, which `publish` fetches from the local store or a substituter without building. All images form one image index.";
+          };
+
+          tags = mkOption {
+            type = types.listOf ociTag;
+            default = [ "{version}" ];
+            example = [ "{version}" "latest" ];
+            description = "Tags pushed for the release. `{version}` is replaced by the version; such a tag is never moved once it exists. A tag without `{version}`, such as `latest`, is an alias that moves only to a higher stable version.";
+          };
+
+          username = mkOption {
+            type = types.submodule (secretModule "registry username" "REGISTRY_USERNAME");
+            description = "Registry username, read from an environment variable at run time.";
+          };
+
+          password = mkOption {
+            type = types.submodule (secretModule "registry password or token" "REGISTRY_TOKEN");
+            description = "Registry password or token, read from an environment variable at run time.";
+          };
+        };
+      };
     in
     {
       options = {
@@ -323,6 +375,23 @@
           description = "GitHub Release publishers.";
         };
 
+        publishers.oci = mkOption {
+          type = types.attrsOf (types.submodule ociModule);
+          default = { };
+          example = lib.literalExpression ''
+            {
+              default = {
+                repository = "ghcr.io/owner/project";
+                images."linux/amd64" = self.packages.x86_64-linux.image;
+                tags = [ "{version}" "latest" ];
+                username.secret = "GITHUB_ACTOR";
+                password.secret = "GITHUB_TOKEN";
+              };
+            }
+          '';
+          description = "OCI image publishers.";
+        };
+
         assertions = mkOption {
           type = types.listOf (types.submodule {
             options = {
@@ -344,7 +413,23 @@
           )
           gitmojiCatalog;
 
-        assertions = [
+        assertions = lib.concatLists
+          (lib.mapAttrsToList
+            (name: oci: [
+              {
+                assertion = oci.images != { };
+                message = "publishers.oci.${name}.images must contain at least one image";
+              }
+              {
+                assertion = lib.any (lib.hasInfix "{version}") oci.tags;
+                message = "publishers.oci.${name}.tags must contain at least one tag with {version}, so every release has a tag of its own";
+              }
+              {
+                assertion = lib.allUnique oci.tags;
+                message = "publishers.oci.${name}.tags must not contain duplicates";
+              }
+            ])
+            config.publishers.oci) ++ [
           {
             assertion = lib.all (shortcode: shortcode != "" && !(lib.hasInfix ":" shortcode)) catalogShortcodes;
             message = "analyzer.gitmoji.catalog shortcodes must be non-empty and contain no colons";

@@ -2,6 +2,7 @@ import cliPage from './pages/cli.md?raw';
 import declarationSchemaPage from './pages/declaration-schema.md?raw';
 import githubReleasePage from './pages/github-release.md?raw';
 import gitmojiPage from './pages/gitmoji.md?raw';
+import ociPage from './pages/oci.md?raw';
 import type { CliArgument, CliCommand, Literal, ReferenceData, ReleaseOption } from './data';
 
 /**
@@ -150,10 +151,11 @@ export const referencePages: ReferencePage[] = [
   {
     slug: 'reference/publishers',
     title: 'Release publishers',
-    description: 'How Presswerk publishes releases outside the repository, and the GitHub Release publisher.',
+    description: 'How Presswerk publishes releases outside the repository, with the GitHub Release and OCI publishers.',
     markdown: ({ options }, base, target) =>
-      fill(githubReleasePage, base, {
+      fill(githubReleasePage + ociPage, base, {
         options: optionList(options, 'publishers.github-release.', 4, target),
+        'oci-options': optionList(options, 'publishers.oci.', 4, target),
       }),
   },
   {

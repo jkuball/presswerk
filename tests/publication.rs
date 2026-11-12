@@ -3,10 +3,10 @@ mod support;
 use presswerk::analysis::{Analysis, Bump};
 use presswerk::declaration::ReleaseDeclaration;
 use presswerk::publication::{
-    AssetStep, GitTagPublisher, GithubClient, GithubPublisher, GithubReleaseReader,
-    GithubReleaseState, LocalAsset, PublicationError, Publisher, PublisherState, PublisherStep,
-    Release, RemoteState, TagPublisher, TagStep, is_valid_successor, publish_ordered,
-    validate_new_release, verify_predecessor_with,
+    ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GitTagPublisher, GithubClient,
+    GithubPublisher, GithubReleaseReader, GithubReleaseState, LocalAsset, PublicationError,
+    Publisher, PublisherState, PublisherStep, Release, RemoteState, TagPublisher, TagStep,
+    is_valid_successor, publish_ordered, validate_new_release, verify_predecessor_with,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
@@ -82,7 +82,7 @@ impl Publisher for FakePublisher {
         Ok(self.state.borrow().clone())
     }
 
-    fn publish(&self, _release: &Release) -> Result<Vec<(String, AssetStep)>, PublicationError> {
+    fn publish(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
         self.writes.borrow_mut().push("release");
         *self.state.borrow_mut() = PublisherState::Published;
         Ok(Vec::new())
@@ -605,7 +605,16 @@ fn mock_github_api_on(
     url: &str,
     requests: Vec<ExpectedRequest>,
 ) -> (String, thread::JoinHandle<()>) {
-    let listener = TcpListener::bind(url.trim_start_matches("http://")).unwrap();
+    serve_github_api(
+        TcpListener::bind(url.trim_start_matches("http://")).unwrap(),
+        requests,
+    )
+}
+
+fn serve_github_api(
+    listener: TcpListener,
+    requests: Vec<ExpectedRequest>,
+) -> (String, thread::JoinHandle<()>) {
     let address = listener.local_addr().unwrap();
     let handle = thread::spawn(move || {
         for expected in requests {
@@ -1228,8 +1237,8 @@ fn mock_github_api_at(
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let requests = requests(&url);
-    drop(listener);
-    let (actual, handle) = mock_github_api_on(&url, requests);
+    // Keep the listener: binding the port again could race with another test.
+    let (actual, handle) = serve_github_api(listener, requests);
     assert_eq!(actual, url);
     (url, handle)
 }
@@ -1291,7 +1300,11 @@ fn github_uploads_assets_into_the_draft_before_publishing_it() {
 
     assert_eq!(
         steps,
-        [("tool-x86_64-linux".to_owned(), AssetStep::Uploaded)]
+        [ArtifactStep {
+            kind: ArtifactKind::Asset,
+            name: "tool-x86_64-linux".to_owned(),
+            step: AssetStep::Uploaded,
+        }]
     );
     server.join().unwrap();
 }

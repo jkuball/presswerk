@@ -29,6 +29,12 @@ let
     publishers.github-release.default.repository = "owner/project";
   };
 
+  image = derivation {
+    name = "image.tar.gz";
+    system = "x86_64-linux";
+    builder = "/bin/sh";
+  };
+
   defaults = mkRelease {
     inherit sourceRoot;
     imports = [ publisher ];
@@ -75,6 +81,7 @@ in
           token.secret = "GITHUB_TOKEN";
           assets = { };
         };
+        publishers.oci = { };
       };
     };
 
@@ -262,6 +269,59 @@ in
         };
       });
       expected = false;
+    };
+
+    "test OCI images normalize to store paths with default tags" = {
+      expr =
+        (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.oci.default = {
+            repository = "ghcr.io/owner/project";
+            images."linux/amd64" = image;
+            username.secret = "REGISTRY_USERNAME";
+            password.secret = "REGISTRY_TOKEN";
+          };
+        }).publishers.oci.default;
+      expected = {
+        repository = "ghcr.io/owner/project";
+        images."linux/amd64" = image.outPath;
+        tags = [ "{version}" ];
+        username.secret = "REGISTRY_USERNAME";
+        password.secret = "REGISTRY_TOKEN";
+      };
+    };
+
+    "test OCI publishers reject invalid declarations" = {
+      expr = map
+        (oci: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.oci.default = {
+            repository = "ghcr.io/owner/project";
+            images."linux/amd64" = image;
+            username.secret = "REGISTRY_USERNAME";
+            password.secret = "REGISTRY_TOKEN";
+          } // oci;
+        }).publishers.oci)
+        [
+          { }
+          { repository = "localhost:5000/project"; }
+          { tags = [ "{version}" "latest" ]; }
+          # Without a registry host.
+          { repository = "owner/project"; }
+          { repository = "ghcr.io/Owner/project"; }
+          { images = { }; }
+          { images."linux/amd64" = "/nix/store/00000000000000000000000000000000-fake.tar.gz"; }
+          # Every release needs a tag of its own.
+          { tags = [ "latest" ]; }
+          { tags = [ "{version}" "{version}" ]; }
+          { tags = [ "{version}" "{major}" ]; }
+          { tags = [ "-{version}" ]; }
+        ];
+      expected = [ true true true false false false false false false false false ];
     };
 
     "test a badge does not define the version" = {

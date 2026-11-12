@@ -79,6 +79,16 @@ impl ReleaseDeclaration {
             }
             publisher.validate()?;
         }
+        for (name, publisher) in &self.publishers.oci {
+            if name.is_empty() {
+                return Err(DeclarationError::Invalid(
+                    "OCI publisher names must not be empty".into(),
+                ));
+            }
+            publisher
+                .validate()
+                .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?;
+        }
 
         Ok(())
     }
@@ -360,6 +370,45 @@ pub struct Changelog {
 pub struct Publishers {
     #[serde(rename = "github-release")]
     pub github_release: BTreeMap<String, GithubReleasePublisher>,
+    /// Missing in declarations written before the OCI publisher existed.
+    #[serde(default)]
+    pub oci: BTreeMap<String, OciPublisher>,
+}
+
+/// Container images pushed to an OCI registry under tags rendered from the version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OciPublisher {
+    /// Registry host and repository path, such as `ghcr.io/owner/project`.
+    pub repository: String,
+    /// One image per platform, such as `linux/amd64`, each a path in the Nix store.
+    pub images: BTreeMap<String, String>,
+    /// Tag templates; `{version}` is replaced by the release version.
+    pub tags: Vec<String>,
+    pub username: Token,
+    pub password: Token,
+}
+
+impl OciPublisher {
+    fn validate(&self) -> Result<(), String> {
+        crate::oci::RepositoryReference::parse(&self.repository)?;
+        if self.images.is_empty() {
+            return Err("an OCI publisher needs at least one image".into());
+        }
+        for (platform, path) in &self.images {
+            crate::oci::Platform::parse(platform)?;
+            if !path.starts_with('/') {
+                return Err(format!(
+                    "image {platform} must be an absolute store path, not {path:?}"
+                ));
+            }
+        }
+        crate::oci::validate_tag_templates(&self.tags)?;
+        self.username
+            .validate()
+            .map_err(|error| error.to_string())?;
+        self.password.validate().map_err(|error| error.to_string())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

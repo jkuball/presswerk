@@ -11,10 +11,13 @@ Every publisher follows the same rules on a retry:
 - conflicting state fails the run.
 
 A release is complete once its tag and every publisher's release exist. `prepare` refuses to start
-the next release before that.
+the next release before the previous release's tag and GitHub Releases are complete.
 
-GitHub Release is the only built-in publisher today, and every release currently needs one.
-Declaring publishers for other targets in the flake itself is planned.
+Presswerk has two built-in publishers: [GitHub Release](#github-release) and
+[OCI](#oci-images) for container images. Every release currently needs a GitHub Release
+publisher. `publish` runs the OCI publishers before the GitHub Releases, so a release is never
+announced while its images are still missing. Declaring publishers for other targets in the flake
+itself is planned.
 
 ## GitHub Release
 

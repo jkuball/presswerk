@@ -5,8 +5,8 @@ use git2::Oid;
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::declaration::{
     Analyzer, AnalyzerConvention, BadgeOptions, BadgeVersionFile, Changelog,
-    GithubReleasePublisher, GitmojiAnalyzer, Publishers, ReleaseDeclaration, Tag, Token,
-    TomlVersionFile, VersionFile,
+    GithubReleasePublisher, GitmojiAnalyzer, OciPublisher, Publishers, ReleaseDeclaration, Tag,
+    Token, TomlVersionFile, VersionFile,
 };
 use presswerk::evaluation::EvaluatedReleaseDeclaration;
 use presswerk::preparation::{build_release_plan, is_worktree_dirty, prepare_release, render_plan};
@@ -51,6 +51,7 @@ fn declaration(version: &str) -> ReleaseDeclaration {
                     assets: BTreeMap::new(),
                 },
             )]),
+            oci: BTreeMap::new(),
         },
     }
 }
@@ -570,5 +571,55 @@ fn the_plan_lists_each_publisher_with_its_release_and_assets() {
         "  github-release.default  owner/project\n",
         "    release  v0.1.0\n",
         "    asset    example-x86_64-linux\n",
+    )));
+}
+
+fn oci_publisher(tags: &[&str]) -> OciPublisher {
+    OciPublisher {
+        repository: "ghcr.io/owner/project".into(),
+        images: BTreeMap::from([
+            ("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into()),
+            ("linux/arm64".into(), "/nix/store/def-image.tar.gz".into()),
+        ]),
+        tags: tags.iter().map(|tag| (*tag).into()).collect(),
+        username: Token {
+            secret: "REGISTRY_USERNAME".into(),
+        },
+        password: Token {
+            secret: "REGISTRY_TOKEN".into(),
+        },
+    }
+}
+
+#[test]
+fn the_plan_lists_oci_images_and_rendered_tags_before_the_release() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated
+        .declaration
+        .publishers
+        .oci
+        .insert("default".into(), oci_publisher(&["latest", "{version}"]));
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+
+    assert!(render_plan(&plan).contains(concat!(
+        "\npublishers\n",
+        "  oci.default  ghcr.io/owner/project\n",
+        "    image    linux/amd64\n",
+        "    image    linux/arm64\n",
+        "    tag      0.1.0\n",
+        "    alias    latest\n",
+        "  github-release.default  owner/project\n",
+        "    release  v0.1.0\n",
     )));
 }

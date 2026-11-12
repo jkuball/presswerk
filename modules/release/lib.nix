@@ -83,5 +83,6 @@ in
       };
       changelog.path = releaseConfig.changelog.path;
       publishers.github-release = releaseConfig.publishers.github-release;
+      publishers.oci = releaseConfig.publishers.oci;
     };
 }

@@ -103,15 +103,38 @@ pub enum PublisherState {
     Conflicting(String),
 }
 
-/// What happened to one artifact of a publisher, such as a GitHub Release asset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What happened to one artifact of a publisher, such as a GitHub Release asset or an OCI tag.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssetStep {
     Uploaded,
     AlreadyUploaded,
+    /// Deliberately left as it is, such as an alias that points to a higher version.
+    Kept(String),
 }
 
-/// Each artifact of a publisher by name, with what happened to it.
-pub type ArtifactSteps = Vec<(String, AssetStep)>;
+/// The kind of artifact a publisher reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtifactKind {
+    /// A GitHub Release asset.
+    Asset,
+    /// An OCI image for one platform.
+    Image,
+    /// An OCI tag that names the version.
+    Tag,
+    /// An OCI tag that follows the highest stable version, such as `latest`.
+    Alias,
+}
+
+/// One artifact of a publisher, with what happened to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactStep {
+    pub kind: ArtifactKind,
+    pub name: String,
+    pub step: AssetStep,
+}
+
+/// Each artifact of a publisher, with what happened to it.
+pub type ArtifactSteps = Vec<ArtifactStep>;
 
 pub trait TagPublisher {
     fn state(&self, release: &Release) -> Result<RemoteState, PublicationError>;
@@ -122,9 +145,9 @@ pub trait Publisher {
     fn state(&self, release: &Release) -> Result<PublisherState, PublicationError>;
     /// Create every missing part and report each artifact.
     fn publish(&self, release: &Release) -> Result<ArtifactSteps, PublicationError>;
-    /// The names of the artifacts this publisher publishes.
-    fn artifact_names(&self) -> Vec<String> {
-        Vec::new()
+    /// Report the artifacts of a publisher whose state is already published, without writing.
+    fn complete_steps(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
+        Ok(Vec::new())
     }
 }
 
@@ -650,7 +673,11 @@ impl Publisher for GithubPublisher {
                     .upload_asset(&self.repository, release, &github_release, asset)?;
                 AssetStep::Uploaded
             };
-            steps.push((asset.name.clone(), step));
+            steps.push(ArtifactStep {
+                kind: ArtifactKind::Asset,
+                name: asset.name.clone(),
+                step,
+            });
         }
         if github_release.draft {
             self.client
@@ -666,8 +693,16 @@ impl Publisher for GithubPublisher {
         }
     }
 
-    fn artifact_names(&self) -> Vec<String> {
-        self.assets.iter().map(|asset| asset.name.clone()).collect()
+    fn complete_steps(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
+        Ok(self
+            .assets
+            .iter()
+            .map(|asset| ArtifactStep {
+                kind: ArtifactKind::Asset,
+                name: asset.name.clone(),
+                step: AssetStep::AlreadyUploaded,
+            })
+            .collect())
     }
 }
 
@@ -1023,17 +1058,29 @@ pub fn publish_to_remote(
     let tag_publisher = GitTagPublisher::new(repository_path, remote);
 
     // Every artifact must be obtainable without building before anything is written.
-    crate::artifacts::fetch(declaration.publishers.github_release.iter().flat_map(
-        |(name, publisher)| {
+    let assets = declaration
+        .publishers
+        .github_release
+        .iter()
+        .flat_map(|(name, publisher)| {
             publisher.assets.iter().map(move |(asset, path)| {
                 (
                     format!("github-release.{name} asset {asset}"),
                     path.as_str(),
                 )
             })
-        },
-    ))
-    .map_err(|error| PublicationError::new(error.to_string()))?;
+        });
+    let images = declaration
+        .publishers
+        .oci
+        .iter()
+        .flat_map(|(name, publisher)| {
+            publisher.images.iter().map(move |(platform, path)| {
+                (format!("oci.{name} image {platform}"), path.as_str())
+            })
+        });
+    crate::artifacts::fetch(images.chain(assets))
+        .map_err(|error| PublicationError::new(error.to_string()))?;
 
     match tag_publisher.state(&release)? {
         RemoteState::Missing => {
@@ -1054,24 +1101,26 @@ pub fn publish_to_remote(
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     }
 
-    let publishers = declaration
-        .publishers
-        .github_release
-        .values()
-        .map(GithubPublisher::from_declaration)
-        .map(|publisher| publisher.map(|publisher| Box::new(publisher) as Box<dyn Publisher>))
-        .collect::<Result<Vec<_>, _>>()?;
+    // The forge release comes last, so it never announces a release whose images are missing.
+    let mut publishers: Vec<Box<dyn Publisher>> = Vec::new();
+    let mut publisher_names = Vec::new();
+    for (name, publisher) in &declaration.publishers.oci {
+        publishers.push(Box::new(crate::oci::OciPublisher::from_declaration(
+            publisher,
+        )?));
+        publisher_names.push(format!("oci.{name}"));
+    }
+    for (name, publisher) in &declaration.publishers.github_release {
+        publishers.push(Box::new(GithubPublisher::from_declaration(publisher)?));
+        publisher_names.push(format!("github-release.{name}"));
+    }
     let (tag_step, steps) = publish_ordered(&tag_publisher, &release, &publishers)?;
-    let publisher_names = declaration
-        .publishers
-        .github_release
-        .keys()
-        .map(|name| format!("github-release.{name}"));
     Ok(PublishOutcome::Published(PublishReport {
         commit: release.commit,
         tag: release.tag,
         tag_step,
         publisher_steps: publisher_names
+            .into_iter()
             .zip(steps)
             .map(|(name, (step, artifacts))| (name, step, artifacts))
             .collect(),
@@ -1111,11 +1160,7 @@ pub fn publish_ordered(
             PublisherState::Conflicting(message) => return Err(PublicationError::new(message)),
         };
         let artifacts = if step == PublisherStep::AlreadyPublished {
-            publisher
-                .artifact_names()
-                .into_iter()
-                .map(|name| (name, AssetStep::AlreadyUploaded))
-                .collect()
+            publisher.complete_steps(release)?
         } else {
             publisher.publish(release)?
         };
