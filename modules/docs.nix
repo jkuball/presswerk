@@ -207,7 +207,7 @@ in
         # Release options in Nix examples link to their reference entries.
         grep -q 'href="/reference/options/#versionFiles.cargo" class="pw-code-link"' "$site/index.html"
         grep -q 'id="publishers.github-release.name.token.secret"' "$site/reference/options/index.html"
-        grep -q '^# Presswerk$' "$site/index.md"
+        grep -q '^# Reproducible releases for Nix flakes$' "$site/index.md"
         grep -q '^# Walkthrough: release automatically from GitHub Actions$' "$site/guide/walkthrough.md"
         grep -Fq '](/reference/options.md#versionFiles.cargo)' "$site/reference/version-files.md"
         grep -q '^### `tag.format`$' "$site/reference/options.md"
