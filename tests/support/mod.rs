@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 
 use presswerk::analysis::Bump;
-use presswerk::declaration::{GitmojiCatalog, GitmojiCatalogEntry};
+use presswerk::declaration::{
+    ConventionalCatalog, ConventionalCatalogEntry, GitmojiCatalog, GitmojiCatalogEntry,
+};
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
@@ -42,6 +44,27 @@ pub fn gitmoji_catalog() -> GitmojiCatalog {
             "twisted_rightwards_arrows".into(),
             entry("🔀", "Merge branches.", None),
         ),
+    ])
+}
+
+/// The default Conventional Commits catalog of the release module.
+pub fn conventional_catalog() -> ConventionalCatalog {
+    let entry = |title: &str, semver| ConventionalCatalogEntry {
+        title: title.into(),
+        semver,
+    };
+    BTreeMap::from([
+        ("build".into(), entry("Build system", None)),
+        ("chore".into(), entry("Chores", None)),
+        ("ci".into(), entry("Continuous integration", None)),
+        ("docs".into(), entry("Documentation", None)),
+        ("feat".into(), entry("Features", Some(Bump::Minor))),
+        ("fix".into(), entry("Bug fixes", Some(Bump::Patch))),
+        ("perf".into(), entry("Performance", Some(Bump::Patch))),
+        ("refactor".into(), entry("Refactoring", None)),
+        ("revert".into(), entry("Reverts", None)),
+        ("style".into(), entry("Code style", None)),
+        ("test".into(), entry("Tests", None)),
     ])
 }
 

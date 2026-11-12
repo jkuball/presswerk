@@ -1,3 +1,4 @@
+use crate::declaration::Analyzer;
 use git2::{ErrorCode, ObjectType, Oid, Repository};
 use std::collections::HashSet;
 use std::error::Error;
@@ -112,16 +113,21 @@ impl ReleaseFile {
     }
 }
 
-/// The subject of the release commit that `publish` turns into `tag`.
-pub fn release_subject(tag: &str) -> String {
-    format!("🔖 Release {tag}")
+/// The subject of the release commit that `publish` turns into `tag`, in the declared analyzer's
+/// convention.
+#[must_use]
+pub fn release_subject(analyzer: &Analyzer, tag: &str) -> String {
+    match analyzer {
+        Analyzer::Gitmoji { .. } => format!("🔖 Release {tag}"),
+        Analyzer::Conventional { .. } => format!("chore(release): {tag}"),
+    }
 }
 
 pub fn create_release_commit(
     repository_path: impl AsRef<Path>,
     branch: &str,
     expected_parent: Oid,
-    tag: &str,
+    subject: &str,
     files: &[ReleaseFile],
     trusted_predecessor: Option<&TrustedPredecessor>,
 ) -> Result<Oid, ReleaseCommitError> {
@@ -159,16 +165,15 @@ pub fn create_release_commit(
     let signature = repository.signature().map_err(|source| {
         ReleaseCommitError::git("could not read Git author configuration", source)
     })?;
-    let subject = release_subject(tag);
     let message = trusted_predecessor.map_or_else(
-        || subject.clone(),
+        || subject.to_owned(),
         |trusted| format!("{subject}\n\n{}", trusted.trailer()),
     );
     let commit = repository
         .commit(None, &signature, &signature, &message, &tree, &[&parent])
         .map_err(|source| ReleaseCommitError::git("could not create release commit", source))?;
 
-    match repository.reference_matching(branch, commit, true, expected_parent, &subject) {
+    match repository.reference_matching(branch, commit, true, expected_parent, subject) {
         Ok(_) => Ok(commit),
         Err(source) if matches!(source.code(), ErrorCode::Modified | ErrorCode::NotFound) => {
             let actual = repository

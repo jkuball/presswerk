@@ -3,7 +3,28 @@ mod support;
 use presswerk::analysis::{
     Analysis, AnalysisError, Analyzer, Bump, CommitRange, GitCliffAnalyzer, render_release_notes,
 };
-use support::{GitRepo, gitmoji_catalog};
+use presswerk::declaration::{
+    self, ConventionalAnalyzer, ConventionalCatalog, GitmojiAnalyzer, GitmojiCatalog, Tag,
+};
+use support::{GitRepo, conventional_catalog, gitmoji_catalog};
+
+fn gitmoji(catalog: GitmojiCatalog) -> declaration::Analyzer {
+    declaration::Analyzer::Gitmoji {
+        gitmoji: GitmojiAnalyzer { catalog },
+    }
+}
+
+fn conventional(catalog: ConventionalCatalog) -> declaration::Analyzer {
+    declaration::Analyzer::Conventional {
+        conventional: ConventionalAnalyzer { catalog },
+    }
+}
+
+fn tag() -> Tag {
+    Tag {
+        format: "v{version}".into(),
+    }
+}
 
 fn commit(repository: &GitRepo, sequence: usize, subject: &str) -> String {
     repository.write("history", format!("{sequence}\n"));
@@ -16,7 +37,8 @@ impl Analyzer for RejectingAnalyzer {
     fn analyze(
         &self,
         _range: &CommitRange,
-        _catalog: &presswerk::declaration::GitmojiCatalog,
+        _analyzer: &declaration::Analyzer,
+        _tag: &Tag,
     ) -> Result<Analysis, AnalysisError> {
         Err(AnalysisError::new("external analyzer failure"))
     }
@@ -33,7 +55,7 @@ fn analyzes_initial_history_and_omits_non_entries() {
     let range = CommitRange::initial(repository.path(), repository.head()).unwrap();
 
     let analysis = GitCliffAnalyzer
-        .analyze(&range, &gitmoji_catalog())
+        .analyze(&range, &gitmoji(gitmoji_catalog()), &tag())
         .unwrap();
 
     assert_eq!(analysis.bump, Some(Bump::Minor));
@@ -43,14 +65,14 @@ fn analyzes_initial_history_and_omits_non_entries() {
         analysis
             .commits
             .iter()
-            .any(|commit| commit.id == documentation && commit.gitmoji.bump.is_none())
+            .any(|commit| commit.id == documentation && commit.bump().is_none())
     );
     assert!(analysis.commits.iter().any(|commit| commit.id == fix));
     assert!(
         analysis
             .commits
             .iter()
-            .any(|commit| commit.gitmoji.shortcode == ":bookmark:")
+            .any(|commit| commit.intention.gitmoji().unwrap().shortcode == ":bookmark:")
     );
 }
 
@@ -62,7 +84,9 @@ fn bookmark_uses_the_declared_release_level() {
     let mut catalog = gitmoji_catalog();
     catalog.get_mut("bookmark").unwrap().semver = Some(Bump::Patch);
 
-    let analysis = GitCliffAnalyzer.analyze(&range, &catalog).unwrap();
+    let analysis = GitCliffAnalyzer
+        .analyze(&range, &gitmoji(catalog), &tag())
+        .unwrap();
 
     assert_eq!(analysis.bump, Some(Bump::Patch));
     assert_eq!(analysis.commits.len(), 1);
@@ -77,7 +101,7 @@ fn initial_range_includes_the_root_and_pins_head() {
     commit(&repository, 1, "💥 Later breaking change");
 
     let analysis = GitCliffAnalyzer
-        .analyze(&range, &gitmoji_catalog())
+        .analyze(&range, &gitmoji(gitmoji_catalog()), &tag())
         .unwrap();
 
     assert_eq!(analysis.bump, Some(Bump::Minor));
@@ -95,7 +119,7 @@ fn between_range_honors_the_base_and_pins_head() {
     commit(&repository, 3, "💥 Later breaking change");
 
     let analysis = GitCliffAnalyzer
-        .analyze(&range, &gitmoji_catalog())
+        .analyze(&range, &gitmoji(gitmoji_catalog()), &tag())
         .unwrap();
 
     assert_eq!(analysis.bump, Some(Bump::Minor));
@@ -127,7 +151,7 @@ fn repository_analysis_rejects_leading_whitespace() {
     let range = CommitRange::initial(repository.path(), "HEAD").unwrap();
 
     let analysis = GitCliffAnalyzer
-        .analyze(&range, &gitmoji_catalog())
+        .analyze(&range, &gitmoji(gitmoji_catalog()), &tag())
         .unwrap();
 
     assert_eq!(analysis.bump, None);
@@ -144,7 +168,7 @@ fn external_analyzers_can_construct_errors() {
     assert_eq!(range.target(), target);
 
     let error = RejectingAnalyzer
-        .analyze(&range, &gitmoji_catalog())
+        .analyze(&range, &gitmoji(gitmoji_catalog()), &tag())
         .unwrap_err();
 
     assert_eq!(error.to_string(), "external analyzer failure");
@@ -179,7 +203,7 @@ fn analyze(repository: &GitRepo, base: Option<&str>) -> Result<Analysis, Analysi
         None => CommitRange::initial(repository.path(), "HEAD"),
     }
     .unwrap();
-    GitCliffAnalyzer.analyze(&range, &gitmoji_catalog())
+    GitCliffAnalyzer.analyze(&range, &gitmoji(gitmoji_catalog()), &tag())
 }
 
 fn ids(analysis: &Analysis) -> Vec<&str> {
@@ -202,7 +226,9 @@ fn exclusion_skips_only_the_candidate_oid() {
     let mut catalog = gitmoji_catalog();
     catalog.get_mut("bookmark").unwrap().semver = Some(Bump::Patch);
 
-    let analysis = GitCliffAnalyzer.analyze(&range, &catalog).unwrap();
+    let analysis = GitCliffAnalyzer
+        .analyze(&range, &gitmoji(catalog), &tag())
+        .unwrap();
 
     assert_eq!(analysis.bump, Some(Bump::Patch));
     assert_eq!(ids(&analysis), [bookmark]);
@@ -234,7 +260,7 @@ fn excluding_a_merge_candidate_keeps_secondary_parent_commits() {
         .unwrap()
         .excluding(merged.parse().unwrap());
     let analysis = GitCliffAnalyzer
-        .analyze(&range, &gitmoji_catalog())
+        .analyze(&range, &gitmoji(gitmoji_catalog()), &tag())
         .unwrap();
 
     assert_eq!(analysis.bump, Some(Bump::Minor));
@@ -296,8 +322,8 @@ fn reverts_of_released_commits_become_revert_entries() {
     assert_eq!(entry.id, reverted);
     assert_eq!(entry.subject, "⏪️ Revert \"✨ Add feature\"");
     assert_eq!(entry.message, "Revert \"✨ Add feature\"");
-    assert_eq!(entry.gitmoji.emoji, "⏪️");
-    assert_eq!(entry.gitmoji.shortcode, ":rewind:");
+    assert_eq!(entry.intention.gitmoji().unwrap().emoji, "⏪️");
+    assert_eq!(entry.intention.gitmoji().unwrap().shortcode, ":rewind:");
     assert_eq!(entry.scope, None);
 }
 
@@ -311,7 +337,9 @@ fn a_released_revert_does_not_require_a_rewind_catalog_entry() {
     let mut catalog = gitmoji_catalog();
     catalog.remove("rewind");
 
-    let analysis = GitCliffAnalyzer.analyze(&range, &catalog).unwrap();
+    let analysis = GitCliffAnalyzer
+        .analyze(&range, &gitmoji(catalog), &tag())
+        .unwrap();
 
     assert_eq!(analysis.bump, None);
     assert!(analysis.commits.is_empty());
@@ -494,7 +522,7 @@ fn gitmoji_reverts_of_released_commits_become_revert_entries() {
     assert_eq!(entry.id, reverted);
     assert_eq!(entry.subject, "⏪️ 💥 Remove the feature again");
     assert_eq!(entry.message, "💥 Remove the feature again");
-    assert_eq!(entry.gitmoji.shortcode, ":rewind:");
+    assert_eq!(entry.intention.gitmoji().unwrap().shortcode, ":rewind:");
     assert_eq!(
         render_release_notes(&analysis).unwrap(),
         "### ⏪️ Revert changes\n\n- 💥 Remove the feature again\n"
@@ -532,7 +560,10 @@ fn released_merges_reverted_against_any_mainline_become_revert_entries() {
     let analysis = analyze(&repository, Some(&release)).unwrap();
 
     assert_eq!(ids(&analysis), [reverted.as_str()]);
-    assert_eq!(analysis.commits[0].gitmoji.shortcode, ":rewind:");
+    assert_eq!(
+        analysis.commits[0].intention.gitmoji().unwrap().shortcode,
+        ":rewind:"
+    );
     assert_eq!(
         analysis.commits[0].subject,
         "⏪️ Revert \"🔀 Merge feature\""
@@ -570,4 +601,131 @@ fn reverting_merges_without_a_valid_mainline_fails() {
 
         assert!(error.to_string().contains(expected), "{error}");
     }
+}
+
+fn analyze_conventional(
+    repository: &GitRepo,
+    base: Option<&str>,
+    catalog: ConventionalCatalog,
+) -> Analysis {
+    let range = match base {
+        Some(base) => CommitRange::between(repository.path(), base, "HEAD"),
+        None => CommitRange::initial(repository.path(), "HEAD"),
+    }
+    .unwrap();
+    GitCliffAnalyzer
+        .analyze(&range, &conventional(catalog), &tag())
+        .unwrap()
+}
+
+#[test]
+fn conventional_analysis_omits_other_subjects_and_merges() {
+    let repository = GitRepo::new();
+    let main = repository.git(["branch", "--show-current"]);
+    let root = commit_file(&repository, "root", "chore: Begin project");
+    repository.git(["checkout", "--quiet", "-b", "feature"]);
+    let feature = commit_file(&repository, "feature", "feat(cli): Add --json");
+    repository.git(["checkout", "--quiet", &main]);
+    let docs = commit_file(&repository, "docs", "docs: Document --json");
+    commit_file(&repository, "plain", "Update the readme");
+    commit_file(&repository, "unknown", "deps: Bump serde");
+    commit_file(&repository, "gitmoji", "✨ Add a Gitmoji feature");
+    merge(&repository, &["feature"], "feat: Merge the feature branch");
+
+    let analysis = analyze_conventional(&repository, Some(&root), conventional_catalog());
+
+    assert_eq!(analysis.bump, Some(Bump::Minor));
+    let mut analyzed = ids(&analysis);
+    analyzed.sort_unstable();
+    let mut expected = vec![feature.as_str(), docs.as_str()];
+    expected.sort_unstable();
+    assert_eq!(analyzed, expected);
+    let feature = analysis
+        .commits
+        .iter()
+        .find(|commit| commit.id == feature)
+        .unwrap();
+    assert_eq!(feature.intention.conventional().unwrap().name, "feat");
+    assert_eq!(feature.scope.as_deref(), Some("cli"));
+    assert_eq!(feature.message, "Add --json");
+}
+
+#[test]
+fn conventional_breaking_footers_in_commit_bodies_select_major() {
+    let repository = GitRepo::new();
+    let root = commit_file(&repository, "root", "chore: Begin project");
+    repository.write("fix", "fixed\n");
+    repository.commit("fix: Rename the output field\n\nBREAKING CHANGE: `version` is now `next`.");
+
+    let analysis = analyze_conventional(&repository, Some(&root), conventional_catalog());
+
+    assert_eq!(analysis.bump, Some(Bump::Major));
+    assert!(analysis.commits[0].breaking);
+    assert_eq!(
+        analysis
+            .next_version(Some(&semver::Version::new(0, 3, 1)))
+            .unwrap(),
+        Some(semver::Version::new(0, 4, 0))
+    );
+    assert_eq!(
+        render_release_notes(&analysis).unwrap(),
+        "### Breaking changes\n\n- Rename the output field\n"
+    );
+}
+
+#[test]
+fn conventional_release_commits_are_not_changes() {
+    let repository = GitRepo::new();
+    let root = commit_file(&repository, "root", "chore: Begin project");
+    commit_file(&repository, "release", "chore(release): v0.1.0");
+    let tooling = commit_file(
+        &repository,
+        "tooling",
+        "chore(release): Update the workflow",
+    );
+    let other_format = commit_file(&repository, "other", "chore(release): release-0.2.0");
+    let candidate = commit_file(&repository, "candidate", "chore(release): v0.2.0");
+    let mut catalog = conventional_catalog();
+    catalog.get_mut("chore").unwrap().semver = Some(Bump::Patch);
+
+    let range = CommitRange::between(repository.path(), root, &candidate).unwrap();
+    let analysis = GitCliffAnalyzer
+        .analyze(&range, &conventional(catalog), &tag())
+        .unwrap();
+
+    let mut analyzed = ids(&analysis);
+    analyzed.sort_unstable();
+    let mut expected = vec![tooling.as_str(), other_format.as_str()];
+    expected.sort_unstable();
+    assert_eq!(analyzed, expected);
+}
+
+#[test]
+fn conventional_reverts_of_released_commits_use_the_revert_type() {
+    let repository = GitRepo::new();
+    let feature = commit_file(&repository, "feature", "feat: Add feature");
+    let fix = commit_file(&repository, "fix", "fix: Fix feature");
+    let release = commit_file(&repository, "release", "chore(release): v0.1.0");
+    let reverted = revert(&repository, &[&feature]);
+    repository.write("fix", "undone\n");
+    let typed = repository.commit(&format!(
+        "fix(cli): Restore the old output\n\nThis reverts commit {fix}."
+    ));
+
+    let analysis = analyze_conventional(&repository, Some(&release), conventional_catalog());
+
+    assert_eq!(analysis.bump, Some(Bump::Patch));
+    assert_eq!(ids(&analysis), [typed.as_str(), reverted.as_str()]);
+    let entry = &analysis.commits[1];
+    assert_eq!(entry.intention.conventional().unwrap().name, "revert");
+    assert_eq!(entry.message, "Revert \"feat: Add feature\"");
+    assert_eq!(
+        render_release_notes(&analysis).unwrap(),
+        "### Bug fixes\n\n- **cli:** Restore the old output\n\n### Reverts\n\n- Revert \"feat: Add feature\"\n"
+    );
+
+    let mut catalog = conventional_catalog();
+    catalog.remove("revert");
+    let analysis = analyze_conventional(&repository, Some(&release), catalog);
+    assert_eq!(ids(&analysis), [typed.as_str()]);
 }

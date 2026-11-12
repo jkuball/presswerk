@@ -282,17 +282,27 @@ impl fmt::Display for TagError {
 
 impl Error for TagError {}
 
+/// The one analyzer a release declares, named by its `convention` next to its settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Analyzer {
-    pub convention: AnalyzerConvention,
-    pub gitmoji: GitmojiAnalyzer,
+#[serde(tag = "convention", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Analyzer {
+    Gitmoji { gitmoji: GitmojiAnalyzer },
+    Conventional { conventional: ConventionalAnalyzer },
 }
 
 impl Analyzer {
     fn validate(&self) -> Result<(), DeclarationError> {
+        match self {
+            Self::Gitmoji { gitmoji } => gitmoji.validate(),
+            Self::Conventional { conventional } => conventional.validate(),
+        }
+    }
+}
+
+impl GitmojiAnalyzer {
+    fn validate(&self) -> Result<(), DeclarationError> {
         let mut emojis = HashSet::new();
-        for (shortcode, entry) in &self.gitmoji.catalog {
+        for (shortcode, entry) in &self.catalog {
             if shortcode.is_empty() || shortcode.contains(':') {
                 return Err(DeclarationError::Invalid(format!(
                     "Gitmoji catalog key {shortcode:?} must be a shortcode without surrounding colons"
@@ -321,6 +331,50 @@ impl Analyzer {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ConventionalAnalyzer {
+    pub catalog: ConventionalCatalog,
+}
+
+impl ConventionalAnalyzer {
+    fn validate(&self) -> Result<(), DeclarationError> {
+        for (name, entry) in &self.catalog {
+            if !is_conventional_type(name) {
+                return Err(DeclarationError::Invalid(format!(
+                    "Conventional Commits type {name:?} must consist of lowercase letters, digits, hyphens, or underscores"
+                )));
+            }
+            if entry.title.is_empty() {
+                return Err(DeclarationError::Invalid(format!(
+                    "Conventional Commits type {name:?} must have a non-empty title"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn is_conventional_type(name: &str) -> bool {
+    name.starts_with(|character: char| character.is_ascii_lowercase() || character.is_ascii_digit())
+        && name.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '-' | '_')
+        })
+}
+
+/// Conventional Commits types keyed by their lowercase name.
+pub type ConventionalCatalog = BTreeMap<String, ConventionalCatalogEntry>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConventionalCatalogEntry {
+    pub title: String,
+    #[serde(deserialize_with = "deserialize_semver")]
+    pub semver: Option<Bump>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GitmojiAnalyzer {
     pub catalog: GitmojiCatalog,
 }
@@ -341,12 +395,6 @@ where
     D: Deserializer<'de>,
 {
     Option::deserialize(deserializer)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AnalyzerConvention {
-    Gitmoji,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -556,10 +604,81 @@ mod tests {
             declaration.publishers.github_release["default"].api_url,
             "https://api.github.com"
         );
-        assert_eq!(
-            declaration.analyzer.gitmoji.catalog["sparkles"].semver,
-            Some(Bump::Minor)
-        );
+        let Analyzer::Gitmoji { gitmoji } = &declaration.analyzer else {
+            panic!("expected the Gitmoji analyzer");
+        };
+        assert_eq!(gitmoji.catalog["sparkles"].semver, Some(Bump::Minor));
+    }
+
+    fn conventional(value: &mut Value) {
+        value["analyzer"] = json!({
+            "convention": "conventional",
+            "conventional": {
+                "catalog": {
+                    "feat": { "title": "Features", "semver": "minor" },
+                    "docs": { "title": "Documentation", "semver": null }
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn parses_the_conventional_commits_analyzer() {
+        let declaration = ReleaseDeclaration::from_json(&declaration(conventional)).unwrap();
+        let Analyzer::Conventional { conventional } = &declaration.analyzer else {
+            panic!("expected the Conventional Commits analyzer");
+        };
+        assert_eq!(conventional.catalog["feat"].semver, Some(Bump::Minor));
+        assert_eq!(conventional.catalog["docs"].semver, None);
+        assert_eq!(conventional.catalog["docs"].title, "Documentation");
+    }
+
+    #[test]
+    fn declares_exactly_one_analyzer_matching_its_convention() {
+        for patch in [
+            |value: &mut Value| {
+                conventional(value);
+                value["analyzer"]["gitmoji"] = json!({ "catalog": {} });
+            },
+            |value: &mut Value| {
+                conventional(value);
+                value["analyzer"]["convention"] = json!("gitmoji");
+            },
+            |value: &mut Value| {
+                value["analyzer"].as_object_mut().unwrap().remove("gitmoji");
+            },
+            |value: &mut Value| {
+                value["analyzer"]["convention"] = json!("angular");
+            },
+        ] {
+            assert!(matches!(
+                ReleaseDeclaration::from_json(&declaration(patch)).unwrap_err(),
+                DeclarationError::IncompatibleUnstableSchema(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn conventional_types_are_lowercase_names_with_titles() {
+        for (name, title, message) in [
+            ("Feat", "Features", "lowercase letters"),
+            ("feat(cli)", "Features", "lowercase letters"),
+            ("", "Features", "lowercase letters"),
+            ("feat", "", "non-empty title"),
+        ] {
+            let invalid = declaration(|value| {
+                conventional(value);
+                value["analyzer"]["conventional"]["catalog"] =
+                    json!({ name: { "title": title, "semver": null } });
+            });
+            assert!(
+                ReleaseDeclaration::from_json(&invalid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(message),
+                "{name:?}"
+            );
+        }
     }
 
     #[test]

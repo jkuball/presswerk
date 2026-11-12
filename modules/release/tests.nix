@@ -23,6 +23,7 @@ let
   cargoLock = builtins.baseNameOf cargoLockFixture;
   presswerkVersion = (builtins.fromTOML (builtins.readFile (self.outPath + "/Cargo.toml"))).package.version;
   vendoredCatalog = builtins.fromJSON (builtins.readFile ./gitmoji/catalog.json);
+  conventionalCatalog = builtins.fromJSON (builtins.readFile ./conventional/catalog.json);
   succeeds = value: (builtins.tryEval (builtins.deepSeq value true)).success;
 
   publisher = {
@@ -407,6 +408,141 @@ in
           description = "Duplicate the upstream zap without its variation selector.";
           semver = null;
         };
+      });
+      expected = false;
+    };
+
+    "test the Conventional Commits analyzer replaces Gitmoji" = {
+      expr = (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.conventional = { };
+      }).analyzer;
+      expected = {
+        convention = "conventional";
+        conventional.catalog = conventionalCatalog;
+      };
+    };
+
+    "test the default Conventional Commits catalog" = {
+      expr = lib.mapAttrs (_type: entry: entry.semver) conventionalCatalog;
+      expected = {
+        build = null;
+        chore = null;
+        ci = null;
+        docs = null;
+        feat = "minor";
+        fix = "patch";
+        perf = "patch";
+        refactor = null;
+        revert = null;
+        style = null;
+        test = null;
+      };
+    };
+
+    "test Conventional Commits catalog merges overrides, additions, and removals" = {
+      expr =
+        let
+          catalog = (mkRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            analyzer.conventional.catalog = {
+              docs.semver = "patch";
+              deps = {
+                title = "Dependencies";
+                semver = "patch";
+              };
+              style = lib.mkForce null;
+            };
+          }).analyzer.conventional.catalog;
+        in
+        {
+          inherit (catalog) docs deps feat;
+          style = catalog ? style;
+        };
+      expected = {
+        docs = conventionalCatalog.docs // { semver = "patch"; };
+        deps = {
+          title = "Dependencies";
+          semver = "patch";
+        };
+        feat = conventionalCatalog.feat;
+        style = false;
+      };
+    };
+
+    "test Conventional Commits catalog can be replaced with mkForce" = {
+      expr = builtins.attrNames (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.conventional.catalog = lib.mkForce {
+          feat = conventionalCatalog.feat;
+        };
+      }).analyzer.conventional.catalog;
+      expected = [ "feat" ];
+    };
+
+    "test Conventional Commits types must be lowercase names" = {
+      expr = map
+        (
+          type:
+          succeeds (mkRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            analyzer.conventional.catalog.${type} = {
+              title = "Custom";
+              semver = null;
+            };
+          })
+        )
+        [
+          "Feat"
+          "fix(cli)"
+          "breaking!"
+          "deps-dev"
+        ];
+      expected = [
+        false
+        false
+        false
+        true
+      ];
+    };
+
+    "test both analyzers together fail" = {
+      expr = succeeds (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.conventional = { };
+        analyzer.gitmoji.catalog.memo.semver = "patch";
+      });
+      expected = false;
+    };
+
+    "test both analyzers name themselves in the assertion" = {
+      expr = (lib.findFirst (assertion: !assertion.assertion) null
+        (lib.evalModules {
+          class = "presswerk";
+          modules = [
+            config.flake.modules.presswerk.default
+            {
+              inherit sourceRoot;
+              version = "1.2.3";
+              analyzer.conventional = { };
+              analyzer.gitmoji = { };
+            }
+          ];
+          specialArgs.presswerk.version = presswerkVersion;
+        }).config.assertions).message;
+      expected = "declare exactly one analyzer, analyzer.gitmoji or analyzer.conventional; found analyzer.gitmoji and analyzer.conventional";
+    };
+
+    "test removing the default analyzer fails" = {
+      expr = succeeds (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.gitmoji = null;
       });
       expected = false;
     };

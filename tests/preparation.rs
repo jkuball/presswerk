@@ -4,7 +4,7 @@ use anyhow::bail;
 use git2::Oid;
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::declaration::{
-    Analyzer, AnalyzerConvention, BadgeOptions, BadgeVersionFile, Changelog,
+    Analyzer, BadgeOptions, BadgeVersionFile, Changelog, ConventionalAnalyzer,
     GithubReleasePublisher, GitmojiAnalyzer, Publishers, ReleaseDeclaration, Tag, Token,
     TomlVersionFile, VersionFile,
 };
@@ -17,7 +17,7 @@ use presswerk::publication::{
 use semver::Version;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use support::{GitRepo, gitmoji_catalog};
+use support::{GitRepo, conventional_catalog, gitmoji_catalog};
 
 fn declaration(version: &str) -> ReleaseDeclaration {
     ReleaseDeclaration {
@@ -30,8 +30,7 @@ fn declaration(version: &str) -> ReleaseDeclaration {
         tag: Tag {
             format: "v{version}".into(),
         },
-        analyzer: Analyzer {
-            convention: AnalyzerConvention::Gitmoji,
+        analyzer: Analyzer::Gitmoji {
             gitmoji: GitmojiAnalyzer {
                 catalog: gitmoji_catalog(),
             },
@@ -571,4 +570,49 @@ fn the_plan_lists_each_publisher_with_its_release_and_assets() {
         "    release  v0.1.0\n",
         "    asset    example-x86_64-linux\n",
     )));
+}
+
+#[test]
+fn conventional_commits_plan_notes_and_a_conventional_release_commit() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("chore: Begin the project");
+    repository.write("feature", "implemented\n");
+    repository.commit("feat(cli): Add --json");
+    repository.write("fix", "fixed\n");
+    repository.commit("fix: Keep the tag order stable");
+    repository.write("unrelated", "changed\n");
+    repository.commit("Update the readme");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated.declaration.analyzer = Analyzer::Conventional {
+        conventional: ConventionalAnalyzer {
+            catalog: conventional_catalog(),
+        },
+    };
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-12",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+
+    assert_eq!(plan.next_version, Some(Version::new(0, 1, 0)));
+    assert_eq!(plan.analysis.commits.len(), 3);
+    assert_eq!(
+        plan.notes,
+        "### Features\n\n- **cli:** Add --json\n\n### Bug fixes\n\n- Keep the tag order stable\n\n### Chores\n\n- Begin the project\n"
+    );
+    assert_eq!(
+        plan.release_subject.as_deref(),
+        Some("chore(release): v0.1.0")
+    );
+
+    let release = prepare_release(&plan).unwrap().unwrap();
+    assert_eq!(
+        repository.git(["show", "--format=%s", "--no-patch", &release.to_string()]),
+        "chore(release): v0.1.0"
+    );
 }
