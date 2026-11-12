@@ -746,7 +746,7 @@ fn increment(value: u64, component: &'static str) -> Result<u64, VersionError> {
         .ok_or(VersionError::ComponentOverflow(component))
 }
 
-const BREAKING_CHANGES_TITLE: &str = "Breaking changes";
+const BREAKING_CHANGE_MARKER: &str = "**BREAKING**";
 
 #[derive(Serialize)]
 struct NoteGroup<'a> {
@@ -774,10 +774,17 @@ impl NoteCommit {
                 .split_once(char::is_whitespace)
                 .map_or(commit.subject.as_str(), |(_, rest)| rest.trim_start())
                 .to_owned(),
-            Intention::Conventional(_) => match &commit.scope {
-                Some(scope) => format!("**{scope}:** {}", commit.message),
-                None => commit.message.clone(),
-            },
+            Intention::Conventional(_) => {
+                let marker = if commit.breaking {
+                    format!("{BREAKING_CHANGE_MARKER} ")
+                } else {
+                    String::new()
+                };
+                match &commit.scope {
+                    Some(scope) => format!("{marker}**{scope}:** {}", commit.message),
+                    None => format!("{marker}{}", commit.message),
+                }
+            }
         };
         Self { text }
     }
@@ -795,14 +802,13 @@ fn note_group(commit: &AnalyzedCommit) -> (&str, String, u8) {
             ),
             0,
         ),
-        // Breaking changes come first, then types by the level they select.
-        Intention::Conventional(_) if commit.breaking => ("", BREAKING_CHANGES_TITLE.into(), 0),
+        // Types come in the order of the level they select; a breaking commit stays in its type.
         Intention::Conventional(kind) => {
             let rank = match kind.bump {
-                Some(Bump::Major) => 1,
-                Some(Bump::Minor) => 2,
-                Some(Bump::Patch) => 3,
-                None => 4,
+                Some(Bump::Major) => 0,
+                Some(Bump::Minor) => 1,
+                Some(Bump::Patch) => 2,
+                None => 3,
             };
             (&kind.name, kind.title.clone(), rank)
         }
@@ -1224,7 +1230,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_conventional_notes_by_breaking_level_size_and_type() {
+    fn renders_conventional_notes_by_type_level_size_and_name() {
         let analysis = Analysis::from_commits(vec![
             conventional("1", "docs: Document search"),
             conventional("2", "fix(cli): Keep the search order stable"),
@@ -1233,14 +1239,17 @@ mod tests {
             conventional("5", "perf: Cache the catalog"),
             conventional("6", "feat(api)!: Drop the v1 endpoint"),
             conventional("7", "chore: Update dependencies"),
+            conventional(
+                "8",
+                "fix: Rename the output field\n\nBREAKING CHANGE: `version` is now `next`.",
+            ),
         ]);
 
         let notes = render_release_notes(&analysis).unwrap();
         assert_eq!(
             notes,
-            "### Breaking changes\n\n- **api:** Drop the v1 endpoint\n\n\
-             ### Features\n\n- **cli:** Add --json\n\n\
-             ### Bug fixes\n\n- **cli:** Keep the search order stable\n- Fix tag lookup\n\n\
+            "### Features\n\n- **cli:** Add --json\n- **BREAKING** **api:** Drop the v1 endpoint\n\n\
+             ### Bug fixes\n\n- **cli:** Keep the search order stable\n- Fix tag lookup\n- **BREAKING** Rename the output field\n\n\
              ### Performance\n\n- Cache the catalog\n\n\
              ### Chores\n\n- Update dependencies\n\n\
              ### Documentation\n\n- Document search\n"

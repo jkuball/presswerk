@@ -669,7 +669,7 @@ fn conventional_breaking_footers_in_commit_bodies_select_major() {
     );
     assert_eq!(
         render_release_notes(&analysis).unwrap(),
-        "### Breaking changes\n\n- Rename the output field\n"
+        "### Bug fixes\n\n- **BREAKING** Rename the output field\n"
     );
 }
 

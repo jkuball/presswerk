@@ -309,12 +309,9 @@ Update the readme
 ```md
 ## [0.4.0] - 2026-11-12
 
-### Breaking changes
-
-- **api:** Drop the v1 endpoint
-
 ### Features
 
+- **BREAKING** **api:** Drop the v1 endpoint
 - **cli:** Add --json
 
 ### Bug fixes
@@ -327,9 +324,9 @@ Update the readme
 - Document search
 ```
 
-Breaking changes come first, whatever their type. The other groups follow by the level of their
-type, from `major` to `null`; groups of the same level are ordered by size and then by type. The
-scope stays in front of the description. A `git revert` of a commit that was released before,
+Groups follow the level of their type, from `major` to `null`; groups of the same level are ordered
+by size and then by type. A breaking change stays in the group of its type and starts with
+`**BREAKING**`. The scope stays in front of the description. A `git revert` of a commit that was released before,
 whose subject is `Revert "…"`, belongs to the `revert` type.
 
 ### Change the type catalog
