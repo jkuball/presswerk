@@ -385,3 +385,34 @@ nav.sidebar ul ul .group-label .large {
 .pw-badge-preview-dark {
   background: #0d1117;
 }
+
+/* Starlight's own controls get the hard edges of the rest of the design. */
+:root {
+  --sl-search-corners: 0;
+  --pagefind-ui-border-radius: 0;
+}
+.pagination-links a,
+site-search button[data-open-modal],
+site-search dialog,
+mobile-starlight-toc .toggle,
+mobile-starlight-toc .dropdown,
+:is(starlight-toc, mobile-starlight-toc) a,
+nav.sidebar a,
+.sl-menu-button {
+  border-radius: 0;
+}
+/* Links between pages read as quiet frames, not as floating cards. */
+.pagination-links a {
+  box-shadow: none;
+}
+.pagination-links a:hover {
+  border-color: var(--pw-accent);
+}
+
+/* The GitHub icon in the header stays ink, like the wordmark, and takes the accent on hover. */
+.social-icons a {
+  color: var(--pw-ink);
+}
+.social-icons a:hover {
+  color: var(--pw-accent);
+}

@@ -8,7 +8,7 @@ export const GET: APIRoute = async () => {
   const markdown = [
     '# Presswerk',
     '',
-    '> Release tooling for projects whose artifacts are built with Nix flakes.',
+    '> Reproducible releases for Nix flakes: versions, changelogs, tags, and idempotent publishing.',
     '',
     'Presswerk records versions and release notes in a release commit, then publishes exactly the commit that was built and checked.',
     '',

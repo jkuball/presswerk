@@ -9,8 +9,9 @@ This walkthrough sets up [automatic releases](../release-modes/#automatic-releas
 Actions, from an empty repository to its first GitHub Release. Every push to `main` may prepare a
 release, and CI publishes the release commit once it has built and checked it.
 
-The example project is a minimal Cargo package, only because Cargo is the version file Presswerk
-supports today. Nothing else here is specific to Rust.
+The example project is a minimal Cargo package. Nothing else here is specific to Rust: the
+[version files](../../reference/version-files/) also cover TOML, JSON, plain `VERSION` files,
+and any file a regular expression can find the version in.
 
 The package starts at Presswerk's implicit `0.0.0` baseline, and a Gitmoji feature commit makes
 the first version `0.1.0`.
