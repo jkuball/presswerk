@@ -86,6 +86,7 @@ Create `flake.nix`. Replace `YOUR-OWNER/YOUR-REPO` with the repository you creat
         sourceRoot = self.outPath;
         versionFiles.cargo.YOUR-CRATE = { };
         publishers.github-release.default.repository = "YOUR-OWNER/YOUR-REPO";
+        analyzer.gitmoji.enable = true;
       };
 
       packages = eachSystem (system:
@@ -105,7 +106,9 @@ Create `flake.nix`. Replace `YOUR-OWNER/YOUR-REPO` with the repository you creat
 ```
 
 `mkRelease` reads the version from `Cargo.toml`, updates that file and the matching `Cargo.lock`
-package during preparation, uses the default Gitmoji catalog, writes `CHANGELOG.md`, and configures
+package during preparation, analyzes Gitmoji commits with the default catalog (declare
+`analyzer.conventional.enable = true;` instead for [Conventional Commits](/reference/analyzers/conventional-commits/)),
+writes `CHANGELOG.md`, and configures
 the default `GITHUB_TOKEN` secret for publication. The package takes its version from the release
 with `self.presswerk.default.version` instead of reading `Cargo.toml` again. The [options reference](/reference/options/)
 documents every supported authoring field.
@@ -275,7 +278,7 @@ body that publication used.
 ## Next change
 
 The workflow pushed the release commit, so start the next change only after fast-forwarding your
-clean local `main` to it. Then use the [Gitmoji convention](/reference/analyzers/) and pass your GitHub token
+clean local `main` to it. Then use the [commit convention](/reference/analyzers/) your release declares and pass your GitHub token
 when planning. From the second release onward, `plan` verifies that the previous GitHub Release
 completed:
 

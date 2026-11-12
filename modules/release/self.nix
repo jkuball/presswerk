@@ -17,6 +17,8 @@
       };
     };
     publishers.github-release.default.repository = "jkuball/presswerk";
+    # Presswerk's own commits use Gitmoji, and documentation changes release a patch.
+    analyzer.gitmoji.enable = true;
     analyzer.gitmoji.catalog.memo.semver = "patch";
   };
 }

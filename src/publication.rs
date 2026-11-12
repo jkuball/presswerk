@@ -1270,7 +1270,7 @@ fn validate_candidate(
         .map_err(|error| PublicationError::new(error.to_string()))?
         .excluding(commit);
     let analysis = analyzer
-        .analyze(&range, &declaration.analyzer.gitmoji.catalog)
+        .analyze(&range, &declaration.analyzer, &declaration.tag)
         .map_err(|error| PublicationError::new(error.to_string()))?;
     validate_new_release(
         &declaration.version,

@@ -52,6 +52,7 @@ let
     versionFiles.cargo.presswerk = { };
     versionFiles.badge.default = { };
     publishers.github-release.default.repository = "jkuball/presswerk";
+    analyzer.gitmoji.enable = true;
   };
 in
 {
@@ -127,6 +128,7 @@ in
         cp ${pkgs.writeText "declaration.json" (builtins.toJSON schemaExample)} $out/declaration.json
         cp ${./release/gitmoji/catalog.json} $out/gitmoji.json
         cp ${./release/gitmoji/LICENSE} $out/gitmoji-license.txt
+        cp ${./release/conventional/catalog.json} $out/conventional.json
         printf '%s' ${lib.escapeShellArg self.presswerk.default.version} > $out/version
       '';
 
@@ -182,6 +184,8 @@ in
           guide/walkthrough
           index
           reference/analyzers
+          reference/analyzers/conventional-commits
+          reference/analyzers/gitmoji
           reference/cli
           reference/declaration-schema
           reference/options
@@ -191,7 +195,7 @@ in
         for page in $pages; do
           test -s "$site/$page.md" || { echo "missing Markdown page $page.md" >&2; exit 1; }
         done
-        for page in options declaration-schema cli publishers analyzers; do
+        for page in options declaration-schema cli publishers analyzers analyzers/gitmoji analyzers/conventional-commits; do
           test -s "$site/reference/$page/index.html" || { echo "missing reference page $page" >&2; exit 1; }
         done
         test -s "$site/llms.txt"
@@ -212,9 +216,11 @@ in
         grep -Fq '](/reference/options.md#versionFiles.cargo)' "$site/reference/version-files.md"
         grep -q '^### `tag.format`$' "$site/reference/options.md"
         grep -q '^### presswerk publish$' "$site/reference/cli.md"
-        grep -A20 '^### Minor$' "$site/reference/analyzers.md" | grep -q '`:sparkles:`'
+        grep -A20 '^### Minor$' "$site/reference/analyzers/gitmoji.md" | grep -q '`:sparkles:`'
+        grep -Fxq '| `feat` | `minor` | Features |' "$site/reference/analyzers/conventional-commits.md"
+        grep -q 'id="analyzer.conventional.enable"' "$site/reference/options/index.html"
         # The vendored catalog is MIT licensed; its notice must travel with the published copy.
-        for copy in "$site/reference/analyzers.md" "$site/reference/analyzers/index.html"; do
+        for copy in "$site/reference/analyzers/gitmoji.md" "$site/reference/analyzers/gitmoji/index.html"; do
           grep -q 'Copyright (c) 2016-2022 Carlos Cuesta' "$copy"
           grep -q 'copies or substantial portions of the Software' "$copy"
         done

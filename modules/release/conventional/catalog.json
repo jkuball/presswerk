@@ -1,0 +1,13 @@
+{
+  "build": { "title": "Build system", "semver": null },
+  "chore": { "title": "Chores", "semver": null },
+  "ci": { "title": "Continuous integration", "semver": null },
+  "docs": { "title": "Documentation", "semver": null },
+  "feat": { "title": "Features", "semver": "minor" },
+  "fix": { "title": "Bug fixes", "semver": "patch" },
+  "perf": { "title": "Performance", "semver": "patch" },
+  "refactor": { "title": "Refactoring", "semver": null },
+  "revert": { "title": "Reverts", "semver": "patch" },
+  "style": { "title": "Code style", "semver": null },
+  "test": { "title": "Tests", "semver": null }
+}

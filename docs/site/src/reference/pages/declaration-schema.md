@@ -37,9 +37,11 @@ Every field is required, and unknown fields are rejected.
   whose entry in `Cargo.lock` is updated, or `badge` for a version badge
   that `prepare` generates and never reads, with the `colorScheme` it is made for: `"auto"`,
   `"light"`, or `"dark"`.
-- `analyzer`: the commit `convention`, currently always `"gitmoji"`, and the Gitmoji `catalog`
-  keyed by shortcode. Each entry has an `emoji`, a `description`, and a `semver` level of
-  `"major"`, `"minor"`, `"patch"`, or `null`.
+- `analyzer`: the commit `convention`, `"gitmoji"` or `"conventional"`, and the settings of that
+  one analyzer under the same name. `gitmoji.catalog` is keyed by shortcode, and each entry has an
+  `emoji`, a `description`, and a `semver` level of `"major"`, `"minor"`, `"patch"`, or `null`.
+  `conventional.catalog` is keyed by lowercase type, and each entry has a `title` and a `semver`
+  level.
 - `publishers`: keyed by publisher type, currently only `github-release`, and then by name. At
   least one publisher is required. Each has an `apiUrl`, a `repository` in `owner/name` form, a
   `token.secret` naming the environment variable that holds the token, and `assets`, which maps

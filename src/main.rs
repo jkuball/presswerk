@@ -7,7 +7,7 @@ use presswerk::preparation::{
     prepare_release, render_plan,
 };
 use presswerk::publication::{AssetStep, PublishOutcome, PublisherStep, TagStep, publish};
-use presswerk::release_commit::{TrustedPredecessor, release_subject};
+use presswerk::release_commit::TrustedPredecessor;
 
 fn main() {
     if let Err(error) = run() {
@@ -77,7 +77,9 @@ fn run() -> Result<()> {
                     rows.push([
                         "commit".into(),
                         short_commit(&commit.to_string()).into(),
-                        release_subject(tag),
+                        plan.release_subject
+                            .clone()
+                            .expect("release subject exists"),
                     ]);
                     print!("{}", render_steps(&rows));
                 }

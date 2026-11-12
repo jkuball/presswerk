@@ -1,24 +1,6 @@
-A commit analyzer reads the commits since the previous release and decides two things:
-
-- **The version bump.** Each commit selects a level, and the highest level selects the next version.
-  If no commit selects one, there is nothing to release.
-- **The release notes.** The analyzer groups the commits into the notes that `prepare` writes into
-  the changelog and that the publishers publish. The changelog is `CHANGELOG.md` unless
-  [`changelog.path`](/reference/options/#changelog.path) names another file.
-
-`publish` runs the analyzer again for a new release and fails if the release commit's version is
-smaller than the analysis requires.
-
-Gitmoji, selected with [`analyzer.convention`](/reference/options/#analyzer.convention), is the only
-built-in analyzer today. Declaring analyzers for other commit conventions in the flake itself is
-planned.
-
-The Gitmoji analyzer reads commit subjects written to the
-[Gitmoji specification](https://gitmoji.dev/specification): a Gitmoji at the start of each subject
-states the commit's intention. The release declaration contains the complete catalog used for
-matching, grouping notes, and choosing a SemVer level. The CLI has no hidden Gitmoji table, so
-analysis is pinned to the exact commit like the rest of the release declaration. The
-[default catalog](#default-catalog) at the end of this page lists every entry.
+With [`analyzer.gitmoji.enable`](/reference/options/#analyzer.gitmoji.enable), Presswerk reads
+commit subjects written to the [Gitmoji specification](https://gitmoji.dev/specification): a
+Gitmoji at the start of each subject states the commit's intention.
 
 ## Commit subject shape
 
@@ -42,6 +24,8 @@ attach directly to the closing parenthesis of a scope, as in `✨ (cli): Add sea
 
 A subject that does not match an entry in the declared catalog does not contribute a bump or release
 note. Keep one clear Gitmoji intention at the start of each commit subject.
+
+## Release notes
 
 For a release with these commits, newest first:
 
@@ -76,9 +60,8 @@ Groups with more commits come first, and groups of equal size follow the order o
 ## Version levels
 
 Every catalog entry has `emoji`, `description`, and `semver`. `semver` is one of `"major"`,
-`"minor"`, `"patch"`, or `null`.
-
-Common defaults include:
+`"minor"`, `"patch"`, or `null`, and Presswerk combines them as described under
+[Version levels](/reference/analyzers/#version-levels). Common defaults include:
 
 | Gitmoji | Shortcode | Default level | Meaning in analysis |
 | --- | --- | --- | --- |
@@ -88,12 +71,6 @@ Common defaults include:
 | 📝 | `:memo:` | `null` | note only, no release by itself |
 | 🔖 | `:bookmark:` | `null` | release/version commit |
 
-Presswerk takes the highest level in the applicable commit range. Before `1.0.0`, both `minor` and
-`major` advance the minor component; `patch` advances the patch component.
-
-No commit moves a project to `1.0.0`. That step must always be acknowledged explicitly; a way to
-choose the version for it is planned.
-
 ```mermaid A documentation commit is included in notes but does not trigger a release alone; the later feature selects the 0.3.0 release.
 gitGraph
   commit id: "0.2.2" tag: "v0.2.2"
@@ -101,10 +78,6 @@ gitGraph
   commit id: "✨ feature"
   commit id: "release 0.3.0" tag: "v0.3.0"
 ```
-
-Entries with `semver = null` still appear in the generated notes when another commit in the range
-triggers a release. If every matched entry is `null`, `plan` reports that there is nothing to
-prepare.
 
 ## Change a default level
 
@@ -183,6 +156,7 @@ flake.presswerk.default = presswerk.lib.mkRelease ({ lib, ... }: {
   versionFiles.cargo.my-project = { };
   publishers.github-release.default.repository = "owner/my-project";
 
+  analyzer.gitmoji.enable = true;
   analyzer.gitmoji.catalog = lib.mkForce {
     sparkles = {
       emoji = "✨";
@@ -213,7 +187,7 @@ release.
 
 <!-- reference:options -->
 
-## Default catalog
+## Default Gitmoji catalog
 
 The default for [`analyzer.gitmoji.catalog`](/reference/options/#analyzer.gitmoji.catalog) has
 <!-- reference:catalog-size --> entries. It is vendored from the
@@ -225,7 +199,7 @@ No release do not cause a release on their own.
 
 ## License
 
-The catalog entries come from the
+The Gitmoji catalog entries come from the
 [Gitmoji project](https://github.com/carloscuesta/gitmoji) and are published here under its MIT
 license:
 
