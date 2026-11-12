@@ -24,7 +24,7 @@
 > Presswerk is early, work-in-progress software. It releases itself, but its commands,
 > configuration, and output are not stable yet. Do not rely on it for production releases.
 
-Presswerk is declarative release automation for Nix flakes. It records the next version and
+Presswerk makes releases of Nix flakes reproducible. It records the next version and
 frozen release notes in a release commit, then publishes the Git tag, the GitHub Release, and
 its artifacts from exactly that commit. Publishing is idempotent: a rerun completes what is
 missing, keeps what matches, and stops on anything that conflicts. Presswerk keeps no database
