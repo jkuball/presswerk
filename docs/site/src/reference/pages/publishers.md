@@ -26,5 +26,5 @@ Presswerk has two built-in publishers:
 - [OCI](/reference/publishers/oci/) for container images, declared under
   [`publishers.oci`](/reference/options/#publishers.oci)
 
-`publish` runs the OCI publishers before the GitHub Releases, so a release is never announced while its images are still missing. Declaring
-publishers for other targets in the flake itself is planned.
+`publish` runs the OCI publishers before the GitHub Releases, so a release is never announced while
+its images are still missing. Declaring publishers for other targets in the flake itself is planned.
