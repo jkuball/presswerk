@@ -65,12 +65,6 @@ impl ReleaseDeclaration {
         self.analyzer.validate()?;
         validate_relative_path(&self.changelog.path)?;
 
-        // M1 only supports GitHub Releases, so every release needs one.
-        if self.publishers.github_release.is_empty() {
-            return Err(DeclarationError::Invalid(
-                "at least one GitHub Release publisher is required".into(),
-            ));
-        }
         for (name, publisher) in &self.publishers.github_release {
             if name.is_empty() {
                 return Err(DeclarationError::Invalid(
@@ -433,6 +427,10 @@ pub struct OciPublisher {
     pub images: BTreeMap<String, String>,
     /// Tag templates; `{version}` is replaced by the release version.
     pub tags: Vec<String>,
+    /// Whether anyone may pull the images; the previous-release check then reads anonymously.
+    /// Missing in declarations written before the option existed.
+    #[serde(default)]
+    pub public: bool,
     pub username: Token,
     pub password: Token,
 }
@@ -808,14 +806,11 @@ mod tests {
     }
 
     #[test]
-    fn requires_a_github_release_publisher() {
+    fn accepts_a_release_without_publishers() {
         let empty = declaration(|value| value["publishers"]["github-release"] = json!({}));
-        assert!(
-            ReleaseDeclaration::from_json(&empty)
-                .unwrap_err()
-                .to_string()
-                .contains("at least one")
-        );
+        let declaration = ReleaseDeclaration::from_json(&empty).unwrap();
+        assert!(declaration.publishers.github_release.is_empty());
+        assert!(declaration.publishers.oci.is_empty());
     }
 
     #[test]

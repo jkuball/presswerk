@@ -288,6 +288,12 @@
             description = "Tags pushed for the release. `{version}` is replaced by the version; such a tag is never moved once it exists. A tag without `{version}`, such as `latest`, is an alias that moves only to a higher stable version.";
           };
 
+          public = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Whether anyone may pull the images without credentials. `plan` and `prepare` then check the previous release's tags anonymously and never read `username` or `password`; otherwise they need the credentials for that check. `publish` always needs the credentials.";
+          };
+
           username = mkOption {
             type = types.submodule (secretModule "registry username" "REGISTRY_USERNAME");
             description = "Registry username, read from an environment variable at run time.";
@@ -436,6 +442,7 @@
                 repository = "ghcr.io/owner/project";
                 images."linux/amd64" = self.packages.x86_64-linux.image;
                 tags = [ "{version}" "latest" ];
+                public = true;
                 username.secret = "GITHUB_ACTOR";
                 password.secret = "GITHUB_TOKEN";
               };

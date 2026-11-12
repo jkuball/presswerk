@@ -2,8 +2,8 @@ use crate::analysis::{Analysis, Analyzer, CommitRange, GitCliffAnalyzer};
 use crate::changelog::read_version_section;
 use crate::classification::{CommitClassification, classify_commit};
 use crate::declaration::{
-    DeclarationError, GithubReleasePublisher as GithubReleaseDeclaration, ReleaseDeclaration,
-    UNSTABLE_SCHEMA_VERSION,
+    DeclarationError, GithubReleasePublisher as GithubReleaseDeclaration,
+    OciPublisher as OciDeclaration, ReleaseDeclaration, UNSTABLE_SCHEMA_VERSION,
 };
 use crate::evaluation::{EvaluationError, evaluate_release_declaration};
 use crate::release_commit::TrustedPredecessor;
@@ -1151,11 +1151,6 @@ pub fn publish_ordered(
     release: &Release,
     publishers: &[Box<dyn Publisher>],
 ) -> Result<(TagStep, Vec<(PublisherStep, ArtifactSteps)>), PublicationError> {
-    if publishers.is_empty() {
-        return Err(PublicationError::new(
-            "at least one GitHub Release publisher is required",
-        ));
-    }
     let tag_step = match tag_publisher.state(release)? {
         RemoteState::Missing => TagStep::Pushed,
         RemoteState::Matching => TagStep::AlreadyPushed,
@@ -1433,11 +1428,30 @@ fn verify_predecessor_with_trust_mode(
             GithubClient::from_environment(&publisher.api_url, &publisher.token.secret)?
                 .release_state(&publisher.repository, tag)
         },
+        |publisher, tag| {
+            // A public repository is read anonymously, so its credentials are never needed.
+            let credentials = if publisher.public {
+                None
+            } else {
+                Some(crate::oci::Credentials::from_environment(
+                    &publisher.username.secret,
+                    &publisher.password.secret,
+                )?)
+            };
+            Ok(
+                crate::oci::RegistryClient::new(&publisher.repository, credentials)?
+                    .manifest(tag)?
+                    .map(|(_, manifest)| manifest),
+            )
+        },
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn verify_predecessor_with<E, F>(
+///
+/// `release_state` reads a GitHub Release by tag; `oci_manifest` reads the manifest an OCI tag
+/// points to, or `None` if the registry has no such tag.
+pub fn verify_predecessor_with<E, F, O>(
     repository_path: &Path,
     candidate: Oid,
     previous_version: &Version,
@@ -1446,6 +1460,7 @@ pub fn verify_predecessor_with<E, F>(
     trusted_predecessor: Option<&TrustedPredecessor>,
     evaluate_declaration: E,
     release_state: F,
+    oci_manifest: O,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError>
 where
     E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
@@ -1454,6 +1469,7 @@ where
         &str,
         &Version,
     ) -> Result<GithubReleaseState, PublicationError>,
+    O: FnMut(&OciDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
 {
     verify_predecessor_with_mode(
         repository_path,
@@ -1465,11 +1481,12 @@ where
         true,
         evaluate_declaration,
         release_state,
+        oci_manifest,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_predecessor_with_mode<E, F>(
+fn verify_predecessor_with_mode<E, F, O>(
     repository_path: &Path,
     candidate: Oid,
     previous_version: &Version,
@@ -1479,6 +1496,7 @@ fn verify_predecessor_with_mode<E, F>(
     verify_completion: bool,
     mut evaluate_declaration: E,
     mut release_state: F,
+    mut oci_manifest: O,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError>
 where
     E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
@@ -1487,8 +1505,8 @@ where
         &str,
         &Version,
     ) -> Result<GithubReleaseState, PublicationError>,
+    O: FnMut(&OciDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
 {
-    require_github_publishers(current_declaration)?;
     let repository = Repository::open(repository_path).map_err(|error| {
         PublicationError::new(format!("could not open Git repository: {error}"))
     })?;
@@ -1559,7 +1577,6 @@ where
             .map(Some);
         }
     };
-    require_github_publishers(&previous_declaration)?;
     if previous_declaration.version != *previous_version {
         return Err(PublicationError::new(format!(
             "previous release tag {previous_tag:?} contains version {}, expected {previous_version}",
@@ -1603,6 +1620,28 @@ where
             }
         }
     }
+    // Only version tags count: aliases are best effort and may point to another release.
+    for (name, publisher) in &previous_declaration.publishers.oci {
+        let tags = crate::oci::render_tags(&publisher.tags, previous_version)
+            .map_err(|error| PublicationError::new(format!("oci.{name}: {error}")))?;
+        for tag in tags {
+            let crate::oci::OciTag::Version(tag) = tag else {
+                continue;
+            };
+            let found = match oci_manifest(publisher, &tag)? {
+                None => "the tag is missing".to_owned(),
+                Some(manifest) => match crate::oci::annotated_version(&manifest) {
+                    Some(version) if version == *previous_version => continue,
+                    Some(version) => format!("the tag points to version {version}"),
+                    None => "the tag points to an image without a version annotation".to_owned(),
+                },
+            };
+            return Err(PublicationError::new(format!(
+                "previous OCI release {}:{tag} (oci.{name}) is incomplete: {found}, expected version {previous_version}",
+                publisher.repository
+            )));
+        }
+    }
     Ok(Some(verified))
 }
 
@@ -1629,15 +1668,6 @@ fn verified_remote_predecessor(
         ))),
         RemoteState::Conflicting(message) => Err(PublicationError::new(message)),
     }
-}
-
-fn require_github_publishers(declaration: &ReleaseDeclaration) -> Result<(), PublicationError> {
-    if declaration.publishers.github_release.is_empty() {
-        return Err(PublicationError::new(
-            "at least one GitHub Release publisher is required",
-        ));
-    }
-    Ok(())
 }
 
 fn stable_base(

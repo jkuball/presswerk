@@ -311,6 +311,7 @@ in
         repository = "ghcr.io/owner/project";
         images."linux/amd64" = image.outPath;
         tags = [ "{version}" ];
+        public = false;
         username.secret = "REGISTRY_USERNAME";
         password.secret = "REGISTRY_TOKEN";
       };
@@ -333,6 +334,7 @@ in
           { }
           { repository = "localhost:5000/project"; }
           { tags = [ "{version}" "latest" ]; }
+          { public = true; }
           { repository = "[::1]:5000/project"; }
           { repository = "europe-docker.pkg.dev/project/repo/image"; }
           # Without a registry host.
@@ -352,7 +354,18 @@ in
           { tags = [ "{version}" "{major}" ]; }
           { tags = [ "-{version}" ]; }
         ];
-      expected = [ true true true true true false false false false false false false false false false false false false ];
+      expected = [ true true true true true true false false false false false false false false false false false false false ];
+    };
+
+    "test a release needs no publishers" = {
+      expr = (mkRelease {
+        sourceRoot = fixtureRoot;
+        versionFiles.cargo.example.cargoToml = cargoToml;
+      }).publishers;
+      expected = {
+        github-release = { };
+        oci = { };
+      };
     };
 
     "test a badge does not define the version" = {

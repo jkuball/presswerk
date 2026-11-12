@@ -316,6 +316,7 @@ fn uses_the_exact_predecessor_declaration_for_release_state_checks() {
                         .push(publisher.repository.clone());
                     Ok(GithubReleaseState::Published { prerelease: false })
                 },
+                |_, _| unreachable!("no OCI publishers are declared"),
             )
             .map_err(Into::into)
         },
@@ -365,6 +366,7 @@ fn refuses_deleted_moved_and_lightweight_remote_predecessor_tags() {
                     None,
                     |_| Ok(previous_declaration.clone()),
                     |_, _, _| Ok(GithubReleaseState::Published { prerelease: false }),
+                    |_, _| unreachable!("no OCI publishers are declared"),
                 )
                 .map_err(Into::into)
             },
@@ -581,6 +583,7 @@ fn oci_publisher(tags: &[&str]) -> OciPublisher {
             ("linux/arm64".into(), "/nix/store/def-image.tar.gz".into()),
         ]),
         tags: tags.iter().map(|tag| (*tag).into()).collect(),
+        public: false,
         username: Token {
             secret: "REGISTRY_USERNAME".into(),
         },

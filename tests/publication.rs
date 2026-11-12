@@ -1,7 +1,7 @@
 mod support;
 
 use presswerk::analysis::{Analysis, Bump};
-use presswerk::declaration::ReleaseDeclaration;
+use presswerk::declaration::{OciPublisher, ReleaseDeclaration, Token};
 use presswerk::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GitTagPublisher, GithubClient,
     GithubPublisher, GithubReleaseReader, GithubReleaseState, LocalAsset, PublicationError,
@@ -185,22 +185,22 @@ fn reports_complete_publication_without_writing_again() {
 }
 
 #[test]
-fn refuses_an_empty_publisher_set_before_writing_the_tag() {
+fn a_release_without_publishers_only_pushes_its_tag() {
     let writes = Rc::new(RefCell::new(Vec::new()));
     let tag = FakeTagPublisher {
         state: Rc::new(RefCell::new(RemoteState::Missing)),
         writes: writes.clone(),
     };
 
-    let error = publish_ordered(
+    let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
         &[],
     )
-    .unwrap_err();
+    .unwrap();
 
-    assert!(error.to_string().contains("at least one"));
-    assert!(writes.borrow().is_empty());
+    assert_eq!(steps, (TagStep::Pushed, Vec::new()));
+    assert_eq!(*writes.borrow(), ["tag"]);
 }
 
 #[test]
@@ -433,6 +433,7 @@ fn predecessor_verification_uses_the_tagged_commits_own_publishers() {
             repositories.borrow_mut().push(publisher.repository.clone());
             Ok(GithubReleaseState::Published { prerelease: false })
         },
+        |_, _| unreachable!("no OCI publishers are declared"),
     )
     .unwrap()
     .unwrap();
@@ -466,6 +467,7 @@ fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() 
         None,
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
+        |_, _| unreachable!("no OCI publishers are declared"),
     )
     .unwrap_err();
     assert_eq!(
@@ -486,6 +488,7 @@ fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() 
         Some(&forged),
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
+        |_, _| unreachable!("no OCI publishers are declared"),
     )
     .unwrap_err();
     assert!(error.to_string().contains("does not match expected"));
@@ -504,6 +507,7 @@ fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() 
         Some(&trusted),
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
+        |_, _| unreachable!("no OCI publishers are declared"),
     )
     .unwrap_err();
     assert!(error.to_string().contains("missing from the remote"));
@@ -518,6 +522,7 @@ fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() 
         Some(&trusted),
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
+        |_, _| unreachable!("no OCI publishers are declared"),
     )
     .unwrap()
     .unwrap();
@@ -555,6 +560,7 @@ fn trusted_predecessor_must_be_an_ancestor() {
         Some(&trusted),
         |_| unreachable!("ancestry is checked before decoding"),
         |_, _, _| unreachable!("ancestry is checked before publishers"),
+        |_, _| unreachable!("no OCI publishers are declared"),
     )
     .unwrap_err();
 
@@ -589,6 +595,7 @@ fn supported_predecessors_reject_unnecessary_trust() {
         Some(&trusted),
         |_| Ok(previous_declaration.clone()),
         |_, _, _| Ok(GithubReleaseState::Published { prerelease: false }),
+        |_, _| unreachable!("no OCI publishers are declared"),
     )
     .unwrap_err();
 
@@ -596,9 +603,9 @@ fn supported_predecessors_reject_unnecessary_trust() {
 }
 
 #[test]
-fn predecessor_verification_rejects_an_empty_tagged_publisher_set() {
+fn a_predecessor_without_publishers_is_complete_with_its_remote_tag() {
     let repository = GitRepo::new();
-    repository.commit_version("0.1.0", "🔖 Prepare invalid predecessor");
+    let predecessor = repository.commit_version("0.1.0", "🔖 Prepare predecessor");
     repository.annotated_tag("v0.1.0");
     repository.write("publisher", "new/project\n");
     let candidate = repository.commit("✨ Change publisher");
@@ -609,8 +616,76 @@ fn predecessor_verification_rejects_an_empty_tagged_publisher_set() {
         state: Rc::new(RefCell::new(RemoteState::Matching)),
         writes: Rc::new(RefCell::new(Vec::new())),
     };
+    let verify = || {
+        verify_predecessor_with(
+            repository.path(),
+            candidate.parse().unwrap(),
+            &Version::new(0, 1, 0),
+            &current_declaration,
+            &tag,
+            None,
+            |_commit| Ok(previous_declaration.clone()),
+            |_, _, _| unreachable!("no GitHub Release publishers are declared"),
+            |_, _| unreachable!("no OCI publishers are declared"),
+        )
+    };
 
-    let error = verify_predecessor_with(
+    assert_eq!(verify().unwrap().unwrap().commit.to_string(), predecessor);
+
+    *tag.state.borrow_mut() = RemoteState::Missing;
+    assert!(
+        verify()
+            .unwrap_err()
+            .to_string()
+            .contains("missing from the remote")
+    );
+}
+
+fn oci_predecessor(tags: &[&str]) -> ReleaseDeclaration {
+    let mut declaration = declaration("0.1.0", "old/project");
+    declaration.publishers.github_release.clear();
+    declaration.publishers.oci.insert(
+        "default".into(),
+        OciPublisher {
+            repository: "ghcr.io/owner/project".into(),
+            images: [("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into())].into(),
+            tags: tags.iter().map(|tag| (*tag).into()).collect(),
+            public: true,
+            username: Token {
+                secret: "REGISTRY_USERNAME".into(),
+            },
+            password: Token {
+                secret: "REGISTRY_TOKEN".into(),
+            },
+        },
+    );
+    declaration
+}
+
+fn annotated_index(version: &str) -> Vec<u8> {
+    format!(
+        r#"{{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[],"annotations":{{"org.opencontainers.image.version":"{version}"}}}}"#
+    )
+    .into_bytes()
+}
+
+/// Verify a predecessor with OCI publishers against the manifests a fake registry holds by tag.
+fn verify_oci_predecessor(
+    previous_declaration: &ReleaseDeclaration,
+    manifests: &[(&str, Vec<u8>)],
+) -> (Result<(), PublicationError>, Vec<String>) {
+    let repository = GitRepo::new();
+    repository.commit_version("0.1.0", "🔖 Prepare predecessor");
+    repository.annotated_tag("v0.1.0");
+    repository.write("feature", "implemented\n");
+    let candidate = repository.commit("✨ Add a feature");
+    let current_declaration = declaration("0.1.0", "new/project");
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        writes: Rc::new(RefCell::new(Vec::new())),
+    };
+    let mut read = Vec::new();
+    let result = verify_predecessor_with(
         repository.path(),
         candidate.parse().unwrap(),
         &Version::new(0, 1, 0),
@@ -618,11 +693,65 @@ fn predecessor_verification_rejects_an_empty_tagged_publisher_set() {
         &tag,
         None,
         |_commit| Ok(previous_declaration.clone()),
-        |_publisher, _tag, _version| Ok(GithubReleaseState::Published { prerelease: false }),
+        |_, _, _| unreachable!("no GitHub Release publishers are declared"),
+        |publisher, tag| {
+            assert_eq!(publisher.repository, "ghcr.io/owner/project");
+            read.push(tag.to_owned());
+            Ok(manifests
+                .iter()
+                .find(|(name, _)| *name == tag)
+                .map(|(_, manifest)| manifest.clone()))
+        },
     )
-    .unwrap_err();
+    .map(|verified| assert!(verified.is_some()));
+    (result, read)
+}
 
-    assert!(error.to_string().contains("at least one"));
+#[test]
+fn a_complete_oci_predecessor_passes_and_ignores_aliases() {
+    let previous = oci_predecessor(&["{version}", "v{version}", "latest"]);
+    let (result, read) = verify_oci_predecessor(
+        &previous,
+        &[
+            ("0.1.0", annotated_index("0.1.0")),
+            ("v0.1.0", annotated_index("0.1.0")),
+            // An alias that already moved on, or is missing, does not matter.
+            ("latest", annotated_index("0.2.0")),
+        ],
+    );
+
+    result.unwrap();
+    assert_eq!(read, ["0.1.0", "v0.1.0"]);
+}
+
+#[test]
+fn an_incomplete_oci_predecessor_blocks_the_next_release() {
+    let previous = oci_predecessor(&["{version}", "v{version}", "latest"]);
+    for (manifests, expected) in [
+        (
+            vec![("0.1.0", annotated_index("0.1.0"))],
+            "ghcr.io/owner/project:v0.1.0 (oci.default) is incomplete: the tag is missing",
+        ),
+        (
+            vec![
+                ("0.1.0", annotated_index("0.1.0")),
+                ("v0.1.0", annotated_index("0.0.9")),
+            ],
+            "the tag points to version 0.0.9",
+        ),
+        (
+            vec![
+                ("0.1.0", br#"{"schemaVersion":2,"manifests":[]}"#.to_vec()),
+                ("v0.1.0", annotated_index("0.1.0")),
+            ],
+            "0.1.0 (oci.default) is incomplete: the tag points to an image without a version annotation",
+        ),
+    ] {
+        let (result, _) = verify_oci_predecessor(&previous, &manifests);
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("previous OCI release"), "{error}");
+        assert!(error.contains(expected), "{error}");
+    }
 }
 
 #[derive(Clone)]
