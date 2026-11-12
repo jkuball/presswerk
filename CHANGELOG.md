@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.7.0] - 2026-11-12
+
+### 💄 Add or update the UI and style files
+
+- (docs): Keep the menu button ink on ground in the dark theme
+- Keep breaking Conventional Commits in their type group with a marker
+
+### 📝 Add or update documentation
+
+- (docs): Split the commit analyzers into an overview and one page per analyzer
+- (docs): Document the Conventional Commits analyzer
+
+### ✨ Introduce new features
+
+- Release reverted Conventional Commits as patches by default
+- Add a Conventional Commits analyzer
+
+### 💥 Introduce breaking changes
+
+- Require every release to declare its commit analyzer
+
+### ♻️ Refactor code
+
+- Select the commit analyzer with an enable option
+
 ## [0.6.2] - 2026-11-12
 
 ### 💄 Add or update the UI and style files
