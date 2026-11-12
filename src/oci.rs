@@ -632,7 +632,8 @@ pub struct RegistryClient {
     agent: ureq::Agent,
     repository: RepositoryReference,
     display: String,
-    credentials: Credentials,
+    /// `None` reads anonymously, for repositories anyone may pull from.
+    credentials: Option<Credentials>,
     authorization: Mutex<Option<String>>,
 }
 
@@ -647,7 +648,11 @@ impl fmt::Debug for RegistryClient {
 }
 
 impl RegistryClient {
-    pub fn new(repository: &str, credentials: Credentials) -> Result<Self, PublicationError> {
+    /// A client for `repository`; without credentials it only pulls, anonymously.
+    pub fn new(
+        repository: &str,
+        credentials: Option<Credentials>,
+    ) -> Result<Self, PublicationError> {
         Ok(Self {
             agent: ureq::AgentBuilder::new().build(),
             repository: RepositoryReference::parse(repository).map_err(PublicationError::new)?,
@@ -706,6 +711,9 @@ impl RegistryClient {
                     let authorization = self.authenticate(challenge)?;
                     *self.authorization.lock().expect("lock") = Some(authorization);
                 }
+                Err(ureq::Error::Status(status @ (401 | 403), _)) if self.credentials.is_none() => {
+                    return Err(self.not_public(&format!("the registry answered HTTP {status}")));
+                }
                 Err(ureq::Error::Status(status, _)) => return Err(CallError::Status(status)),
                 Err(ureq::Error::Transport(error)) => {
                     return Err(CallError::Transport(error.to_string()));
@@ -714,18 +722,25 @@ impl RegistryClient {
         }
     }
 
-    /// Answer a registry's authentication challenge with the configured credentials.
+    fn not_public(&self, reason: &str) -> CallError {
+        CallError::Transport(format!(
+            "{reason} to an anonymous read, so {} does not seem to be publicly readable; is `public = true` correct?",
+            self.display
+        ))
+    }
+
+    /// Answer a registry's authentication challenge with the configured credentials, or
+    /// anonymously with pull access only.
     fn authenticate(&self, challenge: &str) -> Result<String, CallError> {
-        let basic = format!(
-            "Basic {}",
-            base64(format!(
-                "{}:{}",
-                self.credentials.username, self.credentials.password
-            ))
-        );
+        let basic = self.credentials.as_ref().map(|credentials| {
+            format!(
+                "Basic {}",
+                base64(format!("{}:{}", credentials.username, credentials.password))
+            )
+        });
         let (scheme, parameters) = challenge.split_once(' ').unwrap_or((challenge, ""));
         if scheme.eq_ignore_ascii_case("basic") {
-            return Ok(basic);
+            return basic.ok_or_else(|| self.not_public("the registry asked for a password"));
         }
         if !scheme.eq_ignore_ascii_case("bearer") {
             return Err(CallError::Transport(format!(
@@ -744,19 +759,23 @@ impl RegistryClient {
             if let Some(service) = parameters.get("service") {
                 query.append_pair("service", service);
             }
+            let actions = if basic.is_some() { "pull,push" } else { "pull" };
             query.append_pair(
                 "scope",
-                &format!("repository:{}:pull,push", self.repository.name),
+                &format!("repository:{}:{actions}", self.repository.name),
             );
         }
-        let response = match self
-            .agent
-            .get(url.as_str())
-            .set("User-Agent", "presswerk")
-            .set("Authorization", &basic)
-            .call()
-        {
+        let mut request = self.agent.get(url.as_str()).set("User-Agent", "presswerk");
+        if let Some(basic) = &basic {
+            request = request.set("Authorization", basic);
+        }
+        let response = match request.call() {
             Ok(response) => response,
+            Err(ureq::Error::Status(status, _)) if basic.is_none() => {
+                return Err(self.not_public(&format!(
+                    "the registry token service answered HTTP {status}"
+                )));
+            }
             Err(ureq::Error::Status(status, _)) => {
                 return Err(CallError::Transport(format!(
                     "registry token service rejected the credentials (HTTP {status})"
@@ -1000,7 +1019,7 @@ impl OciPublisher {
             .collect::<Result<Vec<_>, _>>()
             .map_err(PublicationError::new)?;
         Ok(Self::new(
-            RegistryClient::new(&declaration.repository, credentials)?,
+            RegistryClient::new(&declaration.repository, Some(credentials))?,
             &declaration.repository,
             declaration.tags.clone(),
             images,
@@ -1189,7 +1208,7 @@ impl Inspection {
     }
 }
 
-fn annotated_version(manifest: &[u8]) -> Option<Version> {
+pub(crate) fn annotated_version(manifest: &[u8]) -> Option<Version> {
     #[derive(Deserialize)]
     struct Annotated {
         #[serde(default)]

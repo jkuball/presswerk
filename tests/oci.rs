@@ -232,6 +232,10 @@ struct RegistryState {
     writes: Vec<String>,
     faults: Vec<Fault>,
     uploads: usize,
+    /// Whether anyone may pull without credentials.
+    public: bool,
+    /// The query and `Authorization` header of every token request.
+    token_requests: Vec<(String, Option<String>)>,
 }
 
 struct MockRegistry {
@@ -276,11 +280,15 @@ impl MockRegistry {
             password: password.into(),
         };
         OciPublisher::new(
-            RegistryClient::new(&self.repository(), credentials).unwrap(),
+            RegistryClient::new(&self.repository(), Some(credentials)).unwrap(),
             &self.repository(),
             tags.iter().map(|tag| (*tag).into()).collect(),
             images,
         )
+    }
+
+    fn anonymous_client(&self) -> RegistryClient {
+        RegistryClient::new(&self.repository(), None).unwrap()
     }
 
     fn writes(&self) -> Vec<String> {
@@ -347,21 +355,33 @@ fn handle(mut stream: TcpStream, state: &Mutex<RegistryState>, realm: &str) {
 
     let (path, query) = target.split_once('?').unwrap_or((&target, ""));
     if path == "/token" {
-        assert!(
-            query.contains("scope=repository%3Ateam%2Fapp%3Apull%2Cpush"),
-            "{query}"
-        );
-        // "user:secret-password"
-        if headers.get("authorization").map(String::as_str)
-            == Some("Basic dXNlcjpzZWNyZXQtcGFzc3dvcmQ=")
-        {
-            respond(&mut stream, 200, &[], br#"{"token":"test-token"}"#);
-        } else {
-            respond(&mut stream, 401, &[], b"{}");
+        let mut state = state.lock().unwrap();
+        let authorization = headers.get("authorization").cloned();
+        state
+            .token_requests
+            .push((query.to_owned(), authorization.clone()));
+        match authorization.as_deref() {
+            // "user:secret-password"
+            Some("Basic dXNlcjpzZWNyZXQtcGFzc3dvcmQ=") => {
+                assert!(
+                    query.contains("scope=repository%3Ateam%2Fapp%3Apull%2Cpush"),
+                    "{query}"
+                );
+                respond(&mut stream, 200, &[], br#"{"token":"test-token"}"#);
+            }
+            None if state.public => {
+                respond(&mut stream, 200, &[], br#"{"token":"anonymous-token"}"#);
+            }
+            _ => respond(&mut stream, 401, &[], b"{}"),
         }
         return;
     }
-    if headers.get("authorization").map(String::as_str) != Some("Bearer test-token") {
+    let anonymous_read = headers.get("authorization").map(String::as_str)
+        == Some("Bearer anonymous-token")
+        && matches!(method.as_str(), "GET" | "HEAD");
+    if headers.get("authorization").map(String::as_str) != Some("Bearer test-token")
+        && !anonymous_read
+    {
         respond(
             &mut stream,
             401,
@@ -815,6 +835,50 @@ fn aliases_move_only_to_a_higher_stable_version() {
         panic!("expected the foreign alias to be kept");
     };
     assert!(reason.contains("without a version"), "{reason}");
+}
+
+#[test]
+fn a_public_repository_is_read_anonymously_with_pull_access_only() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    registry
+        .publisher(images.load(), &["{version}"])
+        .publish(&release("1.0.0"))
+        .unwrap();
+    let pushed = registry.tag("1.0.0").unwrap();
+    let mut state = registry.state.lock().unwrap();
+    state.public = true;
+    state.token_requests.clear();
+    drop(state);
+
+    let client = registry.anonymous_client();
+    let (digest, _) = client.manifest("1.0.0").unwrap().unwrap();
+    assert_eq!(digest, pushed);
+    assert_eq!(client.manifest("2.0.0").unwrap(), None);
+
+    let requests = registry.state.lock().unwrap().token_requests.clone();
+    assert_eq!(
+        requests,
+        [(
+            "service=mock&scope=repository%3Ateam%2Fapp%3Apull".to_owned(),
+            None
+        )]
+    );
+}
+
+#[test]
+fn a_private_repository_rejects_an_anonymous_read() {
+    let registry = MockRegistry::start();
+    let error = registry
+        .anonymous_client()
+        .manifest("1.0.0")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("does not seem to be publicly readable"),
+        "{error}"
+    );
+    assert!(error.contains("public = true"), "{error}");
 }
 
 #[test]
