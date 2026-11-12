@@ -399,7 +399,9 @@ commits come first; equal-sized groups are ordered by Gitmoji shortcode. Each en
 least the commit subject; whether the default also includes the body is an implementation
 choice. Commits without a Gitmoji are not included in those notes.
 
-Release commits use `🔖`. The range base release is excluded by the Git range, and publication
+Release commits use `🔖`; with the Conventional Commits analyzer they use `chore(release): <tag>`
+instead, and that analyzer skips commits with exactly that subject for a tag of the declared format.
+The range base release is excluded by the Git range, and publication
 additionally excludes only the candidate's exact object ID. Every other reachable release commit
 follows the declared catalog like any other `bookmark` commit; `bookmark` has no built-in meaning.
 A release commit cannot list itself because its notes are rendered before it exists. How the
