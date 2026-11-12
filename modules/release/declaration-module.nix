@@ -8,7 +8,10 @@
       conventionalCatalog = builtins.fromJSON (builtins.readFile ./conventional/catalog.json);
       variationSelector = builtins.fromJSON ''"\uFE0F"'';
       normalizedEmoji = emoji: builtins.replaceStrings [ variationSelector ] [ "" ] emoji;
-      declaredAnalyzers = builtins.filter (name: config.analyzer.${name} != null) [ "gitmoji" "conventional" ];
+      # Every commit analyzer is an option under `analyzer`; a release declares exactly one of them.
+      analyzerNames = [ "gitmoji" "conventional" ];
+      declaredAnalyzers = builtins.filter (name: config.analyzer.${name} != null) analyzerNames;
+      analyzerOptions = names: lib.concatMapStringsSep ", " (name: "analyzer.${name}") names;
       catalogEntries =
         if config.analyzer.gitmoji == null then [ ]
         else builtins.filter (entry: entry != null) (builtins.attrValues config.analyzer.gitmoji.catalog);
@@ -353,16 +356,16 @@
         analyzer = {
           gitmoji = mkOption {
             type = types.nullOr (types.submodule gitmojiAnalyzerModule);
-            default = if config.analyzer.conventional == null then { } else null;
-            defaultText = lib.literalMD "`{ }` unless another analyzer is declared";
-            description = "Gitmoji analyzer, used when no other analyzer is declared. A release declares exactly one analyzer.";
+            default = null;
+            example = lib.literalExpression "{ }";
+            description = "Gitmoji analyzer; declare it, for example as `{ }`, to analyze Gitmoji commits. A release declares exactly one commit analyzer.";
           };
 
           conventional = mkOption {
             type = types.nullOr (types.submodule conventionalAnalyzerModule);
             default = null;
             example = lib.literalExpression "{ }";
-            description = "Conventional Commits analyzer; declare it, for example as `{ }`, to analyze Conventional Commits instead of Gitmoji. A release declares exactly one analyzer.";
+            description = "Conventional Commits analyzer; declare it, for example as `{ }`, to analyze Conventional Commits. A release declares exactly one commit analyzer.";
           };
         };
 
@@ -402,9 +405,11 @@
         assertions = [
           {
             assertion = builtins.length declaredAnalyzers == 1;
-            message = "declare exactly one analyzer, analyzer.gitmoji or analyzer.conventional; found ${
-              if declaredAnalyzers == [ ] then "none" else lib.concatMapStringsSep " and " (name: "analyzer.${name}") declaredAnalyzers
-            }";
+            message =
+              if declaredAnalyzers == [ ] then
+                "declare a commit analyzer, exactly one of ${analyzerOptions analyzerNames}, for example analyzer.gitmoji = { };"
+              else
+                "declare exactly one commit analyzer; found ${analyzerOptions declaredAnalyzers}";
           }
           {
             assertion = lib.all (type: builtins.match "[a-z0-9][a-z0-9_-]*" type != null) conventionalTypes;

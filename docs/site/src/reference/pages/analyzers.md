@@ -12,10 +12,16 @@ smaller than the analysis requires.
 ## Choose an analyzer
 
 Presswerk has two built-in analyzers: [Gitmoji](#gitmoji) and
-[Conventional Commits](#conventional-commits). A release declares exactly one of them. Without a
-declaration, Presswerk analyzes Gitmoji commits; declare
-[`analyzer.conventional`](/reference/options/#analyzer.conventional) to analyze Conventional Commits
-instead:
+[Conventional Commits](#conventional-commits). A release declares exactly one of the analyzers by
+declaring its block, such as [`analyzer.gitmoji`](/reference/options/#analyzer.gitmoji):
+
+```nix presswerk-module
+{
+  analyzer.gitmoji = { };
+}
+```
+
+or [`analyzer.conventional`](/reference/options/#analyzer.conventional):
 
 ```nix presswerk-module
 {
@@ -23,8 +29,9 @@ instead:
 }
 ```
 
-Declaring both [`analyzer.gitmoji`](/reference/options/#analyzer.gitmoji) and
-`analyzer.conventional` fails evaluation with a message that names both.
+Setting an option inside the block, such as `analyzer.gitmoji.catalog.memo.semver`, declares it too.
+A release without an analyzer, or with more than one, fails evaluation with a message that names
+the analyzers.
 
 Both analyzers treat history the same way. A subject that their convention does not describe, or
 that uses an intention missing from the catalog, contributes neither a bump nor a release note.

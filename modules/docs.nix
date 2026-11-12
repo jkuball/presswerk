@@ -52,6 +52,7 @@ let
     versionFiles.cargo.presswerk = { };
     versionFiles.badge.default = { };
     publishers.github-release.default.repository = "jkuball/presswerk";
+    analyzer.gitmoji = { };
   };
 in
 {

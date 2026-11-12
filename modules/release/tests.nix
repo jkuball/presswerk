@@ -1,6 +1,15 @@
 { config, inputs, lib, self, ... }:
 let
-  mkRelease = config.flake.lib.mkRelease;
+  mkBareRelease = config.flake.lib.mkRelease;
+  # Most tests are about other options, so they analyze Gitmoji unless they declare an analyzer.
+  mkRelease = module: mkBareRelease {
+    imports = [
+      module
+      ({ config, ... }: {
+        analyzer.gitmoji = lib.mkIf (config.analyzer.conventional == null) (lib.mkDefault { });
+      })
+    ];
+  };
   sourceRoot = self.outPath;
   cargoTomlFixture = builtins.toFile "Cargo.toml" ''
     [package]
@@ -24,6 +33,19 @@ let
   presswerkVersion = (builtins.fromTOML (builtins.readFile (self.outPath + "/Cargo.toml"))).package.version;
   vendoredCatalog = builtins.fromJSON (builtins.readFile ./gitmoji/catalog.json);
   conventionalCatalog = builtins.fromJSON (builtins.readFile ./conventional/catalog.json);
+  # The message of the first failed assertion for a release module with these settings.
+  failedAssertion = settings: (lib.findFirst (assertion: !assertion.assertion) null
+    (lib.evalModules {
+      class = "presswerk";
+      modules = [
+        config.flake.modules.presswerk.default
+        ({
+          inherit sourceRoot;
+          version = "1.2.3";
+        } // settings)
+      ];
+      specialArgs.presswerk.version = presswerkVersion;
+    }).config.assertions).message;
   succeeds = value: (builtins.tryEval (builtins.deepSeq value true)).success;
 
   publisher = {
@@ -412,7 +434,7 @@ in
       expected = false;
     };
 
-    "test the Conventional Commits analyzer replaces Gitmoji" = {
+    "test the Conventional Commits analyzer normalizes" = {
       expr = (mkRelease {
         inherit sourceRoot;
         version = "1.2.3";
@@ -510,8 +532,50 @@ in
       ];
     };
 
-    "test both analyzers together fail" = {
-      expr = succeeds (mkRelease {
+    "test each analyzer alone is accepted" = {
+      expr = map
+        (
+          analyzer:
+          (mkBareRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            analyzer.${analyzer} = { };
+          }).analyzer.convention
+        )
+        [
+          "gitmoji"
+          "conventional"
+        ];
+      expected = [
+        "gitmoji"
+        "conventional"
+      ];
+    };
+
+    "test setting an option inside an analyzer declares it" = {
+      expr = (mkBareRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.gitmoji.catalog.memo.semver = "patch";
+      }).analyzer.convention;
+      expected = "gitmoji";
+    };
+
+    "test a release without an analyzer fails" = {
+      expr = succeeds (mkBareRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+      });
+      expected = false;
+    };
+
+    "test a missing analyzer is named in the assertion" = {
+      expr = failedAssertion { };
+      expected = "declare a commit analyzer, exactly one of analyzer.gitmoji, analyzer.conventional, for example analyzer.gitmoji = { };";
+    };
+
+    "test two analyzers fail" = {
+      expr = succeeds (mkBareRelease {
         inherit sourceRoot;
         version = "1.2.3";
         analyzer.conventional = { };
@@ -520,31 +584,12 @@ in
       expected = false;
     };
 
-    "test both analyzers name themselves in the assertion" = {
-      expr = (lib.findFirst (assertion: !assertion.assertion) null
-        (lib.evalModules {
-          class = "presswerk";
-          modules = [
-            config.flake.modules.presswerk.default
-            {
-              inherit sourceRoot;
-              version = "1.2.3";
-              analyzer.conventional = { };
-              analyzer.gitmoji = { };
-            }
-          ];
-          specialArgs.presswerk.version = presswerkVersion;
-        }).config.assertions).message;
-      expected = "declare exactly one analyzer, analyzer.gitmoji or analyzer.conventional; found analyzer.gitmoji and analyzer.conventional";
-    };
-
-    "test removing the default analyzer fails" = {
-      expr = succeeds (mkRelease {
-        inherit sourceRoot;
-        version = "1.2.3";
-        analyzer.gitmoji = null;
-      });
-      expected = false;
+    "test two analyzers are named in the assertion" = {
+      expr = failedAssertion {
+        analyzer.conventional = { };
+        analyzer.gitmoji = { };
+      };
+      expected = "declare exactly one commit analyzer; found analyzer.gitmoji, analyzer.conventional";
     };
 
     "test sourceRoot is required" = {

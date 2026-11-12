@@ -53,6 +53,8 @@ Declare a release in your flake:
       versionFiles.badge.default = { };
       # Publish a GitHub Release.
       publishers.github-release.default.repository = "me/my-crate";
+      # Analyze Gitmoji commits.
+      analyzer.gitmoji = { };
     };
   };
 }
