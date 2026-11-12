@@ -48,11 +48,18 @@ export interface GitmojiEntry {
   semver: 'major' | 'minor' | 'patch' | null;
 }
 
+export interface ConventionalEntry {
+  title: string;
+  semver: 'major' | 'minor' | 'patch' | null;
+}
+
 export interface ReferenceData {
   options: ReleaseOption[];
   cli: CliCommand;
   declaration: Record<string, unknown>;
   gitmoji: Record<string, GitmojiEntry>;
+  /** The default Conventional Commits type catalog. */
+  conventional: Record<string, ConventionalEntry>;
   /** The upstream MIT notice of the vendored Gitmoji catalog. */
   gitmojiLicense: string;
   version: string;
@@ -75,6 +82,7 @@ export function referenceData(): ReferenceData {
     cli: read('cli.json'),
     declaration: read('declaration.json'),
     gitmoji: read('gitmoji.json'),
+    conventional: read('conventional.json'),
     gitmojiLicense: readFileSync(join(directory, 'gitmoji-license.txt'), 'utf8'),
     version: readFileSync(join(directory, 'version'), 'utf8').trim(),
   };

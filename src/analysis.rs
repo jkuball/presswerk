@@ -1,4 +1,7 @@
-use crate::declaration::{GitmojiCatalog, GitmojiCatalogEntry, strip_variation_selectors};
+use crate::declaration::{
+    self, ConventionalCatalog, GitmojiCatalog, GitmojiCatalogEntry, Tag, strip_variation_selectors,
+};
+use crate::release_commit::release_subject;
 use git_cliff_core::repo::Repository as GitCliffRepository;
 use git2::{Oid, Repository as GitRepository};
 use minijinja::{Environment, context, value::Serde};
@@ -13,6 +16,8 @@ use std::path::{Path, PathBuf};
 const DEFAULT_NOTES_TEMPLATE: &str = include_str!("release-notes.md.j2");
 const REVERT_PREFIX: &str = "This reverts commit ";
 const MAINLINE_PREFIX: &str = "changes made to ";
+const CONVENTIONAL_REVERT_TYPE: &str = "revert";
+const BREAKING_CHANGE_FOOTERS: [&str; 2] = ["BREAKING CHANGE:", "BREAKING-CHANGE:"];
 // Git's shortest abbreviation up to a full SHA-256 object ID.
 const COMMIT_ID_LENGTHS: RangeInclusive<usize> = 4..=64;
 
@@ -39,13 +44,76 @@ pub struct ParsedGitmojiSubject {
     pub message: String,
 }
 
+/// A Conventional Commits type from the declared catalog.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConventionalType {
+    pub name: String,
+    pub title: String,
+    pub bump: Option<Bump>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ParsedConventionalCommit {
+    pub kind: ConventionalType,
+    pub scope: Option<String>,
+    pub message: String,
+    /// Marked with `!` after the type or scope, or with a `BREAKING CHANGE:` footer.
+    pub breaking: bool,
+}
+
+/// What a commit's subject says it does, in the declared convention.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum Intention {
+    Gitmoji(Gitmoji),
+    Conventional(ConventionalType),
+}
+
+impl Intention {
+    #[must_use]
+    pub fn bump(&self) -> Option<Bump> {
+        match self {
+            Self::Gitmoji(gitmoji) => gitmoji.bump,
+            Self::Conventional(kind) => kind.bump,
+        }
+    }
+
+    #[must_use]
+    pub fn gitmoji(&self) -> Option<&Gitmoji> {
+        match self {
+            Self::Gitmoji(gitmoji) => Some(gitmoji),
+            Self::Conventional(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn conventional(&self) -> Option<&ConventionalType> {
+        match self {
+            Self::Conventional(kind) => Some(kind),
+            Self::Gitmoji(_) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AnalyzedCommit {
     pub id: String,
     pub subject: String,
-    pub gitmoji: Gitmoji,
+    pub intention: Intention,
     pub scope: Option<String>,
     pub message: String,
+    /// A breaking change selects a major bump whatever its intention's level.
+    pub breaking: bool,
+}
+
+impl AnalyzedCommit {
+    #[must_use]
+    pub fn bump(&self) -> Option<Bump> {
+        if self.breaking {
+            Some(Bump::Major)
+        } else {
+            self.intention.bump()
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,10 +125,7 @@ pub struct Analysis {
 impl Analysis {
     #[must_use]
     pub fn from_commits(commits: Vec<AnalyzedCommit>) -> Self {
-        let bump = commits
-            .iter()
-            .filter_map(|commit| commit.gitmoji.bump)
-            .max();
+        let bump = commits.iter().filter_map(AnalyzedCommit::bump).max();
         Self { bump, commits }
     }
 
@@ -160,10 +225,12 @@ fn resolve_commit(repository: &Path, revision: &str) -> Result<String, AnalysisE
 }
 
 pub trait Analyzer {
+    /// Analyzes the commits in `range` with the declared analyzer; `tag` names the releases.
     fn analyze(
         &self,
         range: &CommitRange,
-        catalog: &GitmojiCatalog,
+        analyzer: &declaration::Analyzer,
+        tag: &Tag,
     ) -> Result<Analysis, AnalysisError>;
 }
 
@@ -174,7 +241,8 @@ impl Analyzer for GitCliffAnalyzer {
     fn analyze(
         &self,
         range: &CommitRange,
-        catalog: &GitmojiCatalog,
+        analyzer: &declaration::Analyzer,
+        tag: &Tag,
     ) -> Result<Analysis, AnalysisError> {
         let repository = GitCliffRepository::init(range.repository.clone()).map_err(|error| {
             AnalysisError::new(format!(
@@ -212,12 +280,12 @@ impl Analyzer for GitCliffAnalyzer {
             }
 
             let message = commit.message().unwrap_or_default();
-            let Some(subject) = message.lines().next().map(str::trim_end) else {
+            if message.lines().next().is_none() {
                 continue;
-            };
+            }
 
             let Some(reverted) = reverted_commit(message) else {
-                if let Some(entry) = analyzed_commit(commit.id(), subject, catalog) {
+                if let Some(entry) = analyzed_commit(commit.id(), message, analyzer, tag) {
                     analyzed.push(entry);
                 }
                 continue;
@@ -225,7 +293,7 @@ impl Analyzer for GitCliffAnalyzer {
 
             let target = resolve_commit_id(&git, commit.id(), reverted.commit)?;
             if !in_range.contains(&target.id()) {
-                if let Some(entry) = reverted_outside_range(commit.id(), subject, catalog) {
+                if let Some(entry) = reverted_outside_range(commit.id(), message, analyzer, tag) {
                     analyzed.push(entry);
                 }
                 continue;
@@ -247,34 +315,99 @@ impl Analyzer for GitCliffAnalyzer {
     }
 }
 
-fn analyzed_commit(id: Oid, subject: &str, catalog: &GitmojiCatalog) -> Option<AnalyzedCommit> {
-    let parsed = parse_gitmoji_subject(subject, catalog)?;
-    Some(AnalyzedCommit {
-        id: id.to_string(),
-        subject: subject.to_owned(),
-        gitmoji: parsed.gitmoji,
-        scope: parsed.scope,
-        message: parsed.message,
-    })
+fn subject_line(message: &str) -> &str {
+    message.lines().next().unwrap_or_default().trim_end()
+}
+
+/// The analyzed form of a commit, or `None` for a commit that its convention does not describe.
+fn analyzed_commit(
+    id: Oid,
+    message: &str,
+    analyzer: &declaration::Analyzer,
+    tag: &Tag,
+) -> Option<AnalyzedCommit> {
+    let subject = subject_line(message);
+    match analyzer {
+        declaration::Analyzer::Gitmoji { gitmoji } => {
+            let parsed = parse_gitmoji_subject(subject, &gitmoji.catalog)?;
+            Some(AnalyzedCommit {
+                id: id.to_string(),
+                subject: subject.to_owned(),
+                intention: Intention::Gitmoji(parsed.gitmoji),
+                scope: parsed.scope,
+                message: parsed.message,
+                breaking: false,
+            })
+        }
+        declaration::Analyzer::Conventional { conventional } => {
+            if is_release_subject(subject, analyzer, tag) {
+                return None;
+            }
+            let parsed = parse_conventional_commit(message, &conventional.catalog)?;
+            Some(AnalyzedCommit {
+                id: id.to_string(),
+                subject: subject.to_owned(),
+                intention: Intention::Conventional(parsed.kind),
+                scope: parsed.scope,
+                message: parsed.message,
+                breaking: parsed.breaking,
+            })
+        }
+    }
+}
+
+/// Whether a subject is the one `prepare` writes for a release commit of this declaration.
+fn is_release_subject(subject: &str, analyzer: &declaration::Analyzer, tag: &Tag) -> bool {
+    subject
+        .rsplit(' ')
+        .next()
+        .and_then(|name| tag.parse(name).ok().flatten())
+        .and_then(|version| tag.render(&version).ok())
+        .is_some_and(|name| release_subject(analyzer, &name) == subject)
 }
 
 /// Records a revert whose target was released earlier under the catalog's revert intention,
 /// keeping the revert's own subject as the message.
 fn reverted_outside_range(
     id: Oid,
-    subject: &str,
-    catalog: &GitmojiCatalog,
+    message: &str,
+    analyzer: &declaration::Analyzer,
+    tag: &Tag,
 ) -> Option<AnalyzedCommit> {
-    let Some(entry) = catalog.get("rewind") else {
-        return analyzed_commit(id, subject, catalog);
-    };
-    Some(AnalyzedCommit {
-        id: id.to_string(),
-        subject: format!("{} {subject}", entry.emoji),
-        gitmoji: gitmoji("rewind", entry),
-        scope: None,
-        message: subject.to_owned(),
-    })
+    let subject = subject_line(message);
+    match analyzer {
+        declaration::Analyzer::Gitmoji { gitmoji } => {
+            let Some(entry) = gitmoji.catalog.get("rewind") else {
+                return analyzed_commit(id, message, analyzer, tag);
+            };
+            Some(AnalyzedCommit {
+                id: id.to_string(),
+                subject: format!("{} {subject}", entry.emoji),
+                intention: Intention::Gitmoji(gitmoji_intention("rewind", entry)),
+                scope: None,
+                message: subject.to_owned(),
+                breaking: false,
+            })
+        }
+        // A subject that states its own type, such as `revert: …`, keeps it; the plain
+        // `Revert "…"` subject that `git revert` writes falls under the revert type.
+        declaration::Analyzer::Conventional { conventional } => {
+            analyzed_commit(id, message, analyzer, tag).or_else(|| {
+                let entry = conventional.catalog.get(CONVENTIONAL_REVERT_TYPE)?;
+                Some(AnalyzedCommit {
+                    id: id.to_string(),
+                    subject: subject.to_owned(),
+                    intention: Intention::Conventional(conventional_type(
+                        CONVENTIONAL_REVERT_TYPE,
+                        entry,
+                    )),
+                    scope: None,
+                    message: subject.to_owned(),
+                    breaking: false,
+                })
+            })
+        }
+    }
 }
 
 /// The commit a standard `git revert` message body names, as written.
@@ -461,7 +594,7 @@ pub fn parse_gitmoji_subject(
     let (scope, message) = parse_scope_and_message(remainder)?;
 
     Some(ParsedGitmojiSubject {
-        gitmoji: gitmoji(shortcode, entry),
+        gitmoji: gitmoji_intention(shortcode, entry),
         scope,
         message: message.to_owned(),
     })
@@ -499,11 +632,80 @@ fn parse_scope_and_message(remainder: &str) -> Option<(Option<String>, &str)> {
     (!message.is_empty()).then_some((None, message))
 }
 
-fn gitmoji(shortcode: &str, entry: &GitmojiCatalogEntry) -> Gitmoji {
+fn gitmoji_intention(shortcode: &str, entry: &GitmojiCatalogEntry) -> Gitmoji {
     Gitmoji {
         emoji: entry.emoji.clone(),
         shortcode: format!(":{shortcode}:"),
         description: entry.description.clone(),
+        bump: entry.semver,
+    }
+}
+
+/// Parses a commit message written to the
+/// [Conventional Commits specification](https://www.conventionalcommits.org/en/v1.0.0/):
+/// `<type>[(scope)][!]: <description>`, with the type matched case-insensitively against the
+/// declared catalog, and a `BREAKING CHANGE:` or `BREAKING-CHANGE:` line after the subject.
+#[must_use]
+pub fn parse_conventional_commit(
+    message: &str,
+    catalog: &ConventionalCatalog,
+) -> Option<ParsedConventionalCommit> {
+    let subject = subject_line(message);
+    let prefix_end = subject.find(':')?;
+    let (prefix, remainder) = subject.split_at(prefix_end);
+    let description = remainder[1..]
+        .strip_prefix(char::is_whitespace)?
+        .trim_start();
+    if description.is_empty() {
+        return None;
+    }
+
+    let (prefix, bang) = prefix
+        .strip_suffix('!')
+        .map_or((prefix, false), |prefix| (prefix, true));
+    let (name, scope) = match prefix.split_once('(') {
+        Some((name, scope)) => {
+            let scope = scope.strip_suffix(')')?;
+            if scope.trim().is_empty() || scope.contains(['(', ')']) {
+                return None;
+            }
+            (name, Some(scope.trim().to_owned()))
+        }
+        None => (prefix, None),
+    };
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return None;
+    }
+    let name = name.to_ascii_lowercase();
+    let entry = catalog.get(&name)?;
+
+    let footer = message.lines().skip(1).any(|line| {
+        BREAKING_CHANGE_FOOTERS.iter().any(|token| {
+            line.strip_prefix(token)
+                .and_then(|value| value.strip_prefix(char::is_whitespace))
+                .is_some_and(|value| !value.trim().is_empty())
+        })
+    });
+
+    Some(ParsedConventionalCommit {
+        kind: conventional_type(&name, entry),
+        scope,
+        message: description.to_owned(),
+        breaking: bang || footer,
+    })
+}
+
+fn conventional_type(
+    name: &str,
+    entry: &declaration::ConventionalCatalogEntry,
+) -> ConventionalType {
+    ConventionalType {
+        name: name.to_owned(),
+        title: entry.title.clone(),
         bump: entry.semver,
     }
 }
@@ -544,40 +746,86 @@ fn increment(value: u64, component: &'static str) -> Result<u64, VersionError> {
         .ok_or(VersionError::ComponentOverflow(component))
 }
 
+const BREAKING_CHANGE_MARKER: &str = "**BREAKING**";
+
 #[derive(Serialize)]
 struct NoteGroup<'a> {
-    emoji: &'a str,
-    shortcode: &'a str,
-    description: &'a str,
-    commits: Vec<NoteCommit<'a>>,
+    title: String,
+    commits: Vec<NoteCommit>,
+    /// Groups sort by rank, then by size, then by key.
+    #[serde(skip)]
+    rank: u8,
+    #[serde(skip)]
+    key: &'a str,
 }
 
 #[derive(Serialize)]
-struct NoteCommit<'a> {
-    /// The subject without its leading intention, which the group heading already shows.
-    text: &'a str,
+struct NoteCommit {
+    /// The commit's line without the intention, which the group heading already shows.
+    text: String,
 }
 
-impl<'a> NoteCommit<'a> {
-    fn new(commit: &'a AnalyzedCommit) -> Self {
-        let text = commit
-            .subject
-            .split_once(char::is_whitespace)
-            .map_or(commit.subject.as_str(), |(_, rest)| rest.trim_start());
+impl NoteCommit {
+    fn new(commit: &AnalyzedCommit) -> Self {
+        let text = match &commit.intention {
+            // The Gitmoji subject keeps its own scope spelling after the intention.
+            Intention::Gitmoji(_) => commit
+                .subject
+                .split_once(char::is_whitespace)
+                .map_or(commit.subject.as_str(), |(_, rest)| rest.trim_start())
+                .to_owned(),
+            Intention::Conventional(_) => {
+                let marker = if commit.breaking {
+                    format!("{BREAKING_CHANGE_MARKER} ")
+                } else {
+                    String::new()
+                };
+                match &commit.scope {
+                    Some(scope) => format!("{marker}**{scope}:** {}", commit.message),
+                    None => format!("{marker}{}", commit.message),
+                }
+            }
+        };
         Self { text }
+    }
+}
+
+/// The note group a commit belongs to: its key, heading, and rank.
+fn note_group(commit: &AnalyzedCommit) -> (&str, String, u8) {
+    match &commit.intention {
+        Intention::Gitmoji(gitmoji) => (
+            &gitmoji.shortcode,
+            format!(
+                "{} {}",
+                gitmoji.emoji,
+                gitmoji.description.trim_end_matches('.')
+            ),
+            0,
+        ),
+        // Types come in the order of the level they select; a breaking commit stays in its type.
+        Intention::Conventional(kind) => {
+            let rank = match kind.bump {
+                Some(Bump::Major) => 0,
+                Some(Bump::Minor) => 1,
+                Some(Bump::Patch) => 2,
+                None => 3,
+            };
+            (&kind.name, kind.title.clone(), rank)
+        }
     }
 }
 
 pub fn render_release_notes(analysis: &Analysis) -> Result<String, RenderError> {
     let mut groups = BTreeMap::<&str, NoteGroup<'_>>::new();
     for commit in &analysis.commits {
+        let (key, title, rank) = note_group(commit);
         groups
-            .entry(&commit.gitmoji.shortcode)
+            .entry(key)
             .or_insert_with(|| NoteGroup {
-                emoji: &commit.gitmoji.emoji,
-                shortcode: &commit.gitmoji.shortcode,
-                description: commit.gitmoji.description.trim_end_matches('.'),
+                title,
                 commits: Vec::new(),
+                rank,
+                key,
             })
             .commits
             .push(NoteCommit::new(commit));
@@ -585,11 +833,10 @@ pub fn render_release_notes(analysis: &Analysis) -> Result<String, RenderError> 
 
     let mut groups: Vec<_> = groups.into_values().collect();
     groups.sort_by(|left, right| {
-        right
-            .commits
-            .len()
-            .cmp(&left.commits.len())
-            .then_with(|| left.shortcode.cmp(right.shortcode))
+        left.rank
+            .cmp(&right.rank)
+            .then_with(|| right.commits.len().cmp(&left.commits.len()))
+            .then_with(|| left.key.cmp(right.key))
     });
 
     Environment::new()
@@ -639,9 +886,10 @@ mod tests {
         AnalyzedCommit {
             id: id.into(),
             subject: subject.into(),
-            gitmoji: parsed.gitmoji,
+            intention: Intention::Gitmoji(parsed.gitmoji),
             scope: parsed.scope,
             message: parsed.message,
+            breaking: false,
         }
     }
 
@@ -726,9 +974,10 @@ mod tests {
         let analysis = Analysis::from_commits(vec![AnalyzedCommit {
             id: "1".into(),
             subject: "✨ Change behavior".into(),
-            gitmoji: parsed.gitmoji,
+            intention: Intention::Gitmoji(parsed.gitmoji),
             scope: parsed.scope,
             message: parsed.message,
+            breaking: false,
         }]);
 
         assert_eq!(analysis.bump, None);
@@ -816,5 +1065,194 @@ mod tests {
     fn renders_a_message_when_no_gitmoji_commits_exist() {
         let notes = render_release_notes(&Analysis::from_commits(Vec::new())).unwrap();
         assert_eq!(notes, "No recorded changes.\n");
+    }
+
+    fn conventional_catalog() -> ConventionalCatalog {
+        let entry = |title: &str, semver| declaration::ConventionalCatalogEntry {
+            title: title.into(),
+            semver,
+        };
+        BTreeMap::from([
+            ("chore".into(), entry("Chores", None)),
+            ("docs".into(), entry("Documentation", None)),
+            ("feat".into(), entry("Features", Some(Bump::Minor))),
+            ("fix".into(), entry("Bug fixes", Some(Bump::Patch))),
+            ("perf".into(), entry("Performance", Some(Bump::Patch))),
+        ])
+    }
+
+    fn conventional(id: &str, message: &str) -> AnalyzedCommit {
+        let parsed = parse_conventional_commit(message, &conventional_catalog()).unwrap();
+        AnalyzedCommit {
+            id: id.into(),
+            subject: subject_line(message).into(),
+            intention: Intention::Conventional(parsed.kind),
+            scope: parsed.scope,
+            message: parsed.message,
+            breaking: parsed.breaking,
+        }
+    }
+
+    #[test]
+    fn parses_conventional_types_scopes_and_descriptions() {
+        let catalog = conventional_catalog();
+        let plain = parse_conventional_commit("fix: Keep the tag order", &catalog).unwrap();
+        assert_eq!(plain.kind.name, "fix");
+        assert_eq!(plain.kind.title, "Bug fixes");
+        assert_eq!(plain.kind.bump, Some(Bump::Patch));
+        assert_eq!(plain.scope, None);
+        assert_eq!(plain.message, "Keep the tag order");
+        assert!(!plain.breaking);
+
+        let scoped = parse_conventional_commit("feat(cli): add --json", &catalog).unwrap();
+        assert_eq!(scoped.kind.bump, Some(Bump::Minor));
+        assert_eq!(scoped.scope.as_deref(), Some("cli"));
+        assert_eq!(scoped.message, "add --json");
+
+        // Types are case-insensitive; the catalog spells them in lowercase.
+        let upper = parse_conventional_commit("FEAT(Docs Site): Add search", &catalog).unwrap();
+        assert_eq!(upper.kind.name, "feat");
+        assert_eq!(upper.scope.as_deref(), Some("Docs Site"));
+
+        // Only the first colon ends the prefix.
+        let colons = parse_conventional_commit("docs: Explain a: b", &catalog).unwrap();
+        assert_eq!(colons.message, "Explain a: b");
+    }
+
+    #[test]
+    fn rejects_subjects_outside_the_conventional_commits_specification() {
+        let catalog = conventional_catalog();
+        for subject in [
+            "Add a feature",
+            "unknown: Use an undeclared type",
+            "feat:missing space",
+            "feat: ",
+            "feat:",
+            "feat (cli): Space before the scope",
+            "feat(): Empty scope",
+            "feat(cli: Unclosed scope",
+            "feat(cli)(api): Two scopes",
+            "feat!!: Two bangs",
+            "!: No type",
+            "(cli): No type",
+            " feat: Leading whitespace",
+            "✨ feat: Gitmoji first",
+            "feat cli: Space in the type",
+        ] {
+            assert_eq!(
+                parse_conventional_commit(subject, &catalog),
+                None,
+                "{subject}"
+            );
+        }
+    }
+
+    #[test]
+    fn marks_bangs_and_breaking_change_footers_as_breaking() {
+        let catalog = conventional_catalog();
+        for message in [
+            "feat!: Drop the legacy flag",
+            "fix(cli)!: Rename the output field",
+            "docs!: Remove the deprecated guide",
+            "feat: Drop the legacy flag\n\nBREAKING CHANGE: the --legacy flag is gone",
+            "fix: Rename the field\n\nBody text.\n\nRefs: #12\nBREAKING-CHANGE: field renamed",
+        ] {
+            let parsed = parse_conventional_commit(message, &catalog).unwrap();
+            assert!(parsed.breaking, "{message}");
+        }
+
+        for message in [
+            "feat: Mention it\n\nbreaking change: lowercase is not a footer",
+            "feat: Mention it\n\nBREAKING CHANGES: plural is not a footer",
+            "feat: Mention it\n\n  BREAKING CHANGE: indented is not a footer",
+            "feat: Mention it\n\nBREAKING CHANGE:",
+            "feat: Mention it\n\nThis is no BREAKING CHANGE: mid-line",
+            "feat: BREAKING CHANGE: only in the subject",
+        ] {
+            let parsed = parse_conventional_commit(message, &catalog).unwrap();
+            assert!(!parsed.breaking, "{message}");
+        }
+    }
+
+    #[test]
+    fn breaking_changes_select_major_and_minor_before_one_point_zero() {
+        let analysis = Analysis::from_commits(vec![
+            conventional("1", "fix: Fix behavior"),
+            conventional("2", "docs!: Remove the old guide"),
+        ]);
+
+        assert_eq!(analysis.bump, Some(Bump::Major));
+        assert_eq!(
+            analysis.next_version(Some(&Version::new(1, 4, 2))).unwrap(),
+            Some(Version::new(2, 0, 0))
+        );
+        assert_eq!(
+            analysis.next_version(Some(&Version::new(0, 4, 2))).unwrap(),
+            Some(Version::new(0, 5, 0))
+        );
+    }
+
+    #[test]
+    fn computes_the_highest_conventional_level() {
+        let analysis = Analysis::from_commits(vec![
+            conventional("1", "docs: Document behavior"),
+            conventional("2", "perf: Speed up behavior"),
+        ]);
+        assert_eq!(analysis.bump, Some(Bump::Patch));
+
+        let analysis = Analysis::from_commits(vec![
+            conventional("1", "fix: Fix behavior"),
+            conventional("2", "feat: Add behavior"),
+        ]);
+        assert_eq!(analysis.bump, Some(Bump::Minor));
+
+        let analysis = Analysis::from_commits(vec![conventional("1", "chore: Tidy up")]);
+        assert_eq!(analysis.bump, None);
+        assert_eq!(analysis.next_version(None).unwrap(), None);
+    }
+
+    #[test]
+    fn uses_the_declared_conventional_levels() {
+        let mut catalog = conventional_catalog();
+        catalog.get_mut("docs").unwrap().semver = Some(Bump::Patch);
+        catalog.get_mut("feat").unwrap().semver = None;
+
+        let docs = parse_conventional_commit("docs: Write the guide", &catalog).unwrap();
+        assert_eq!(docs.kind.bump, Some(Bump::Patch));
+        let feat = parse_conventional_commit("feat: Add behavior", &catalog).unwrap();
+        assert_eq!(feat.kind.bump, None);
+
+        catalog.remove("docs");
+        assert_eq!(
+            parse_conventional_commit("docs: Write the guide", &catalog),
+            None
+        );
+    }
+
+    #[test]
+    fn renders_conventional_notes_by_type_level_size_and_name() {
+        let analysis = Analysis::from_commits(vec![
+            conventional("1", "docs: Document search"),
+            conventional("2", "fix(cli): Keep the search order stable"),
+            conventional("3", "feat(cli): Add --json"),
+            conventional("4", "fix: Fix tag lookup"),
+            conventional("5", "perf: Cache the catalog"),
+            conventional("6", "feat(api)!: Drop the v1 endpoint"),
+            conventional("7", "chore: Update dependencies"),
+            conventional(
+                "8",
+                "fix: Rename the output field\n\nBREAKING CHANGE: `version` is now `next`.",
+            ),
+        ]);
+
+        let notes = render_release_notes(&analysis).unwrap();
+        assert_eq!(
+            notes,
+            "### Features\n\n- **cli:** Add --json\n- **BREAKING** **api:** Drop the v1 endpoint\n\n\
+             ### Bug fixes\n\n- **cli:** Keep the search order stable\n- Fix tag lookup\n- **BREAKING** Rename the output field\n\n\
+             ### Performance\n\n- Cache the catalog\n\n\
+             ### Chores\n\n- Update dependencies\n\n\
+             ### Documentation\n\n- Document search\n"
+        );
     }
 }

@@ -72,15 +72,19 @@ in
         releaseConfig.versionFiles.badge;
 
       tag.format = releaseConfig.tag.format;
-      analyzer = {
-        convention = releaseConfig.analyzer.convention;
-        gitmoji.catalog = lib.mapAttrs'
-          (
-            _identifier: entry:
-              lib.nameValuePair entry.shortcode (builtins.removeAttrs entry [ "shortcode" ])
-          )
-          (lib.filterAttrs (_identifier: entry: entry != null) releaseConfig.analyzer.gitmoji.catalog);
-      };
+      analyzer =
+        if releaseConfig.analyzer.conventional.enable then {
+          convention = "conventional";
+          conventional.catalog = lib.filterAttrs (_type: entry: entry != null) releaseConfig.analyzer.conventional.catalog;
+        } else {
+          convention = "gitmoji";
+          gitmoji.catalog = lib.mapAttrs'
+            (
+              _identifier: entry:
+                lib.nameValuePair entry.shortcode (builtins.removeAttrs entry [ "shortcode" ])
+            )
+            (lib.filterAttrs (_identifier: entry: entry != null) releaseConfig.analyzer.gitmoji.catalog);
+        };
       changelog.path = releaseConfig.changelog.path;
       publishers.github-release = releaseConfig.publishers.github-release;
       publishers.oci = releaseConfig.publishers.oci;

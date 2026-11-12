@@ -408,6 +408,11 @@ nav.sidebar a,
 .pagination-links a:hover {
   border-color: var(--pw-accent);
 }
+/* Starlight fills the menu button with the text colour; in the dark theme it stays ink on ground. */
+:root:not([data-theme='light']) .sl-menu-button {
+  background-color: var(--pw-ground);
+  color: var(--pw-ink);
+}
 
 /* The GitHub icon in the header stays ink, like the wordmark, and takes the accent on hover. */
 .social-icons a {

@@ -1,6 +1,15 @@
 { config, inputs, lib, self, ... }:
 let
-  mkRelease = config.flake.lib.mkRelease;
+  mkBareRelease = config.flake.lib.mkRelease;
+  # Most tests are about other options, so they analyze Gitmoji unless they declare an analyzer.
+  mkRelease = module: mkBareRelease {
+    imports = [
+      module
+      ({ config, ... }: {
+        analyzer.gitmoji.enable = lib.mkIf (!config.analyzer.conventional.enable) (lib.mkDefault true);
+      })
+    ];
+  };
   sourceRoot = self.outPath;
   cargoTomlFixture = builtins.toFile "Cargo.toml" ''
     [package]
@@ -23,6 +32,20 @@ let
   cargoLock = builtins.baseNameOf cargoLockFixture;
   presswerkVersion = (builtins.fromTOML (builtins.readFile (self.outPath + "/Cargo.toml"))).package.version;
   vendoredCatalog = builtins.fromJSON (builtins.readFile ./gitmoji/catalog.json);
+  conventionalCatalog = builtins.fromJSON (builtins.readFile ./conventional/catalog.json);
+  # The message of the first failed assertion for a release module with these settings.
+  failedAssertion = settings: (lib.findFirst (assertion: !assertion.assertion) null
+    (lib.evalModules {
+      class = "presswerk";
+      modules = [
+        config.flake.modules.presswerk.default
+        ({
+          inherit sourceRoot;
+          version = "1.2.3";
+        } // settings)
+      ];
+      specialArgs.presswerk.version = presswerkVersion;
+    }).config.assertions).message;
   succeeds = value: (builtins.tryEval (builtins.deepSeq value true)).success;
 
   publisher = {
@@ -477,6 +500,179 @@ in
         };
       });
       expected = false;
+    };
+
+    "test the Conventional Commits analyzer normalizes" = {
+      expr = (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.conventional.enable = true;
+      }).analyzer;
+      expected = {
+        convention = "conventional";
+        conventional.catalog = conventionalCatalog;
+      };
+    };
+
+    "test the default Conventional Commits catalog" = {
+      expr = lib.mapAttrs (_type: entry: entry.semver) conventionalCatalog;
+      expected = {
+        build = null;
+        chore = null;
+        ci = null;
+        docs = null;
+        feat = "minor";
+        fix = "patch";
+        perf = "patch";
+        refactor = null;
+        revert = "patch";
+        style = null;
+        test = null;
+      };
+    };
+
+    "test Conventional Commits catalog merges overrides, additions, and removals" = {
+      expr =
+        let
+          catalog = (mkRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            analyzer.conventional.enable = true;
+            analyzer.conventional.catalog = {
+              docs.semver = "patch";
+              deps = {
+                title = "Dependencies";
+                semver = "patch";
+              };
+              style = lib.mkForce null;
+            };
+          }).analyzer.conventional.catalog;
+        in
+        {
+          inherit (catalog) docs deps feat;
+          style = catalog ? style;
+        };
+      expected = {
+        docs = conventionalCatalog.docs // { semver = "patch"; };
+        deps = {
+          title = "Dependencies";
+          semver = "patch";
+        };
+        feat = conventionalCatalog.feat;
+        style = false;
+      };
+    };
+
+    "test Conventional Commits catalog can be replaced with mkForce" = {
+      expr = builtins.attrNames (mkRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.conventional.enable = true;
+        analyzer.conventional.catalog = lib.mkForce {
+          feat = conventionalCatalog.feat;
+        };
+      }).analyzer.conventional.catalog;
+      expected = [ "feat" ];
+    };
+
+    "test Conventional Commits types must be lowercase names" = {
+      expr = map
+        (
+          type:
+          succeeds (mkRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            analyzer.conventional.enable = true;
+            analyzer.conventional.catalog.${type} = {
+              title = "Custom";
+              semver = null;
+            };
+          })
+        )
+        [
+          "Feat"
+          "fix(cli)"
+          "breaking!"
+          "deps-dev"
+        ];
+      expected = [
+        false
+        false
+        false
+        true
+      ];
+    };
+
+    "test each analyzer alone is accepted" = {
+      expr = map
+        (
+          analyzer:
+          (mkBareRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            analyzer.${analyzer}.enable = true;
+          }).analyzer.convention
+        )
+        [
+          "gitmoji"
+          "conventional"
+        ];
+      expected = [
+        "gitmoji"
+        "conventional"
+      ];
+    };
+
+    "test a release without an enabled analyzer fails" = {
+      expr = succeeds (mkBareRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        # Configuring an analyzer does not enable it.
+        analyzer.gitmoji.catalog.memo.semver = "patch";
+      });
+      expected = false;
+    };
+
+    "test a missing analyzer is reported" = {
+      expr = failedAssertion { };
+      expected = "enable a commit analyzer, for example analyzer.gitmoji.enable = true;";
+    };
+
+    "test two enabled analyzers fail" = {
+      expr = succeeds (mkBareRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.gitmoji.enable = true;
+        analyzer.conventional.enable = true;
+      });
+      expected = false;
+    };
+
+    "test two enabled analyzers are named in the assertion" = {
+      expr = failedAssertion {
+        analyzer.gitmoji.enable = true;
+        analyzer.conventional.enable = true;
+      };
+      expected = "enable exactly one commit analyzer; enabled: analyzer.gitmoji, analyzer.conventional";
+    };
+
+    "test a configured but disabled analyzer is ignored" = {
+      expr = (mkBareRelease {
+        inherit sourceRoot;
+        version = "1.2.3";
+        analyzer.conventional.enable = true;
+        # Invalid as an enabled catalog: the shortcode repeats memo.
+        analyzer.gitmoji.catalog.other_memo = {
+          shortcode = "memo";
+          emoji = "📚";
+          description = "Duplicate the resolved memo shortcode.";
+          semver = "major";
+        };
+      }).analyzer;
+      expected = {
+        convention = "conventional";
+        conventional.catalog = conventionalCatalog;
+      };
     };
 
     "test sourceRoot is required" = {

@@ -5,9 +5,17 @@
       inherit (lib) mkOption types;
 
       gitmojiCatalog = builtins.fromJSON (builtins.readFile ./gitmoji/catalog.json);
+      conventionalCatalog = builtins.fromJSON (builtins.readFile ./conventional/catalog.json);
       variationSelector = builtins.fromJSON ''"\uFE0F"'';
       normalizedEmoji = emoji: builtins.replaceStrings [ variationSelector ] [ "" ] emoji;
-      catalogEntries = builtins.filter (entry: entry != null) (builtins.attrValues config.analyzer.gitmoji.catalog);
+      # Every commit analyzer lives under `analyzer` and has an `enable` option; a release enables
+      # exactly one of them. A disabled analyzer's settings are ignored.
+      analyzerNames = [ "gitmoji" "conventional" ];
+      enabledAnalyzers = builtins.filter (name: config.analyzer.${name}.enable) analyzerNames;
+      catalogEntries = lib.optionals config.analyzer.gitmoji.enable
+        (builtins.filter (entry: entry != null) (builtins.attrValues config.analyzer.gitmoji.catalog));
+      conventionalTypes = lib.optionals config.analyzer.conventional.enable
+        (builtins.attrNames (lib.filterAttrs (_type: entry: entry != null) config.analyzer.conventional.catalog));
       catalogEmojis = map (entry: normalizedEmoji entry.emoji) catalogEntries;
       catalogShortcodes = map (entry: entry.shortcode) catalogEntries;
 
@@ -133,6 +141,67 @@
             ]);
             description = "Semantic-version level triggered by the Gitmoji, or null for no release.";
           };
+        };
+      };
+
+      gitmojiAnalyzerOptions = {
+        enable = lib.mkEnableOption "the Gitmoji analyzer; a release enables exactly one commit analyzer";
+
+        catalog = mkOption {
+          type = types.attrsOf (types.nullOr (types.submodule gitmojiModule));
+          default = { };
+          defaultText = lib.literalMD "the [default Gitmoji catalog](https://presswerk.dev/reference/analyzers/gitmoji/#default-gitmoji-catalog)";
+          example = lib.literalExpression ''
+            {
+              # Release CI changes as patches.
+              construction_worker.semver = "patch";
+              # Stop accepting 💩 commits.
+              poop = lib.mkForce null;
+            }
+          '';
+          description = "Gitmoji catalog keyed by entry identifier; each entry's shortcode defaults to its identifier. Setting an entry to `lib.mkForce null` removes it.";
+        };
+      };
+
+      conventionalTypeModule = {
+        options = {
+          title = mkOption {
+            type = types.nonEmptyStr;
+            description = "Release-note group heading for the type.";
+          };
+
+          semver = mkOption {
+            type = types.nullOr (types.enum [
+              "major"
+              "minor"
+              "patch"
+            ]);
+            description = "Semantic-version level triggered by the type, or null for no release. A breaking change is major whatever its type.";
+          };
+        };
+      };
+
+      conventionalAnalyzerOptions = {
+        enable = lib.mkEnableOption "the Conventional Commits analyzer; a release enables exactly one commit analyzer";
+
+        catalog = mkOption {
+          type = types.attrsOf (types.nullOr (types.submodule conventionalTypeModule));
+          default = { };
+          defaultText = lib.literalMD "the [default Conventional Commits catalog](https://presswerk.dev/reference/analyzers/conventional-commits/#default-type-catalog)";
+          example = lib.literalExpression ''
+            {
+              # Release documentation changes as patches.
+              docs.semver = "patch";
+              # Accept a project-specific type.
+              deps = {
+                title = "Dependencies";
+                semver = "patch";
+              };
+              # Stop accepting style commits.
+              style = lib.mkForce null;
+            }
+          '';
+          description = "Conventional Commits types keyed by their lowercase name. Setting a type to `lib.mkForce null` removes it.";
         };
       };
 
@@ -332,30 +401,12 @@
           type = tagFormat;
           default = "v{version}";
           example = "release-{version}";
-          description = "Release tag format; must contain {version} exactly once, not adjacent to another brace. The release commit subject names the tag, such as `🔖 Release v1.2.0`.";
+          description = "Release tag format; must contain {version} exactly once, not adjacent to another brace. The release commit subject names the tag, such as `🔖 Release v1.2.0` with Gitmoji or `chore(release): v1.2.0` with Conventional Commits.";
         };
 
         analyzer = {
-          convention = mkOption {
-            type = types.enum [ "gitmoji" ];
-            default = "gitmoji";
-            description = "Commit convention analyzed for releases.";
-          };
-
-          gitmoji.catalog = mkOption {
-            type = types.attrsOf (types.nullOr (types.submodule gitmojiModule));
-            default = { };
-            defaultText = lib.literalMD "the [default Gitmoji catalog](https://presswerk.dev/reference/analyzers/#default-catalog)";
-            example = lib.literalExpression ''
-              {
-                # Release CI changes as patches.
-                construction_worker.semver = "patch";
-                # Stop accepting 💩 commits.
-                poop = lib.mkForce null;
-              }
-            '';
-            description = "Gitmoji catalog keyed by entry identifier; each entry's shortcode defaults to its identifier. Setting an entry to `lib.mkForce null` removes it.";
-          };
+          gitmoji = gitmojiAnalyzerOptions;
+          conventional = conventionalAnalyzerOptions;
         };
 
         changelog.path = mkOption {
@@ -408,11 +459,8 @@
       };
 
       config = {
-        analyzer.gitmoji.catalog = lib.mapAttrs
-          (
-            _shortcode: lib.mapAttrs (_field: lib.mkDefault)
-          )
-          gitmojiCatalog;
+        analyzer.gitmoji.catalog = lib.mapAttrs (_shortcode: lib.mapAttrs (_field: lib.mkDefault)) gitmojiCatalog;
+        analyzer.conventional.catalog = lib.mapAttrs (_type: lib.mapAttrs (_field: lib.mkDefault)) conventionalCatalog;
 
         assertions = lib.concatLists
           (lib.mapAttrsToList
@@ -431,6 +479,18 @@
               }
             ])
             config.publishers.oci) ++ [
+          {
+            assertion = builtins.length enabledAnalyzers == 1;
+            message =
+              if enabledAnalyzers == [ ] then
+                "enable a commit analyzer, for example analyzer.gitmoji.enable = true;"
+              else
+                "enable exactly one commit analyzer; enabled: ${lib.concatMapStringsSep ", " (name: "analyzer.${name}") enabledAnalyzers}";
+          }
+          {
+            assertion = lib.all (type: builtins.match "[a-z0-9][a-z0-9_-]*" type != null) conventionalTypes;
+            message = "analyzer.conventional.catalog types must be lowercase letters, digits, hyphens, or underscores";
+          }
           {
             assertion = lib.all (shortcode: shortcode != "" && !(lib.hasInfix ":" shortcode)) catalogShortcodes;
             message = "analyzer.gitmoji.catalog shortcodes must be non-empty and contain no colons";

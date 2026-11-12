@@ -2,7 +2,9 @@ use crate::analysis::{Analysis, Analyzer, CommitRange, render_release_notes};
 use crate::declaration::{Publishers, ReleaseDeclaration, Tag, VersionFile};
 use crate::evaluation::{EvaluatedReleaseDeclaration, evaluate_release_declaration};
 use crate::publication::{VerifiedPredecessor, verify_predecessor_with_trust};
-use crate::release_commit::{ReleaseFile, TrustedPredecessor, create_release_commit};
+use crate::release_commit::{
+    ReleaseFile, TrustedPredecessor, create_release_commit, release_subject,
+};
 use crate::version::VersionFileWriter;
 use anyhow::{Context, Result, bail};
 use git2::{ErrorCode, ObjectType, Oid, Repository, StatusOptions};
@@ -28,6 +30,8 @@ pub struct ReleasePlan {
     pub next_version: Option<Version>,
     /// The tag that `publish` creates for the next version.
     pub next_tag: Option<String>,
+    /// The subject of the release commit for the next tag, in the analyzer's convention.
+    pub release_subject: Option<String>,
     pub version_files: Vec<VersionFileChange>,
     pub notes: String,
     pub changelog_path: String,
@@ -119,7 +123,7 @@ pub fn build_release_plan(
             )
         },
     )?;
-    let analysis = analyzer.analyze(&range, &declaration.analyzer.gitmoji.catalog)?;
+    let analysis = analyzer.analyze(&range, &declaration.analyzer, &declaration.tag)?;
     let next_version = analysis.next_version(Some(&declaration.version))?;
     let notes = render_release_notes(&analysis)?;
     let mut version_files = Vec::new();
@@ -165,6 +169,9 @@ pub fn build_release_plan(
                 .map_err(|error| anyhow::anyhow!("oci.{name}: {error}"))?;
         }
     }
+    let release_subject = next_tag
+        .as_deref()
+        .map(|tag| release_subject(&declaration.analyzer, tag));
 
     Ok(ReleasePlan {
         repository: repository_path.into(),
@@ -174,6 +181,7 @@ pub fn build_release_plan(
         analysis,
         next_version,
         next_tag,
+        release_subject,
         version_files,
         notes,
         changelog_path: declaration.changelog.path,
@@ -184,7 +192,7 @@ pub fn build_release_plan(
 }
 
 pub fn prepare_release(plan: &ReleasePlan) -> Result<Option<Oid>> {
-    let Some(tag) = &plan.next_tag else {
+    let Some(subject) = &plan.release_subject else {
         return Ok(None);
     };
 
@@ -214,7 +222,7 @@ pub fn prepare_release(plan: &ReleasePlan) -> Result<Option<Oid>> {
         &plan.repository,
         &reference,
         plan.commit,
-        tag,
+        subject,
         &plan.release_files,
         plan.trusted_predecessor.as_ref(),
     )?;

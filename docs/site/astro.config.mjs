@@ -60,7 +60,14 @@ export default defineConfig({
             { label: 'Release options', link: '/reference/options/' },
             { slug: 'reference/cli' },
             { slug: 'reference/version-files' },
-            { slug: 'reference/analyzers' },
+            {
+              label: 'Commit analyzers',
+              items: [
+                { label: 'Overview', slug: 'reference/analyzers' },
+                { label: 'Conventional Commits', slug: 'reference/analyzers/conventional-commits' },
+                { label: 'Gitmoji', slug: 'reference/analyzers/gitmoji' },
+              ],
+            },
             { slug: 'reference/publishers' },
           ],
         },

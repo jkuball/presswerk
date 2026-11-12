@@ -1,4 +1,4 @@
-{% if groups %}{% for group in groups %}### {{ group.emoji }} {{ group.description }}
+{% if groups %}{% for group in groups %}### {{ group.title }}
 
 {% for commit in group.commits %}- {{ commit.text }}
 {% endfor %}{% if not loop.last %}
