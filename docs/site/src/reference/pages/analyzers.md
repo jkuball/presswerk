@@ -264,8 +264,8 @@ missing from the catalog does not contribute a bump or release note.
 ### Types and version levels
 
 Every catalog entry has a `title`, the heading of its release-note group, and a `semver` level:
-`"major"`, `"minor"`, `"patch"`, or `null`. `feat` is a minor change, `fix` and `perf` are patches,
-and the other default types do not cause a release on their own. The
+`"major"`, `"minor"`, `"patch"`, or `null`. `feat` is a minor change, `fix`, `perf`, and `revert` are
+patches, and the other default types do not cause a release on their own. The
 [default type catalog](#default-type-catalog) lists every entry.
 
 Presswerk takes the highest level in the applicable commit range. Before `1.0.0`, both `minor` and
@@ -327,7 +327,7 @@ Update the readme
 Groups follow the level of their type, from `major` to `null`; groups of the same level are ordered
 by size and then by type. A breaking change stays in the group of its type and starts with
 `**BREAKING**`. The scope stays in front of the description. A `git revert` of a commit that was released before,
-whose subject is `Revert "…"`, belongs to the `revert` type.
+whose subject is `Revert "…"`, belongs to the `revert` type, so by default it releases a patch.
 
 ### Change the type catalog
 

@@ -435,7 +435,7 @@ in
         fix = "patch";
         perf = "patch";
         refactor = null;
-        revert = null;
+        revert = "patch";
         style = null;
         test = null;
       };

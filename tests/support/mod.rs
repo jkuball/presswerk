@@ -62,7 +62,7 @@ pub fn conventional_catalog() -> ConventionalCatalog {
         ("fix".into(), entry("Bug fixes", Some(Bump::Patch))),
         ("perf".into(), entry("Performance", Some(Bump::Patch))),
         ("refactor".into(), entry("Refactoring", None)),
-        ("revert".into(), entry("Reverts", None)),
+        ("revert".into(), entry("Reverts", Some(Bump::Patch))),
         ("style".into(), entry("Code style", None)),
         ("test".into(), entry("Tests", None)),
     ])

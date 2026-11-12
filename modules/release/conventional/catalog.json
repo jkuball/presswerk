@@ -7,7 +7,7 @@
   "fix": { "title": "Bug fixes", "semver": "patch" },
   "perf": { "title": "Performance", "semver": "patch" },
   "refactor": { "title": "Refactoring", "semver": null },
-  "revert": { "title": "Reverts", "semver": null },
+  "revert": { "title": "Reverts", "semver": "patch" },
   "style": { "title": "Code style", "semver": null },
   "test": { "title": "Tests", "semver": null }
 }

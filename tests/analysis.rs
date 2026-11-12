@@ -729,3 +729,22 @@ fn conventional_reverts_of_released_commits_use_the_revert_type() {
     let analysis = analyze_conventional(&repository, Some(&release), catalog);
     assert_eq!(ids(&analysis), [typed.as_str()]);
 }
+
+#[test]
+fn a_conventional_revert_of_a_released_commit_alone_selects_a_patch() {
+    let repository = GitRepo::new();
+    let feature = commit_file(&repository, "feature", "feat: Add feature");
+    let release = commit_file(&repository, "release", "chore(release): v0.1.0");
+    let reverted = revert(&repository, &[&feature]);
+
+    let analysis = analyze_conventional(&repository, Some(&release), conventional_catalog());
+
+    assert_eq!(ids(&analysis), [reverted.as_str()]);
+    assert_eq!(analysis.bump, Some(Bump::Patch));
+    assert_eq!(
+        analysis
+            .next_version(Some(&semver::Version::new(0, 1, 0)))
+            .unwrap(),
+        Some(semver::Version::new(0, 1, 1))
+    );
+}
