@@ -190,12 +190,14 @@ in
           reference/declaration-schema
           reference/options
           reference/publishers
+          reference/publishers/github-release
+          reference/publishers/oci
           reference/version-files
         "
         for page in $pages; do
           test -s "$site/$page.md" || { echo "missing Markdown page $page.md" >&2; exit 1; }
         done
-        for page in options declaration-schema cli publishers analyzers analyzers/gitmoji analyzers/conventional-commits; do
+        for page in options declaration-schema cli publishers publishers/github-release publishers/oci analyzers analyzers/gitmoji analyzers/conventional-commits; do
           test -s "$site/reference/$page/index.html" || { echo "missing reference page $page" >&2; exit 1; }
         done
         test -s "$site/llms.txt"

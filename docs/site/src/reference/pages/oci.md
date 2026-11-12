@@ -1,6 +1,3 @@
-
-## OCI images
-
 The OCI publisher pushes container images built with Nix to any registry that speaks the
 [OCI distribution API](https://github.com/opencontainers/distribution-spec), such as GitHub
 Container Registry, Google Artifact Registry, or Docker Hub. Declare it under
@@ -33,7 +30,7 @@ publishers
     release  v1.2.0
 ```
 
-### Images
+## Images
 
 Each image is the output of `dockerTools.buildImage` or `dockerTools.buildLayeredImage`, a Docker
 image archive that may be compressed with gzip or zstd, or of `dockerTools.streamLayeredImage`, a
@@ -62,7 +59,7 @@ the same images always produce byte-identical manifests and the same index diges
 recognizes its own earlier push. Uncompressed layers take more space and bandwidth than
 compressed ones; registries that deduplicate layers store each one only once.
 
-### Tags
+## Tags
 
 `tags` lists the tags that point to the index; `{version}` is replaced by the release version.
 At least one tag must contain `{version}`, so every release has a tag of its own. A version with
@@ -77,7 +74,7 @@ allow `+`.
   reports `kept`. An alias that points to an index without a version annotation was pushed by
   something else and is kept as well.
 
-### Behavior
+## Behavior
 
 Before anything is written, Presswerk compares every tag with the index digest of this release:
 
@@ -114,7 +111,7 @@ was deleted is restored on the next run, without uploading layers the registry s
 Container Registry restores a deleted version together with its tags as soon as its index is
 pushed again.
 
-### Credentials
+## Credentials
 
 `username.secret` and `password.secret` name the environment variables that hold the registry
 username and password or token. Neither enters the declaration or the Nix store; Presswerk reads
@@ -131,6 +128,6 @@ The repository must start with the registry host and an optional port, and must 
 credentials such as `user:token@`, a query, or a fragment. Loopback registries such as
 `localhost:5000/project` are reached over plain HTTP, every other registry over HTTPS.
 
-### Options
+## Options
 
-<!-- reference:oci-options -->
+<!-- reference:options -->

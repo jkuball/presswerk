@@ -68,7 +68,14 @@ export default defineConfig({
                 { label: 'Gitmoji', slug: 'reference/analyzers/gitmoji' },
               ],
             },
-            { slug: 'reference/publishers' },
+            {
+              label: 'Release publishers',
+              items: [
+                { label: 'Overview', slug: 'reference/publishers' },
+                { label: 'GitHub Release', slug: 'reference/publishers/github-release' },
+                { label: 'OCI', slug: 'reference/publishers/oci' },
+              ],
+            },
           ],
         },
         {

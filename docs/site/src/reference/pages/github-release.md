@@ -1,26 +1,3 @@
-A release publisher is Presswerk's interface to the outside world. It is the bridge between the
-immutable release commit with its frozen notes and the places where a release is published, which
-Presswerk does not control and which change on their own. A project usually has more than one
-publisher, for example a GitHub Release next to packages on PyPI, crates.io, or npm, and container
-images on GHCR. `publish` first pushes the tag, then runs every declared publisher.
-
-Every publisher follows the same rules on a retry:
-
-- matching state is kept;
-- missing state is created;
-- conflicting state fails the run.
-
-A release is complete once its tag and every publisher's release exist. `prepare` refuses to start
-the next release before the previous release's tag and GitHub Releases are complete.
-
-Presswerk has two built-in publishers: [GitHub Release](#github-release) and
-[OCI](#oci-images) for container images. Every release currently needs a GitHub Release
-publisher. `publish` runs the OCI publishers before the GitHub Releases, so a release is never
-announced while its images are still missing. Declaring publishers for other targets in the flake
-itself is planned.
-
-## GitHub Release
-
 The GitHub Release publisher creates one GitHub Release for the release tag, with the frozen
 release notes from the changelog as its body. Declare it under
 [`publishers.github-release`](/reference/options/#publishers.github-release), keyed by a name of
@@ -32,7 +9,7 @@ your choice:
 }
 ```
 
-### Behavior
+## Behavior
 
 `presswerk publish` pushes the release tag first and then completes every GitHub Release
 publisher.
@@ -55,7 +32,7 @@ release listing for a draft with exactly that tag. Then it acts on what it finds
 So a retry of the same candidate completes missing state and keeps everything that already
 matches. After publishing, Presswerk reads every release back and fails unless it is published.
 
-### Assets
+## Assets
 
 `assets` attaches files to the release, keyed by asset name. Each value is a file in a flake
 output: a string built from a derivation, such as `"${pkg}/bin/tool"`, or a derivation whose
@@ -92,7 +69,7 @@ Assets on the release that the declaration does not name are ignored. Because a 
 uploaded on any retry, an asset that was deleted can be restored later by publishing the release
 again.
 
-### Token
+## Token
 
 `token.secret` names the environment variable that holds the GitHub API token, `GITHUB_TOKEN`
 by default. The token never enters the declaration or the Nix store; Presswerk reads it at run
@@ -105,6 +82,6 @@ previous release's GitHub Release is complete before planning the next one. Only
 release can be planned and prepared without it. In GitHub Actions, the token needs the
 `contents: write` permission to publish.
 
-### Options
+## Options
 
 <!-- reference:options -->

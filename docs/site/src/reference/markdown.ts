@@ -5,6 +5,7 @@ import analyzersPage from './pages/analyzers.md?raw';
 import conventionalCommitsPage from './pages/conventional-commits.md?raw';
 import gitmojiPage from './pages/gitmoji.md?raw';
 import ociPage from './pages/oci.md?raw';
+import publishersPage from './pages/publishers.md?raw';
 import type { CliArgument, CliCommand, Literal, ReferenceData, ReleaseOption } from './data';
 
 /**
@@ -153,11 +154,25 @@ export const referencePages: ReferencePage[] = [
   {
     slug: 'reference/publishers',
     title: 'Release publishers',
-    description: 'How Presswerk publishes releases outside the repository, with the GitHub Release and OCI publishers.',
+    description: 'How Presswerk publishes releases outside the repository, and its built-in publishers.',
+    markdown: (_, base) => fill(publishersPage, base, {}),
+  },
+  {
+    slug: 'reference/publishers/github-release',
+    title: 'GitHub Release publisher',
+    description: 'The GitHub Release publisher: behavior, assets, token, and options.',
     markdown: ({ options }, base, target) =>
-      fill(githubReleasePage + ociPage, base, {
-        options: optionList(options, 'publishers.github-release.', 4, target),
-        'oci-options': optionList(options, 'publishers.oci.', 4, target),
+      fill(githubReleasePage, base, {
+        options: optionList(options, 'publishers.github-release.', 3, target),
+      }),
+  },
+  {
+    slug: 'reference/publishers/oci',
+    title: 'OCI publisher',
+    description: 'The OCI publisher for container images: images, tags, behavior, credentials, and options.',
+    markdown: ({ options }, base, target) =>
+      fill(ociPage, base, {
+        options: optionList(options, 'publishers.oci.', 3, target),
       }),
   },
   {
