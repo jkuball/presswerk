@@ -2,6 +2,8 @@ import cliPage from './pages/cli.md?raw';
 import declarationSchemaPage from './pages/declaration-schema.md?raw';
 import githubReleasePage from './pages/github-release.md?raw';
 import analyzersPage from './pages/analyzers.md?raw';
+import conventionalCommitsPage from './pages/conventional-commits.md?raw';
+import gitmojiPage from './pages/gitmoji.md?raw';
 import type { CliArgument, CliCommand, Literal, ReferenceData, ReleaseOption } from './data';
 
 /**
@@ -159,10 +161,32 @@ export const referencePages: ReferencePage[] = [
   {
     slug: 'reference/analyzers',
     title: 'Commit analyzers',
-    description: 'How Presswerk turns commits into a version bump and release notes, and the Gitmoji and Conventional Commits analyzers with their default catalogs.',
-    markdown: ({ conventional, gitmoji, gitmojiLicense, options }, base, target) =>
-      fill(analyzersPage, base, {
-        options: optionList(options, 'analyzer.', 3, target),
+    description: 'How Presswerk turns commits into a version bump and release notes, and how to choose an analyzer.',
+    markdown: (_, base) => fill(analyzersPage, base, {}),
+  },
+  {
+    slug: 'reference/analyzers/conventional-commits',
+    title: 'Conventional Commits analyzer',
+    description: 'The Conventional Commits analyzer, its options, and its default type catalog.',
+    markdown: ({ conventional, options }, base, target) =>
+      fill(conventionalCommitsPage, base, {
+        options: optionList(options, 'analyzer.conventional.', 3, target),
+        catalog: [
+          '| Type | Default level | Release-note group |',
+          '| --- | --- | --- |',
+          ...Object.entries(conventional)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([type, entry]) => `| ${code(type)} | ${code(entry.semver ?? 'null')} | ${plain(entry.title)} |`),
+        ].join('\n'),
+      }),
+  },
+  {
+    slug: 'reference/analyzers/gitmoji',
+    title: 'Gitmoji analyzer',
+    description: 'The Gitmoji commit analyzer, its options, and its default catalog.',
+    markdown: ({ gitmoji, gitmojiLicense, options }, base, target) =>
+      fill(gitmojiPage, base, {
+        options: optionList(options, 'analyzer.gitmoji.', 3, target),
         // One list per release level instead of a wide table, so the catalog reads on a phone too.
         catalog: (
           [
@@ -184,13 +208,6 @@ export const referencePages: ReferencePage[] = [
           })
           .join('\n\n'),
         'catalog-size': String(Object.keys(gitmoji).length),
-        'conventional-catalog': [
-          '| Type | Default level | Release-note group |',
-          '| --- | --- | --- |',
-          ...Object.entries(conventional)
-            .sort(([left], [right]) => left.localeCompare(right))
-            .map(([type, entry]) => `| ${code(type)} | ${code(entry.semver ?? 'null')} | ${plain(entry.title)} |`),
-        ].join('\n'),
         license: fence('text', gitmojiLicense),
       }),
   },

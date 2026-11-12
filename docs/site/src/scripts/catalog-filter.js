@@ -1,5 +1,5 @@
 /**
- * Turn the default Gitmoji catalog on the commit analyzers page into a filterable grid. The page
+ * Turn the default Gitmoji catalog on the Gitmoji analyzer page into a filterable grid. The page
  * itself stays plain Markdown lists, so it reads the same without JavaScript and as plain text.
  */
 const heading = document.getElementById('default-gitmoji-catalog');

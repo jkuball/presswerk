@@ -150,7 +150,7 @@
         catalog = mkOption {
           type = types.attrsOf (types.nullOr (types.submodule gitmojiModule));
           default = { };
-          defaultText = lib.literalMD "the [default Gitmoji catalog](https://presswerk.dev/reference/analyzers/#default-gitmoji-catalog)";
+          defaultText = lib.literalMD "the [default Gitmoji catalog](https://presswerk.dev/reference/analyzers/gitmoji/#default-gitmoji-catalog)";
           example = lib.literalExpression ''
             {
               # Release CI changes as patches.
@@ -187,7 +187,7 @@
         catalog = mkOption {
           type = types.attrsOf (types.nullOr (types.submodule conventionalTypeModule));
           default = { };
-          defaultText = lib.literalMD "the [default Conventional Commits catalog](https://presswerk.dev/reference/analyzers/#default-type-catalog)";
+          defaultText = lib.literalMD "the [default Conventional Commits catalog](https://presswerk.dev/reference/analyzers/conventional-commits/#default-type-catalog)";
           example = lib.literalExpression ''
             {
               # Release documentation changes as patches.
