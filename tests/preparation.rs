@@ -541,6 +541,26 @@ fn the_release_commit_names_the_declared_tag() {
 }
 
 #[test]
+fn the_plan_of_a_release_without_publishers_says_so() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated.declaration.publishers.github_release.clear();
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+
+    assert!(render_plan(&plan).contains("\npublishers\n  none\n\nnotes\n"));
+}
+
+#[test]
 fn the_plan_lists_each_publisher_with_its_release_and_assets() {
     let repository = GitRepo::new();
     write_version(&repository, "0.0.0");

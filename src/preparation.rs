@@ -316,6 +316,9 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
     }
     if let (Some(tag), Some(version)) = (&plan.next_tag, &plan.next_version) {
         output.push_str("\npublishers\n");
+        if plan.publishers.oci.is_empty() && plan.publishers.github_release.is_empty() {
+            output.push_str("  none\n");
+        }
         for (name, publisher) in &plan.publishers.oci {
             let _ = writeln!(output, "  oci.{name}  {}", publisher.repository);
             // Store paths are left out: the release commit's images get their own paths.
