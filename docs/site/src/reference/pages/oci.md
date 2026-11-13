@@ -37,14 +37,14 @@ publishers
 ## Images
 
 Each image is a Docker image archive in the layout `dockerTools` writes, which may be compressed
-with gzip or zstd, such as the output of `dockerTools.buildImage` or `dockerTools.buildLayeredImage`,
-or an executable that writes an uncompressed archive to stdout, such as the output of
-`dockerTools.streamLayeredImage`. Like a
-release asset, `publish` fetches every image from the local store or a substituter before it writes
-anything, and never builds one. An image is read only while it is pushed: each layer is compressed
-and uploaded as it is read, so at most one compressed layer is on disk at a time. A streamed image
-keeps the image out of the Nix store and binary caches, but does not make `publish` faster, since
-every layer is still read and compressed.
+with gzip or zstd, such as the output of `dockerTools.buildImage` or
+`dockerTools.buildLayeredImage`, or an executable that writes an uncompressed archive to stdout,
+such as the output of `dockerTools.streamLayeredImage`. Like a release asset, `publish` fetches
+every image from the local store or a substituter before it writes anything, and never builds one.
+An image is read only while it is pushed: each layer is compressed and uploaded as it is read, one
+at a time, and only a layer larger than 64 MiB compressed is written to a temporary file. A streamed
+image keeps the image out of the Nix store and binary caches, but does not make `publish` faster,
+since every layer is still read and compressed.
 
 The platform key, such as `linux/amd64` or `linux/arm/v7`, must match the operating system,
 architecture, and variant in the image's config, so an image cannot end up under the wrong

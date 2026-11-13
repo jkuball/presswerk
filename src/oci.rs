@@ -24,6 +24,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
+use tempfile::SpooledData;
 use url::Url;
 
 pub const INDEX_MEDIA_TYPE: &str = "application/vnd.oci.image.index.v1+json";
@@ -315,8 +316,9 @@ pub struct Blob<'a> {
 
 #[derive(Debug)]
 pub enum BlobData<'a> {
-    /// A compressed layer, in a temporary file that is deleted once the blob is handled.
-    File(&'a Path),
+    /// A compressed layer too large to keep in memory, in an unnamed temporary file that is gone
+    /// once the blob is handled.
+    File(&'a File),
     Bytes(&'a [u8]),
 }
 
@@ -376,6 +378,9 @@ struct ImageConfig {
     variant: Option<String>,
 }
 
+/// The largest compressed layer kept in memory; a larger one goes to a temporary file.
+const SPOOL_LIMIT: usize = 64 << 20;
+
 /// How much of an archive's JSON files, such as `manifest.json` and the image config, is kept in
 /// memory, in all.
 const METADATA_LIMIT: u64 = 16 << 20;
@@ -415,7 +420,6 @@ impl Members {
     fn read(
         reader: impl Read,
         compression: Compression,
-        directory: &Path,
         put: &mut dyn FnMut(&Blob<'_>) -> Result<(), String>,
     ) -> Result<Self, ReadError> {
         let mut members = Self::default();
@@ -482,15 +486,16 @@ impl Members {
                     .ok_or_else(too_large)?;
                 Member::Metadata(bytes.into())
             } else {
-                let path = directory.join("layer");
-                let (digest, size) = compress(&mut entry, compression, &path)?;
-                let handed = put(&Blob {
+                let (digest, size, compressed) = compress(&mut entry, compression)?;
+                put(&Blob {
                     digest: digest.clone(),
                     size,
-                    data: BlobData::File(&path),
-                });
-                std::fs::remove_file(&path)?;
-                handed.map_err(ReadError::Blob)?;
+                    data: match &compressed {
+                        SpooledData::InMemory(cursor) => BlobData::Bytes(cursor.get_ref()),
+                        SpooledData::OnDisk(file) => BlobData::File(file),
+                    },
+                })
+                .map_err(ReadError::Blob)?;
                 Member::Layer { digest, size }
             };
             members.files.insert(name, member);
@@ -580,9 +585,7 @@ impl Image {
                 &"not a file; expected an image archive or an executable that streams one",
             ));
         }
-        let directory = tempfile::tempdir().map_err(|error| failed(&error))?;
-        let mut read =
-            |reader: &mut dyn Read| Members::read(reader, compression, directory.path(), put);
+        let mut read = |reader: &mut dyn Read| Members::read(reader, compression, put);
 
         let members = if metadata.permissions().mode() & 0o111 != 0 {
             let mut child = Command::new(path)
@@ -743,18 +746,18 @@ impl<T: io::Write> io::Write for Hashing<T> {
     }
 }
 
-/// Compress a stream into a new file; the digest and size of what was written.
+/// Compress a stream, in memory up to `SPOOL_LIMIT` and in a temporary file beyond; the digest
+/// and size of what was written, and the compressed bytes.
 fn compress(
     mut source: impl Read,
     compression: Compression,
-    path: &Path,
-) -> io::Result<(String, u64)> {
+) -> io::Result<(String, u64, SpooledData)> {
     let target = Hashing {
-        inner: io::BufWriter::new(File::create(path)?),
+        inner: io::BufWriter::new(tempfile::SpooledTempFile::new(SPOOL_LIMIT)),
         hasher: Sha256::new(),
         size: 0,
     };
-    let mut target = match compression {
+    let target = match compression {
         Compression::Gzip { level } => {
             let mut encoder =
                 flate2::write::GzEncoder::new(target, flate2::Compression::new(level));
@@ -767,9 +770,15 @@ fn compress(
             encoder.finish()?
         }
     };
-    io::Write::flush(&mut target)?;
-    Ok((hex_digest(&target.hasher.finalize()), target.size))
+    let Hashing {
+        inner,
+        hasher,
+        size,
+    } = target;
+    let spooled = inner.into_inner().map_err(io::IntoInnerError::into_error)?;
+    Ok((hex_digest(&hasher.finalize()), size, spooled.into_inner()))
 }
+
 fn read_prefix(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
     let mut read = 0;
     while read < buffer.len() {
@@ -841,7 +850,7 @@ impl Credentials {
 enum Body<'a> {
     Empty,
     Bytes(&'a [u8]),
-    File(&'a Path, u64),
+    File(&'a File, u64),
 }
 
 enum CallError {
@@ -922,9 +931,11 @@ impl RegistryClient {
             let result = match body {
                 Body::Empty => request.call(),
                 Body::Bytes(bytes) => request.send_bytes(bytes),
-                Body::File(path, size) => {
-                    let file = File::open(path).map_err(|error| {
-                        CallError::Transport(format!("could not read {}: {error}", path.display()))
+                Body::File(file, size) => {
+                    // A retry after authenticating sends the file again from its start.
+                    let mut file = *file;
+                    file.rewind().map_err(|error| {
+                        CallError::Transport(format!("could not read a compressed layer: {error}"))
                     })?;
                     request
                         .set("Content-Length", &size.to_string())

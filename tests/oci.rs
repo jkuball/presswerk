@@ -10,7 +10,7 @@ use semver::Version;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Seek, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -109,7 +109,13 @@ fn convert(platform: &str, path: &Path, compression: Compression) -> Result<Conv
     let mut blobs = HashMap::new();
     let image = Image::convert(platform, path, compression, &mut |blob| {
         let bytes = match blob.data {
-            BlobData::File(path) => std::fs::read(path).unwrap(),
+            BlobData::File(file) => {
+                let mut file = file;
+                let mut bytes = Vec::new();
+                file.rewind().unwrap();
+                file.read_to_end(&mut bytes).unwrap();
+                bytes
+            }
             BlobData::Bytes(bytes) => bytes.to_vec(),
         };
         assert_eq!(digest(&bytes), blob.digest);
@@ -916,28 +922,56 @@ fn a_wrong_platform_is_found_while_pushing_and_writes_no_manifest_or_tag() {
 }
 
 #[test]
-fn at_most_one_compressed_layer_is_on_disk_at_a_time() {
+fn small_layers_stay_in_memory_and_large_ones_go_to_an_unnamed_file() {
     let directory = tempfile::tempdir().unwrap();
+    // Noise that does not compress, larger than what is kept in memory.
+    let mut state = 0x2545_f491_4f6c_dd1d_u64;
+    let noise: Vec<u8> = (0..(65 << 20) / 8)
+        .flat_map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state.to_le_bytes()
+        })
+        .collect();
+    let small = tar(&[("etc/greeting", b"hello")]);
+    let large = tar(&[("noise", &noise)]);
+    let config = serde_json::to_vec(&json!({ "architecture": "amd64", "os": "linux" })).unwrap();
+    let manifest = serde_json::to_vec(&json!([{
+        "Config": "config.json",
+        "Layers": ["small/layer.tar", "large/layer.tar"],
+    }]))
+    .unwrap();
     let path = write(
         directory.path(),
         "image.tar",
-        &docker_archive("amd64", "hello"),
+        &tar(&[
+            ("small/layer.tar", &small),
+            ("large/layer.tar", &large),
+            ("config.json", &config),
+            ("manifest.json", &manifest),
+        ]),
     );
-    let mut layers = 0;
-    Image::convert("linux/amd64", &path, Compression::default(), &mut |blob| {
-        if let BlobData::File(path) = blob.data {
-            let stored: Vec<_> = std::fs::read_dir(path.parent().unwrap())
-                .unwrap()
-                .map(|file| file.unwrap().path())
-                .collect();
-            assert_eq!(stored, [path.to_owned()]);
-            assert!(std::fs::read(path).unwrap().starts_with(&[0x1f, 0x8b]));
-            layers += 1;
-        }
-        Ok(())
-    })
+    let mut kinds = Vec::new();
+    Image::convert(
+        "linux/amd64",
+        &path,
+        Compression::Zstd { level: 1 },
+        &mut |blob| {
+            kinds.push(match blob.data {
+                BlobData::Bytes(_) => "memory",
+                BlobData::File(file) => {
+                    let mut file = file;
+                    file.rewind().unwrap();
+                    assert_eq!(zstd::decode_all(file).unwrap(), large);
+                    "file"
+                }
+            });
+            Ok(())
+        },
+    )
     .unwrap();
-    assert_eq!(layers, 2);
+    assert_eq!(kinds, ["memory", "file", "memory"]);
 }
 
 /// An archive whose second layer is a link to the first, as `docker save` writes repeated layers.
