@@ -1,7 +1,7 @@
 use presswerk::declaration::{Compression, Username};
 use presswerk::oci::{
-    Credentials, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, LocalImage, OciPublisher, RegistryClient,
-    ZSTD_LAYER_MEDIA_TYPE, image_index,
+    BlobData, Credentials, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, Image, OciPublisher,
+    RegistryClient, ZSTD_LAYER_MEDIA_TYPE, image_index,
 };
 use presswerk::publication::{
     ArtifactKind, ArtifactStep, AssetStep, Publisher, PublisherState, Release,
@@ -86,6 +86,48 @@ fn stream_script(directory: &Path, name: &str, archive: &Path) -> PathBuf {
     path
 }
 
+/// An image and every blob it handed on, by digest.
+struct Converted {
+    image: Image,
+    blobs: HashMap<String, Vec<u8>>,
+}
+
+impl Converted {
+    /// The pushed bytes of the image's layer at `index`.
+    fn layer(&self, index: usize) -> &[u8] {
+        let manifest: Value = serde_json::from_slice(&self.image.manifest).unwrap();
+        &self.blobs[manifest["layers"][index]["digest"].as_str().unwrap()]
+    }
+
+    fn config(&self) -> Value {
+        let manifest: Value = serde_json::from_slice(&self.image.manifest).unwrap();
+        serde_json::from_slice(&self.blobs[manifest["config"]["digest"].as_str().unwrap()]).unwrap()
+    }
+}
+
+fn convert(platform: &str, path: &Path, compression: Compression) -> Result<Converted, String> {
+    let mut blobs = HashMap::new();
+    let image = Image::convert(platform, path, compression, &mut |blob| {
+        let bytes = match blob.data {
+            BlobData::File(path) => std::fs::read(path).unwrap(),
+            BlobData::Bytes(bytes) => bytes.to_vec(),
+        };
+        assert_eq!(digest(&bytes), blob.digest);
+        assert_eq!(bytes.len() as u64, blob.size);
+        blobs.insert(blob.digest.clone(), bytes);
+        Ok(())
+    })?;
+    Ok(Converted { image, blobs })
+}
+
+fn gunzip(bytes: &[u8]) -> Vec<u8> {
+    let mut unpacked = Vec::new();
+    flate2::read::GzDecoder::new(bytes)
+        .read_to_end(&mut unpacked)
+        .unwrap();
+    unpacked
+}
+
 #[test]
 fn every_dockertools_format_converts_to_the_same_oci_manifest_with_gzipped_layers() {
     let directory = tempfile::tempdir().unwrap();
@@ -96,16 +138,17 @@ fn every_dockertools_format_converts_to_the_same_oci_manifest_with_gzipped_layer
 
     let images: Vec<_> = [&plain, &gzipped, &streamed]
         .into_iter()
-        .map(|path| LocalImage::load("linux/amd64", path, Compression::default()).unwrap())
+        .map(|path| convert("linux/amd64", path, Compression::default()).unwrap())
         .collect();
     assert!(
         images
             .iter()
-            .all(|image| image.manifest_digest == images[0].manifest_digest)
+            .all(|converted| converted.image.manifest_digest == images[0].image.manifest_digest)
     );
-    assert_eq!(images[0].manifest_digest, digest(&images[0].manifest));
+    let image = &images[0];
+    assert_eq!(image.image.manifest_digest, digest(&image.image.manifest));
 
-    let manifest: Value = serde_json::from_slice(&images[0].manifest).unwrap();
+    let manifest: Value = serde_json::from_slice(&image.image.manifest).unwrap();
     assert_eq!(
         manifest["mediaType"],
         "application/vnd.oci.image.manifest.v1+json"
@@ -122,15 +165,10 @@ fn every_dockertools_format_converts_to_the_same_oci_manifest_with_gzipped_layer
             .all(|layer| layer["mediaType"] == GZIP_LAYER_MEDIA_TYPE)
     );
     // The pushed layer is the gzipped archive layer, so it decompresses to the config's diff_id.
-    let pushed = std::fs::read(&images[0].layers[0].path).unwrap();
-    let mut unpacked = Vec::new();
-    flate2::read::GzDecoder::new(pushed.as_slice())
-        .read_to_end(&mut unpacked)
-        .unwrap();
-    let config: Value =
-        serde_json::from_slice(&std::fs::read(&images[0].config.path).unwrap()).unwrap();
-    assert_eq!(layers[0]["digest"], images[0].layers[0].digest);
-    assert_eq!(json!(digest(&unpacked)), config["rootfs"]["diff_ids"][0]);
+    assert_eq!(
+        json!(digest(&gunzip(image.layer(0)))),
+        image.config()["rootfs"]["diff_ids"][0]
+    );
 }
 
 #[test]
@@ -141,51 +179,32 @@ fn zstd_layers_decompress_to_the_configs_diff_ids() {
         "image.tar",
         &docker_archive("amd64", "hello"),
     );
-    let image = LocalImage::load("linux/amd64", &path, Compression::Zstd { level: 19 }).unwrap();
-    let manifest: Value = serde_json::from_slice(&image.manifest).unwrap();
+    let image = convert("linux/amd64", &path, Compression::Zstd { level: 19 }).unwrap();
+    let manifest: Value = serde_json::from_slice(&image.image.manifest).unwrap();
     assert_eq!(manifest["layers"][0]["mediaType"], ZSTD_LAYER_MEDIA_TYPE);
-    let unpacked =
-        zstd::decode_all(std::fs::read(&image.layers[0].path).unwrap().as_slice()).unwrap();
-    let config: Value =
-        serde_json::from_slice(&std::fs::read(&image.config.path).unwrap()).unwrap();
-    assert_eq!(json!(digest(&unpacked)), config["rootfs"]["diff_ids"][0]);
+    let unpacked = zstd::decode_all(image.layer(0)).unwrap();
+    assert_eq!(
+        json!(digest(&unpacked)),
+        image.config()["rootfs"]["diff_ids"][0]
+    );
 }
 
 #[test]
-fn an_image_must_match_its_declared_platform_and_carry_uncompressed_layers() {
+fn an_image_must_match_its_declared_platform() {
     let directory = tempfile::tempdir().unwrap();
     let path = write(
         directory.path(),
         "image.tar",
         &docker_archive("arm64", "hello"),
     );
-    let error = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap_err();
+    let error = convert("linux/amd64", &path, Compression::default())
+        .err()
+        .unwrap();
     assert!(error.contains("built for linux/arm64"), "{error}");
 
-    // An archive whose layer does not hash to its diff_id, such as a compressed layer.
-    let layer = gzip(&tar(&[("file", b"x")]));
-    let config = serde_json::to_vec(&json!({
-        "architecture": "amd64",
-        "os": "linux",
-        "rootfs": { "type": "layers", "diff_ids": [digest(&tar(&[("file", b"x")]))] },
-    }))
-    .unwrap();
-    let manifest =
-        serde_json::to_vec(&json!([{ "Config": "config.json", "Layers": ["layer.tar"] }])).unwrap();
-    let path = write(
-        directory.path(),
-        "compressed.tar",
-        &tar(&[
-            ("manifest.json", &manifest),
-            ("config.json", &config),
-            ("layer.tar", &layer),
-        ]),
-    );
-    let error = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap_err();
-    assert!(error.contains("uncompressed layers"), "{error}");
-
-    let directory_image =
-        LocalImage::load("linux/amd64", directory.path(), Compression::default()).unwrap_err();
+    let directory_image = convert("linux/amd64", directory.path(), Compression::default())
+        .err()
+        .unwrap();
     assert!(directory_image.contains("not a file"), "{directory_image}");
 
     let failing = write(directory.path(), "failing", b"#!/bin/sh\nexit 3\n");
@@ -193,7 +212,7 @@ fn an_image_must_match_its_declared_platform_and_carry_uncompressed_layers() {
         use std::os::unix::fs::PermissionsExt as _;
         std::fs::set_permissions(&failing, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    assert!(LocalImage::load("linux/amd64", &failing, Compression::default()).is_err());
+    assert!(convert("linux/amd64", &failing, Compression::default()).is_err());
 }
 
 #[test]
@@ -205,7 +224,7 @@ fn only_executables_are_run_whatever_the_file_starts_with() {
 
     let readable = write(directory.path(), "readable", script.as_bytes());
     std::fs::set_permissions(&readable, std::fs::Permissions::from_mode(0o444)).unwrap();
-    assert!(LocalImage::load("linux/amd64", &readable, Compression::default()).is_err());
+    assert!(convert("linux/amd64", &readable, Compression::default()).is_err());
     assert!(
         !marker.exists(),
         "a file without the executable bit was run"
@@ -213,7 +232,7 @@ fn only_executables_are_run_whatever_the_file_starts_with() {
 
     let executable = write(directory.path(), "executable", script.as_bytes());
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o555)).unwrap();
-    assert!(LocalImage::load("linux/amd64", &executable, Compression::default()).is_err());
+    assert!(convert("linux/amd64", &executable, Compression::default()).is_err());
     assert!(marker.exists(), "an executable was not run");
 }
 
@@ -226,7 +245,9 @@ fn the_image_index_is_reproducible_sorted_and_annotated_with_the_version() {
             architecture,
             &docker_archive(architecture, "hello"),
         );
-        LocalImage::load(platform, path, Compression::default()).unwrap()
+        convert(platform, &path, Compression::default())
+            .unwrap()
+            .image
     };
     let arm = load("linux/arm64", "arm64");
     let amd = load("linux/amd64", "amd64");
@@ -650,12 +671,17 @@ impl Images {
         self.paths.clone()
     }
 
-    fn load(&self) -> Vec<LocalImage> {
+    fn load(&self) -> Vec<Converted> {
         self.paths
             .iter()
-            .map(|(platform, path)| {
-                LocalImage::load(platform, path, Compression::default()).unwrap()
-            })
+            .map(|(platform, path)| convert(platform, path, Compression::default()).unwrap())
+            .collect()
+    }
+
+    fn images(&self) -> Vec<Image> {
+        self.load()
+            .into_iter()
+            .map(|converted| converted.image)
             .collect()
     }
 }
@@ -695,7 +721,7 @@ fn pushes_a_new_release_and_a_rerun_writes_nothing() {
             ),
         ]
     );
-    let (_, index_digest) = image_index(&images.load(), &release.version);
+    let (_, index_digest) = image_index(&images.images(), &release.version);
     assert_eq!(registry.tag("1.0.0"), Some(index_digest.clone()));
     assert_eq!(registry.tag("latest"), Some(index_digest));
     assert!(
@@ -874,40 +900,44 @@ fn another_compression_on_a_rerun_is_no_conflict() {
 }
 
 #[test]
-fn a_broken_image_stops_the_release_before_anything_is_written() {
+fn a_wrong_platform_is_found_while_pushing_and_writes_no_manifest_or_tag() {
     let registry = MockRegistry::start();
     let images = Images::new("hello");
     // The amd64 archive declared as arm64.
     let (_, amd) = images.platforms().remove(0);
     let publisher = registry.publisher(vec![("linux/arm64".into(), amd)], &["{version}"], &[]);
-    let error = publisher.state(&release("1.0.0")).unwrap_err().to_string();
+    let release = release("1.0.0");
+    // The preflight reads no image.
+    assert_eq!(publisher.state(&release).unwrap(), PublisherState::Missing);
+    let error = publisher.publish(&release).unwrap_err().to_string();
     assert!(error.contains("declared as linux/arm64"), "{error}");
     let state = registry.state.lock().unwrap();
-    assert!(state.blobs.is_empty() && state.manifests.is_empty());
+    assert!(state.manifests.is_empty() && state.tags.is_empty());
 }
 
 #[test]
-fn no_file_of_an_archive_is_stored_uncompressed() {
+fn at_most_one_compressed_layer_is_on_disk_at_a_time() {
     let directory = tempfile::tempdir().unwrap();
     let path = write(
         directory.path(),
         "image.tar",
         &docker_archive("amd64", "hello"),
     );
-    let image = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap();
-    let stored = image.layers[0].path.parent().unwrap();
-    for file in std::fs::read_dir(stored).unwrap() {
-        let file = file.unwrap().path();
-        if file == image.config.path {
-            continue;
+    let mut layers = 0;
+    Image::convert("linux/amd64", &path, Compression::default(), &mut |blob| {
+        if let BlobData::File(path) = blob.data {
+            let stored: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+                .unwrap()
+                .map(|file| file.unwrap().path())
+                .collect();
+            assert_eq!(stored, [path.to_owned()]);
+            assert!(std::fs::read(path).unwrap().starts_with(&[0x1f, 0x8b]));
+            layers += 1;
         }
-        let bytes = std::fs::read(&file).unwrap();
-        assert!(
-            bytes.starts_with(&[0x1f, 0x8b]),
-            "{} is not gzipped",
-            file.display()
-        );
-    }
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(layers, 2);
 }
 
 /// An archive whose second layer is a link to the first, as `docker save` writes repeated layers.
@@ -961,9 +991,10 @@ fn linked_layers_are_followed_and_kept_once() {
             name,
             &archive_with_linked_layer(link, target),
         );
-        let image = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap();
-        assert_eq!(image.layers.len(), 2);
-        assert_eq!(image.layers[0], image.layers[1]);
+        let image = convert("linux/amd64", &path, Compression::default()).unwrap();
+        let manifest: Value = serde_json::from_slice(&image.image.manifest).unwrap();
+        assert_eq!(manifest["layers"][0], manifest["layers"][1]);
+        assert_eq!(gunzip(image.layer(1)), tar(&[("etc/greeting", b"hello")]));
     }
 
     let path = write(
@@ -971,7 +1002,9 @@ fn linked_layers_are_followed_and_kept_once() {
         "escaping.tar",
         &archive_with_linked_layer(tar::EntryType::Symlink, "../../outside.tar"),
     );
-    let error = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap_err();
+    let error = convert("linux/amd64", &path, Compression::default())
+        .err()
+        .unwrap();
     assert!(error.contains("no file"), "{error}");
 }
 
@@ -1022,12 +1055,8 @@ fn a_later_entry_replaces_an_earlier_one_as_tar_extraction_does() {
         "hardlink.tar",
         &builder.into_inner().unwrap(),
     );
-    let image = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap();
-    let mut unpacked = Vec::new();
-    flate2::read::GzDecoder::new(std::fs::read(&image.layers[0].path).unwrap().as_slice())
-        .read_to_end(&mut unpacked)
-        .unwrap();
-    assert_eq!(unpacked, first);
+    let image = convert("linux/amd64", &path, Compression::default()).unwrap();
+    assert_eq!(gunzip(image.layer(0)), first);
 
     // A hard link to a symbolic link is not followed, as it would follow later entries.
     let manifest_in_dir =
@@ -1044,7 +1073,9 @@ fn a_later_entry_replaces_an_earlier_one_as_tar_extraction_does() {
         "hardlinked-symlink.tar",
         &builder.into_inner().unwrap(),
     );
-    let error = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap_err();
+    let error = convert("linux/amd64", &path, Compression::default())
+        .err()
+        .unwrap();
     assert!(error.contains("no file"), "{error}");
 
     // A link that leaves the archive still replaces the file before it.
@@ -1063,7 +1094,9 @@ fn a_later_entry_replaces_an_earlier_one_as_tar_extraction_does() {
         "escaping.tar",
         &builder.into_inner().unwrap(),
     );
-    let error = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap_err();
+    let error = convert("linux/amd64", &path, Compression::default())
+        .err()
+        .unwrap();
     assert!(error.contains("no file"), "{error}");
 }
 
@@ -1077,7 +1110,9 @@ fn a_manifest_cannot_name_files_outside_the_archive() {
         "image.tar",
         &tar(&[("manifest.json", &manifest)]),
     );
-    let error = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap_err();
+    let error = convert("linux/amd64", &path, Compression::default())
+        .err()
+        .unwrap();
     assert!(error.contains("outside itself"), "{error}");
 }
 
@@ -1137,7 +1172,8 @@ fn lost_responses_are_inspected_again_and_accepted_only_when_matching() {
     let registry = MockRegistry::start();
     let images = Images::new("hello");
     let loaded = images.load();
-    let layer = loaded[0].layers[0].digest.clone();
+    let manifest: Value = serde_json::from_slice(&loaded[0].image.manifest).unwrap();
+    let layer = manifest["layers"][0]["digest"].as_str().unwrap().to_owned();
     registry.fault(Fault::LoseResponse(Box::leak(layer.into_boxed_str())));
     registry.fault(Fault::LoseResponse("1.0.0"));
     registry

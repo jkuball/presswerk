@@ -40,13 +40,16 @@ Each image is a Docker image archive, which may be compressed with gzip or zstd,
 of `dockerTools.buildImage` or `dockerTools.buildLayeredImage`, or an executable that writes an
 uncompressed archive to stdout, such as the output of `dockerTools.streamLayeredImage`. Like a
 release asset, `publish` fetches every image from the local store or a substituter before it writes
-anything, and never builds one. A streamed image keeps the image out of the Nix store and binary
-caches, but does not make `publish` faster: Presswerk checks and compresses every image before it
-writes anything. Each layer is compressed as it is read, so no image is stored uncompressed.
+anything, and never builds one. An image is read only while it is pushed: each layer is compressed
+and uploaded as it is read, so at most one compressed layer is on disk at a time. A streamed image
+keeps the image out of the Nix store and binary caches, but does not make `publish` faster, since
+every layer is still read and compressed.
 
 The platform key, such as `linux/amd64` or `linux/arm/v7`, must match the operating system,
 architecture, and variant in the image's config, so an image cannot end up under the wrong
-platform. The image's name and tag inside the archive are ignored.
+platform. Presswerk checks this while it pushes the image, after the release tag is pushed: a wrong
+key writes no manifest or tag, but stops a release whose tag already exists, so the fix is a new
+release. The image's name and tag inside the archive are ignored.
 
 Presswerk compresses every layer and writes the OCI manifests itself. Layers are compressed with
 gzip, which every client can pull. With `compression.zstd.enable = true;` they are compressed with
@@ -106,10 +109,9 @@ the reason:
 `publish` then also prints a warning. The next run of the release moves the alias.
 
 When a tag is missing and no other tag points to an index of this release yet, Presswerk reads
-the images, uploads every layer and config the registry does not have yet, and puts each
+each image, uploads every layer and config the registry does not have yet, and puts each
 platform's manifest and the index by digest. It then points the version tags and finally the
-aliases at the index. Images are read before anything is written, so an image that cannot be read
-or is built for another platform stops the release before its tag is pushed. Right before it writes a tag, it inspects that tag again. A
+aliases at the index. Right before it writes a tag, it inspects that tag again. A
 write that fails, for example because the response was lost, is inspected once more: it counts as
 done only if the tag now points to this index, so two runs of the same release at the same time
 both succeed. Registries offer no conditional tag update, so a different image pushed under the

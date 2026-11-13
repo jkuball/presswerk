@@ -23,7 +23,7 @@ use std::io::{self, BufReader, Read, Seek};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use url::Url;
 
 pub const INDEX_MEDIA_TYPE: &str = "application/vnd.oci.image.index.v1+json";
@@ -305,12 +305,19 @@ fn hex_digest(digest: &[u8]) -> String {
         })
 }
 
-/// A blob stored in a file, such as an image layer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Blob {
-    pub path: PathBuf,
+/// A blob of an image, as it is uploaded: a compressed layer or the config.
+#[derive(Debug)]
+pub struct Blob<'a> {
     pub digest: String,
     pub size: u64,
+    pub data: BlobData<'a>,
+}
+
+#[derive(Debug)]
+pub enum BlobData<'a> {
+    /// A compressed layer, in a temporary file that is deleted once the blob is handled.
+    File(&'a Path),
+    Bytes(&'a [u8]),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -344,18 +351,14 @@ struct ImageIndex {
 }
 
 /// An image read from a Docker image archive and converted to an OCI image manifest with
-/// compressed layers.
+/// compressed layers, whose blobs were handed on while the archive was read.
 #[derive(Debug)]
-pub struct LocalImage {
+pub struct Image {
     pub platform: Platform,
     /// Where the image was read from, recorded in the index.
     pub store_path: String,
-    pub config: Blob,
-    pub layers: Vec<Blob>,
     pub manifest: Vec<u8>,
     pub manifest_digest: String,
-    /// Holds the compressed layers and the config until the image is pushed.
-    _directory: tempfile::TempDir,
 }
 
 #[derive(Debug, Deserialize)]
@@ -371,41 +374,50 @@ struct ImageConfig {
     os: String,
     #[serde(default)]
     variant: Option<String>,
-    rootfs: RootFs,
 }
 
-#[derive(Debug, Deserialize)]
-struct RootFs {
-    diff_ids: Vec<String>,
-}
-
-/// The largest `manifest.json` or image config read from an archive.
+/// The largest JSON file, such as `manifest.json` or the image config, read from an archive.
 const METADATA_LIMIT: u64 = 16 << 20;
 
-/// A file of an image archive, compressed as it was read.
+/// A file of an image archive: a layer, handed on compressed, or a JSON file, kept.
 #[derive(Debug, Clone)]
-struct Member {
-    /// The digest of the file as it is in the archive.
-    digest: String,
-    compressed: Blob,
+enum Member {
+    Layer { digest: String, size: u64 },
+    Metadata(Vec<u8>),
 }
 
 /// The files of an image archive, by their normalized path in it.
 #[derive(Debug, Default)]
 struct Members {
     files: BTreeMap<String, Member>,
-    /// Symbolic and hard links, to the normalized path they name.
+    /// Symbolic links, to the normalized path they name.
     links: BTreeMap<String, String>,
 }
 
+enum ReadError {
+    Archive(io::Error),
+    /// A blob could not be handed on.
+    Blob(String),
+}
+
+impl From<io::Error> for ReadError {
+    fn from(error: io::Error) -> Self {
+        Self::Archive(error)
+    }
+}
+
 impl Members {
-    /// Read an archive, compressing each file into `directory` as it streams by, so no file is
-    /// ever stored uncompressed. Which files are layers is known only from `manifest.json`, which
-    /// may come last, so every file is compressed; besides layers, an archive holds only small
-    /// JSON files.
-    fn read(reader: impl Read, compression: Compression, directory: &Path) -> io::Result<Self> {
+    /// Read an archive, handing every layer on as soon as it is compressed, so at most one
+    /// compressed layer is on disk at a time. Which files are layers is known only from
+    /// `manifest.json`, which may come last, so JSON files are kept and every other file is
+    /// treated as a layer; a Docker image archive holds nothing else.
+    fn read(
+        reader: impl Read,
+        compression: Compression,
+        directory: &Path,
+        put: &mut dyn FnMut(&Blob<'_>) -> Result<(), String>,
+    ) -> Result<Self, ReadError> {
         let mut members = Self::default();
-        let mut by_digest = BTreeMap::<String, Member>::new();
         let mut archive = tar::Archive::new(reader);
         for entry in archive.entries()? {
             let mut entry = entry?;
@@ -449,18 +461,27 @@ impl Members {
             if !kind.is_file() {
                 continue;
             }
-            let path = directory.join(format!("{}", by_digest.len()));
-            let member = compress(&mut entry, compression, &path)?;
-            // Registries store a layer once, so a layer that occurs twice is kept once.
-            let member = match by_digest.get(&member.digest) {
-                Some(existing) => {
-                    std::fs::remove_file(&path)?;
-                    existing.clone()
+            let member = if name.ends_with(".json") || name == "repositories" {
+                if entry.header().size()? > METADATA_LIMIT {
+                    return Err(ReadError::Archive(io::Error::other(format!(
+                        "{name} is larger than {} MiB",
+                        METADATA_LIMIT >> 20
+                    ))));
                 }
-                None => {
-                    by_digest.insert(member.digest.clone(), member.clone());
-                    member
-                }
+                let mut bytes = Vec::new();
+                entry.read_to_end(&mut bytes)?;
+                Member::Metadata(bytes)
+            } else {
+                let path = directory.join("layer");
+                let (digest, size) = compress(&mut entry, compression, &path)?;
+                let handed = put(&Blob {
+                    digest: digest.clone(),
+                    size,
+                    data: BlobData::File(&path),
+                });
+                std::fs::remove_file(&path)?;
+                handed.map_err(ReadError::Blob)?;
+                Member::Layer { digest, size }
             };
             members.files.insert(name, member);
         }
@@ -469,7 +490,7 @@ impl Members {
         Ok(members)
     }
 
-    /// The file an archive path names, following links.
+    /// The file an archive path names, following symbolic links.
     fn get(&self, name: &str) -> Result<&Member, String> {
         let current = normalize(Path::new(name))
             .filter(|_| {
@@ -478,45 +499,24 @@ impl Members {
                     .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
             })
             .ok_or_else(|| format!("the archive refers to {name:?} outside itself"))?;
-        if let Some(member) = self.resolve(&current) {
-            return Ok(member);
+        let mut current = current.as_str();
+        for _ in 0..16 {
+            if let Some(member) = self.files.get(current) {
+                return Ok(member);
+            }
+            match self.links.get(current) {
+                Some(target) => current = target,
+                None => break,
+            }
         }
         Err(format!("the archive has no file {name:?}"))
     }
 
-    /// The file a normalized archive path names, following symbolic links.
-    fn resolve(&self, name: &str) -> Option<&Member> {
-        let mut current = name;
-        for _ in 0..16 {
-            if let Some(member) = self.files.get(current) {
-                return Some(member);
-            }
-            current = self.links.get(current)?;
+    fn metadata(&self, name: &str) -> Result<&[u8], String> {
+        match self.get(name)? {
+            Member::Metadata(bytes) => Ok(bytes),
+            Member::Layer { .. } => Err(format!("{name} is not a JSON file")),
         }
-        None
-    }
-
-    /// The uncompressed contents of a small file, such as `manifest.json`.
-    fn read_small(&self, name: &str, compression: Compression) -> Result<Vec<u8>, String> {
-        let member = self.get(name)?;
-        let file = File::open(&member.compressed.path)
-            .map_err(|error| format!("could not read {name}: {error}"))?;
-        let mut bytes = Vec::new();
-        let read = match compression {
-            Compression::Gzip { .. } => flate2::read::GzDecoder::new(BufReader::new(file))
-                .take(METADATA_LIMIT + 1)
-                .read_to_end(&mut bytes),
-            Compression::Zstd { .. } => zstd::Decoder::new(file)
-                .and_then(|decoder| decoder.take(METADATA_LIMIT + 1).read_to_end(&mut bytes)),
-        };
-        read.map_err(|error| format!("could not read {name}: {error}"))?;
-        if bytes.len() as u64 > METADATA_LIMIT {
-            return Err(format!(
-                "{name} is larger than {} MiB",
-                METADATA_LIMIT >> 20
-            ));
-        }
-        Ok(bytes)
     }
 }
 
@@ -537,15 +537,18 @@ fn normalize(path: &Path) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-impl LocalImage {
-    /// Read a fetched image: an executable that streams a Docker image archive, such as the
-    /// output of `dockerTools.streamLayeredImage`, or the archive itself, gzip- or
-    /// zstd-compressed or not. The Nix store keeps only the executable bit of a file's mode, so
-    /// that bit, not the content, tells the two apart.
-    pub fn load(
+impl Image {
+    /// Read a fetched image and hand on each of its blobs: an executable that streams a Docker
+    /// image archive, such as the output of `dockerTools.streamLayeredImage`, or the archive
+    /// itself, gzip- or zstd-compressed or not. The Nix store keeps only the executable bit of a
+    /// file's mode, so that bit, not the content, tells the two apart. The layers are handed on
+    /// while the archive is read, before the declared platform can be checked against the
+    /// config; the config comes last.
+    pub fn convert(
         platform: &str,
         path: impl AsRef<Path>,
         compression: Compression,
+        put: &mut dyn FnMut(&Blob<'_>) -> Result<(), String>,
     ) -> Result<Self, String> {
         let path = path.as_ref();
         let expected = Platform::parse(platform)?;
@@ -555,6 +558,10 @@ impl LocalImage {
                 path.display()
             )
         };
+        let read_failed = |error: ReadError| match error {
+            ReadError::Archive(error) => failed(&error),
+            ReadError::Blob(error) => error,
+        };
         let metadata = std::fs::metadata(path).map_err(|error| failed(&error))?;
         if !metadata.is_file() {
             return Err(failed(
@@ -562,7 +569,8 @@ impl LocalImage {
             ));
         }
         let directory = tempfile::tempdir().map_err(|error| failed(&error))?;
-        let read = |reader: &mut dyn Read| Members::read(reader, compression, directory.path());
+        let mut read =
+            |reader: &mut dyn Read| Members::read(reader, compression, directory.path(), put);
 
         let members = if metadata.permissions().mode() & 0o111 != 0 {
             let mut child = Command::new(path)
@@ -575,7 +583,7 @@ impl LocalImage {
             let members = read(&mut stdout);
             drop(stdout);
             let status = child.wait().map_err(|error| failed(&error))?;
-            let members = members.map_err(|error| failed(&error))?;
+            let members = members.map_err(read_failed)?;
             if !status.success() {
                 return Err(failed(&format!(
                     "the image executable exited with {status}"
@@ -591,14 +599,17 @@ impl LocalImage {
             if magic.starts_with(&[0x1f, 0x8b]) {
                 read(&mut flate2::read::GzDecoder::new(BufReader::new(file)))
             } else if magic == [0x28, 0xb5, 0x2f, 0xfd] {
-                zstd::Decoder::new(file).and_then(|mut decoder| read(&mut decoder))
+                match zstd::Decoder::new(file) {
+                    Ok(mut decoder) => read(&mut decoder),
+                    Err(error) => Err(ReadError::Archive(error)),
+                }
             } else {
                 read(&mut BufReader::new(file))
             }
-            .map_err(|error| failed(&error))?
+            .map_err(read_failed)?
         };
 
-        Self::from_members(&expected, path, compression, &members, directory)
+        Self::from_members(&expected, path, compression, &members, put)
             .map_err(|error| failed(&error))
     }
 
@@ -607,11 +618,11 @@ impl LocalImage {
         path: &Path,
         compression: Compression,
         members: &Members,
-        directory: tempfile::TempDir,
+        put: &mut dyn FnMut(&Blob<'_>) -> Result<(), String>,
     ) -> Result<Self, String> {
         let entries: Vec<ArchiveEntry> = serde_json::from_slice(
-            &members
-                .read_small("manifest.json", compression)
+            members
+                .metadata("manifest.json")
                 .map_err(|error| format!("the archive has no readable manifest.json: {error}"))?,
         )
         .map_err(|error| format!("invalid manifest.json: {error}"))?;
@@ -621,12 +632,10 @@ impl LocalImage {
                 entries.len()
             ));
         };
-        let config_bytes = members
-            .read_small(&entry.config, compression)
-            .map_err(|error| {
-                format!("could not read the image config {}: {error}", entry.config)
-            })?;
-        let image_config: ImageConfig = serde_json::from_slice(&config_bytes)
+        let config = members.metadata(&entry.config).map_err(|error| {
+            format!("could not read the image config {}: {error}", entry.config)
+        })?;
+        let image_config: ImageConfig = serde_json::from_slice(config)
             .map_err(|error| format!("invalid image config {}: {error}", entry.config))?;
         let platform = Platform {
             architecture: image_config.architecture,
@@ -638,61 +647,43 @@ impl LocalImage {
                 "the image is built for {platform}, but is declared as {expected}"
             ));
         }
-        let layers = entry
-            .layers
-            .iter()
-            .map(|layer| members.get(layer))
-            .collect::<Result<Vec<_>, _>>()?;
-        if layers
-            .iter()
-            .map(|layer| &layer.digest)
-            .ne(image_config.rootfs.diff_ids.iter())
-        {
-            return Err(
-                "the layers do not match the image config's diff_ids; the archive must hold uncompressed layers, as Docker image archives do"
-                    .into(),
-            );
-        }
-        // Registries store and serve layers as pushed, so the compressed files are pushed.
-        let layers: Vec<_> = layers
-            .into_iter()
-            .map(|layer| layer.compressed.clone())
-            .collect();
-        let config_path = directory.path().join("config");
-        std::fs::write(&config_path, &config_bytes)
-            .map_err(|error| format!("could not store the image config: {error}"))?;
-        let config = Blob {
-            path: config_path,
-            digest: sha256_digest(&config_bytes),
-            size: config_bytes.len() as u64,
-        };
 
-        let descriptor = |media_type: &str, blob: &Blob| Descriptor {
+        let descriptor = |media_type: &str, digest: &str, size: u64| Descriptor {
             media_type: media_type.into(),
-            digest: blob.digest.clone(),
-            size: blob.size,
+            digest: digest.into(),
+            size,
             platform: None,
             annotations: BTreeMap::new(),
         };
+        let layers = entry
+            .layers
+            .iter()
+            .map(|layer| match members.get(layer)? {
+                Member::Layer { digest, size } => {
+                    Ok(descriptor(compression.layer_media_type(), digest, *size))
+                }
+                Member::Metadata(_) => Err(format!("layer {layer} is a JSON file")),
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let config_digest = sha256_digest(config);
+        put(&Blob {
+            digest: config_digest.clone(),
+            size: config.len() as u64,
+            data: BlobData::Bytes(config),
+        })?;
         let manifest = serde_json::to_vec(&ImageManifest {
             schema_version: 2,
             media_type: MANIFEST_MEDIA_TYPE,
-            config: descriptor(CONFIG_MEDIA_TYPE, &config),
-            layers: layers
-                .iter()
-                .map(|layer| descriptor(compression.layer_media_type(), layer))
-                .collect(),
+            config: descriptor(CONFIG_MEDIA_TYPE, &config_digest, config.len() as u64),
+            layers,
         })
         .expect("serialize an image manifest");
         let manifest_digest = sha256_digest(&manifest);
         Ok(Self {
             platform,
             store_path: path.display().to_string(),
-            config,
-            layers,
             manifest,
             manifest_digest,
-            _directory: directory,
         })
     }
 
@@ -707,15 +698,6 @@ impl LocalImage {
             annotations: BTreeMap::from([(STORE_PATH_ANNOTATION.into(), self.store_path.clone())]),
         }
     }
-
-    /// The config and every distinct layer.
-    fn blobs(&self) -> Vec<&Blob> {
-        let mut seen = HashSet::new();
-        std::iter::once(&self.config)
-            .chain(&self.layers)
-            .filter(|blob| seen.insert(&blob.digest))
-            .collect()
-    }
 }
 
 impl Compression {
@@ -727,30 +709,11 @@ impl Compression {
     }
 }
 
-/// Hashes and counts what passes through.
+/// Hashes and counts what is written through it.
 struct Hashing<T> {
     inner: T,
     hasher: Sha256,
     size: u64,
-}
-
-impl<T> Hashing<T> {
-    fn new(inner: T) -> Self {
-        Self {
-            inner,
-            hasher: Sha256::new(),
-            size: 0,
-        }
-    }
-}
-
-impl<T: Read> Read for Hashing<T> {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let read = self.inner.read(buffer)?;
-        self.hasher.update(&buffer[..read]);
-        self.size += read as u64;
-        Ok(read)
-    }
 }
 
 impl<T: io::Write> io::Write for Hashing<T> {
@@ -766,10 +729,17 @@ impl<T: io::Write> io::Write for Hashing<T> {
     }
 }
 
-/// Compress a stream into a new file, hashing both what is read and what is written.
-fn compress(source: impl Read, compression: Compression, path: &Path) -> io::Result<Member> {
-    let mut source = Hashing::new(source);
-    let target = Hashing::new(io::BufWriter::new(File::create(path)?));
+/// Compress a stream into a new file; the digest and size of what was written.
+fn compress(
+    mut source: impl Read,
+    compression: Compression,
+    path: &Path,
+) -> io::Result<(String, u64)> {
+    let target = Hashing {
+        inner: io::BufWriter::new(File::create(path)?),
+        hasher: Sha256::new(),
+        size: 0,
+    };
     let mut target = match compression {
         Compression::Gzip { level } => {
             let mut encoder =
@@ -784,16 +754,8 @@ fn compress(source: impl Read, compression: Compression, path: &Path) -> io::Res
         }
     };
     io::Write::flush(&mut target)?;
-    Ok(Member {
-        digest: hex_digest(&source.hasher.finalize()),
-        compressed: Blob {
-            path: path.to_owned(),
-            digest: hex_digest(&target.hasher.finalize()),
-            size: target.size,
-        },
-    })
+    Ok((hex_digest(&target.hasher.finalize()), target.size))
 }
-
 fn read_prefix(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
     let mut read = 0;
     while read < buffer.len() {
@@ -807,8 +769,8 @@ fn read_prefix(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
 
 /// The image index for a release: one manifest per platform, annotated with the version.
 #[must_use]
-pub fn image_index(images: &[LocalImage], version: &Version) -> (Vec<u8>, String) {
-    let mut manifests: Vec<_> = images.iter().map(LocalImage::descriptor).collect();
+pub fn image_index(images: &[Image], version: &Version) -> (Vec<u8>, String) {
+    let mut manifests: Vec<_> = images.iter().map(Image::descriptor).collect();
     manifests.sort_by(|left, right| left.platform.cmp(&right.platform));
     let index = serde_json::to_vec(&ImageIndex {
         schema_version: 2,
@@ -865,7 +827,7 @@ impl Credentials {
 enum Body<'a> {
     Empty,
     Bytes(&'a [u8]),
-    File(&'a Blob),
+    File(&'a Path, u64),
 }
 
 enum CallError {
@@ -946,15 +908,12 @@ impl RegistryClient {
             let result = match body {
                 Body::Empty => request.call(),
                 Body::Bytes(bytes) => request.send_bytes(bytes),
-                Body::File(blob) => {
-                    let file = File::open(&blob.path).map_err(|error| {
-                        CallError::Transport(format!(
-                            "could not read {}: {error}",
-                            blob.path.display()
-                        ))
+                Body::File(path, size) => {
+                    let file = File::open(path).map_err(|error| {
+                        CallError::Transport(format!("could not read {}: {error}", path.display()))
                     })?;
                     request
-                        .set("Content-Length", &blob.size.to_string())
+                        .set("Content-Length", &size.to_string())
                         .send(BufReader::new(file))
                 }
             };
@@ -1110,7 +1069,7 @@ impl RegistryClient {
     }
 
     /// Upload a blob in one request; a blob that appears meanwhile counts as uploaded.
-    pub fn upload_blob(&self, blob: &Blob) -> Result<(), PublicationError> {
+    pub fn upload_blob(&self, blob: &Blob<'_>) -> Result<(), PublicationError> {
         let failure = match self.start_upload() {
             Ok(mut location) => {
                 location
@@ -1120,7 +1079,10 @@ impl RegistryClient {
                     "PUT",
                     &location,
                     &[("Content-Type", "application/octet-stream")],
-                    &Body::File(blob),
+                    &match blob.data {
+                        BlobData::File(path) => Body::File(path, blob.size),
+                        BlobData::Bytes(bytes) => Body::Bytes(bytes),
+                    },
                 ) {
                     Ok(_) => return Ok(()),
                     Err(error) => error.to_string(),
@@ -1256,10 +1218,9 @@ pub struct OciPublisher {
     repository: String,
     tags: Vec<String>,
     aliases: Vec<String>,
-    /// The image of each platform, by store path; read only when something must be pushed.
+    /// The image of each platform, by store path; read only while it is pushed.
     platforms: BTreeMap<Platform, PathBuf>,
     compression: Compression,
-    images: OnceLock<Vec<LocalImage>>,
 }
 
 /// An index the registry already holds for this release, which further tags point to.
@@ -1309,26 +1270,11 @@ impl OciPublisher {
             aliases,
             platforms,
             compression,
-            images: OnceLock::new(),
         })
     }
 
     fn reference(&self, tag: &str) -> String {
         format!("{}:{tag}", self.repository)
-    }
-
-    /// Read every image, once: before anything is written, so a broken image stops the release.
-    fn images(&self) -> Result<&[LocalImage], PublicationError> {
-        if let Some(images) = self.images.get() {
-            return Ok(images);
-        }
-        let images = self
-            .platforms
-            .iter()
-            .map(|(platform, path)| LocalImage::load(&platform.to_string(), path, self.compression))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(PublicationError::new)?;
-        Ok(self.images.get_or_init(|| images))
     }
 
     /// Whether an index is this release's: the same version, and the same store path for every
@@ -1375,22 +1321,10 @@ impl OciPublisher {
             existing = existing.or(index);
             states.push((tag, state));
         }
-        let inspection = Inspection {
+        Ok(Inspection {
             existing,
             tags: states,
-        };
-        if inspection.existing.is_none() && inspection.conflict().is_none() {
-            let needs_push = inspection.tags.iter().any(|(_, state)| {
-                matches!(
-                    state,
-                    TagState::Missing | TagState::Behind | TagState::Unknown(_)
-                )
-            });
-            if needs_push {
-                self.images()?;
-            }
-        }
-        Ok(inspection)
+        })
     }
 
     /// The state of a tag, with the index it points to if that is already this release's.
@@ -1456,15 +1390,29 @@ impl OciPublisher {
         }
     }
 
-    /// Push every blob and manifest of an image that the registry does not have yet.
-    fn push_image(&self, image: &LocalImage) -> Result<AssetStep, PublicationError> {
+    /// Read an image and push every blob and its manifest that the registry does not have yet.
+    /// Each layer is pushed as soon as it is compressed; the image's platform is checked before
+    /// its manifest is written.
+    fn push_image(
+        &self,
+        platform: &Platform,
+        path: &Path,
+    ) -> Result<(Image, AssetStep), PublicationError> {
         let mut pushed = false;
-        for blob in image.blobs() {
-            if !self.registry.blob_exists(&blob.digest)? {
-                self.registry.upload_blob(blob)?;
+        let image = Image::convert(&platform.to_string(), path, self.compression, &mut |blob| {
+            if !self
+                .registry
+                .blob_exists(&blob.digest)
+                .map_err(|error| error.to_string())?
+            {
+                self.registry
+                    .upload_blob(blob)
+                    .map_err(|error| error.to_string())?;
                 pushed = true;
             }
-        }
+            Ok(())
+        })
+        .map_err(PublicationError::new)?;
         if self
             .registry
             .manifest_digest(&image.manifest_digest)?
@@ -1478,11 +1426,12 @@ impl OciPublisher {
             )?;
             pushed = true;
         }
-        Ok(if pushed {
+        let step = if pushed {
             AssetStep::Uploaded
         } else {
             AssetStep::AlreadyUploaded
-        })
+        };
+        Ok((image, step))
     }
 
     /// Point an alias at the index if it still needs to move; the error is the warning text.
@@ -1545,12 +1494,14 @@ impl OciPublisher {
                 vec![AssetStep::AlreadyUploaded; self.platforms.len()],
             ));
         }
-        let images = self.images()?;
-        let steps = images
+        let (images, steps): (Vec<_>, Vec<_>) = self
+            .platforms
             .iter()
-            .map(|image| self.push_image(image))
-            .collect::<Result<Vec<_>, _>>()?;
-        let (bytes, digest) = image_index(images, &release.version);
+            .map(|(platform, path)| self.push_image(platform, path))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .unzip();
+        let (bytes, digest) = image_index(&images, &release.version);
         if self.registry.manifest_digest(&digest)?.is_none() {
             self.registry
                 .put_manifest(&digest, INDEX_MEDIA_TYPE, &bytes, &digest)?;
