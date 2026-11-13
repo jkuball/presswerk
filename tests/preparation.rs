@@ -595,7 +595,7 @@ fn the_plan_lists_each_publisher_with_its_release_and_assets() {
     )));
 }
 
-fn oci_publisher(tags: &[&str]) -> OciPublisher {
+fn oci_publisher(tags: &[&str], aliases: &[&str]) -> OciPublisher {
     OciPublisher {
         repository: "ghcr.io/owner/project".into(),
         platforms: BTreeMap::from([
@@ -603,6 +603,7 @@ fn oci_publisher(tags: &[&str]) -> OciPublisher {
             ("linux/arm64".into(), "/nix/store/def-image.tar.gz".into()),
         ]),
         tags: tags.iter().map(|tag| (*tag).into()).collect(),
+        aliases: aliases.iter().map(|alias| (*alias).into()).collect(),
         public: false,
         username: Token {
             secret: "REGISTRY_USERNAME".into(),
@@ -619,11 +620,10 @@ fn the_plan_lists_oci_images_and_rendered_tags_before_the_release() {
     write_version(&repository, "0.0.0");
     repository.commit("✨ Add the first feature");
     let mut evaluated = evaluated(&repository, "0.0.0");
-    evaluated
-        .declaration
-        .publishers
-        .oci
-        .insert("default".into(), oci_publisher(&["latest", "{version}"]));
+    evaluated.declaration.publishers.oci.insert(
+        "default".into(),
+        oci_publisher(&["{version}"], &["latest", "{major}.{minor}"]),
+    );
 
     let plan = build_release_plan(
         repository.path(),
@@ -641,6 +641,7 @@ fn the_plan_lists_oci_images_and_rendered_tags_before_the_release() {
         "    image    linux/arm64\n",
         "    tag      0.1.0\n",
         "    alias    latest\n",
+        "    alias    0.1\n",
         "  github-release.default  owner/project\n",
         "    release  v0.1.0\n",
     )));

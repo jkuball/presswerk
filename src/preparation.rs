@@ -165,7 +165,7 @@ pub fn build_release_plan(
     // Catch tags that the next version cannot fill before the release commit uses it up.
     if let Some(version) = &next_version {
         for (name, publisher) in &declaration.publishers.oci {
-            crate::oci::render_tags(&publisher.tags, version)
+            crate::oci::render_tags(&publisher.tags, &publisher.aliases, version)
                 .map_err(|error| anyhow::anyhow!("oci.{name}: {error}"))?;
         }
     }
@@ -325,7 +325,9 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
             for platform in publisher.platforms.keys() {
                 let _ = writeln!(output, "    image    {platform}");
             }
-            for tag in crate::oci::render_tags(&publisher.tags, version).unwrap_or_default() {
+            for tag in crate::oci::render_tags(&publisher.tags, &publisher.aliases, version)
+                .unwrap_or_default()
+            {
                 let kind = match tag {
                     crate::oci::OciTag::Version(_) => "tag",
                     crate::oci::OciTag::Alias(_) => "alias",

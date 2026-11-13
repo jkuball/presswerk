@@ -425,8 +425,12 @@ pub struct OciPublisher {
     pub repository: String,
     /// The image for each platform, such as `linux/amd64`, each a path in the Nix store.
     pub platforms: BTreeMap<String, String>,
-    /// Tag templates; `{version}` is replaced by the release version.
+    /// Tag templates of the release; each contains `{version}`.
     pub tags: Vec<String>,
+    /// Alias templates, such as `latest` or `{major}.{minor}`, that move to a higher version.
+    /// Missing in declarations written before the option existed.
+    #[serde(default)]
+    pub aliases: Vec<String>,
     /// Whether anyone may pull the images; the previous-release check then reads anonymously.
     /// Missing in declarations written before the option existed.
     #[serde(default)]
@@ -449,7 +453,7 @@ impl OciPublisher {
                 ));
             }
         }
-        crate::oci::validate_tag_templates(&self.tags)?;
+        crate::oci::validate_tag_templates(&self.tags, &self.aliases)?;
         self.username
             .validate()
             .map_err(|error| error.to_string())?;

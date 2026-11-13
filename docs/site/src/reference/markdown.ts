@@ -169,7 +169,7 @@ export const referencePages: ReferencePage[] = [
   {
     slug: 'reference/publishers/oci',
     title: 'OCI publisher',
-    description: 'The OCI publisher for container images: images, tags, behavior, credentials, and options.',
+    description: 'The OCI publisher for container images: images, tags and aliases, behavior, credentials, and options.',
     markdown: ({ options }, base, target) =>
       fill(ociPage, base, {
         options: optionList(options, 'publishers.oci.', 3, target),

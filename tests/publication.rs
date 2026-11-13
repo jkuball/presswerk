@@ -641,7 +641,7 @@ fn a_predecessor_without_publishers_is_complete_with_its_remote_tag() {
     );
 }
 
-fn oci_predecessor(tags: &[&str]) -> ReleaseDeclaration {
+fn oci_predecessor(tags: &[&str], aliases: &[&str]) -> ReleaseDeclaration {
     let mut declaration = declaration("0.1.0", "old/project");
     declaration.publishers.github_release.clear();
     declaration.publishers.oci.insert(
@@ -650,6 +650,7 @@ fn oci_predecessor(tags: &[&str]) -> ReleaseDeclaration {
             repository: "ghcr.io/owner/project".into(),
             platforms: [("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into())].into(),
             tags: tags.iter().map(|tag| (*tag).into()).collect(),
+            aliases: aliases.iter().map(|alias| (*alias).into()).collect(),
             public: true,
             username: Token {
                 secret: "REGISTRY_USERNAME".into(),
@@ -709,7 +710,7 @@ fn verify_oci_predecessor(
 
 #[test]
 fn a_complete_oci_predecessor_passes_and_ignores_aliases() {
-    let previous = oci_predecessor(&["{version}", "v{version}", "latest"]);
+    let previous = oci_predecessor(&["{version}", "v{version}"], &["latest"]);
     let (result, read) = verify_oci_predecessor(
         &previous,
         &[
@@ -726,7 +727,7 @@ fn a_complete_oci_predecessor_passes_and_ignores_aliases() {
 
 #[test]
 fn an_incomplete_oci_predecessor_blocks_the_next_release() {
-    let previous = oci_predecessor(&["{version}", "v{version}", "latest"]);
+    let previous = oci_predecessor(&["{version}", "v{version}"], &["latest"]);
     for (manifests, expected) in [
         (
             vec![("0.1.0", annotated_index("0.1.0"))],

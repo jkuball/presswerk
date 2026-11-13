@@ -311,6 +311,7 @@ in
         repository = "ghcr.io/owner/project";
         platforms."linux/amd64" = image.outPath;
         tags = [ "{version}" ];
+        aliases = [ ];
         public = false;
         username.secret = "REGISTRY_USERNAME";
         password.secret = "REGISTRY_TOKEN";
@@ -333,7 +334,7 @@ in
         [
           { }
           { repository = "localhost:5000/project"; }
-          { tags = [ "{version}" "latest" ]; }
+          { aliases = [ "latest" "{major}" "{major}.{minor}" ]; }
           { public = true; }
           { repository = "[::1]:5000/project"; }
           { repository = "europe-docker.pkg.dev/project/repo/image"; }
@@ -348,13 +349,18 @@ in
           { repository = "ghcr.io?x=1/owner/project"; }
           { platforms = { }; }
           { platforms."linux/amd64" = "/nix/store/00000000000000000000000000000000-fake.tar.gz"; }
-          # Every release needs a tag of its own.
+          # Every release needs a tag of its own, and every tag names the version.
+          { tags = [ ]; }
           { tags = [ "latest" ]; }
+          { tags = [ "{version}" "latest" ]; }
           { tags = [ "{version}" "{version}" ]; }
-          { tags = [ "{version}" "{major}" ]; }
           { tags = [ "-{version}" ]; }
+          # An alias follows a line of versions, never a single one.
+          { aliases = [ "{version}-slim" ]; }
+          { aliases = [ "{unknown}" ]; }
+          { aliases = [ "latest" "latest" ]; }
         ];
-      expected = [ true true true true true true false false false false false false false false false false false false false ];
+      expected = [ true true true true true true false false false false false false false false false false false false false false false false false ];
     };
 
     "test a release needs no publishers" = {

@@ -190,9 +190,9 @@ impl fmt::Display for Platform {
 /// One rendered tag of a release.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OciTag {
-    /// A tag that names this version, such as `1.2.0`; it is never moved once pushed.
+    /// A tag of this version, such as `1.2.0`; it is never moved once pushed.
     Version(String),
-    /// A tag without the version, such as `latest`; it follows the highest stable version.
+    /// An alias, such as `latest` or `1.2`; it moves to a higher stable version.
     Alias(String),
 }
 
@@ -213,51 +213,75 @@ fn is_valid_tag(tag: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
 }
 
-/// Check tag templates before any version is known.
-pub fn validate_tag_templates(templates: &[String]) -> Result<(), String> {
-    if !templates
-        .iter()
-        .any(|template| template.contains(VERSION_PLACEHOLDER))
-    {
+/// Check tag and alias templates before any version is known.
+pub fn validate_tag_templates(tags: &[String], aliases: &[String]) -> Result<(), String> {
+    if tags.is_empty() {
         return Err(
-            "OCI tags must contain at least one tag with {version}, so every release has a tag of its own"
-                .into(),
+            "an OCI publisher needs at least one tag, so every release has a tag of its own".into(),
         );
     }
-    render_tags(templates, &Version::new(0, 0, 0)).map(|_| ())
+    if let Some(tag) = tags.iter().find(|tag| !tag.contains(VERSION_PLACEHOLDER)) {
+        return Err(format!(
+            "OCI tag {tag:?} must contain {{version}}; declare a tag that follows other versions under aliases"
+        ));
+    }
+    if let Some(alias) = aliases
+        .iter()
+        .find(|alias| alias.contains(VERSION_PLACEHOLDER))
+    {
+        return Err(format!(
+            "OCI alias {alias:?} must not contain {{version}}, which names a single version; declare it under tags"
+        ));
+    }
+    render_tags(tags, aliases, &Version::new(0, 0, 0)).map(|_| ())
 }
 
-/// Render the tag templates for a version, version tags first.
-pub fn render_tags(templates: &[String], version: &Version) -> Result<Vec<OciTag>, String> {
+/// Replace the version placeholders of a template.
+fn render_template(template: &str, version: &Version) -> String {
+    template
+        .replace(VERSION_PLACEHOLDER, &version.to_string())
+        .replace("{major}", &version.major.to_string())
+        .replace("{minor}", &version.minor.to_string())
+        .replace("{patch}", &version.patch.to_string())
+}
+
+/// Render the tag and alias templates for a version, tags first.
+pub fn render_tags(
+    tags: &[String],
+    aliases: &[String],
+    version: &Version,
+) -> Result<Vec<OciTag>, String> {
+    if !version.build.is_empty() {
+        return Err(format!(
+            "OCI tags cannot carry version {version}: OCI tags do not allow `+`, so build metadata cannot be published yet (https://github.com/jkuball/presswerk/issues/89)"
+        ));
+    }
     let mut seen = HashSet::new();
-    let mut versions = Vec::new();
-    let mut aliases = Vec::new();
-    for template in templates {
-        let tag = if template.contains(VERSION_PLACEHOLDER) {
-            if !version.build.is_empty() {
-                return Err(format!(
-                    "OCI tag {template:?} cannot carry version {version}: OCI tags do not allow `+`, so build metadata cannot be published yet (https://github.com/jkuball/presswerk/issues/89)"
-                ));
-            }
-            OciTag::Version(template.replace(VERSION_PLACEHOLDER, &version.to_string()))
-        } else {
-            OciTag::Alias(template.clone())
-        };
+    let tags = tags.iter().map(|template| {
+        (
+            template,
+            OciTag::Version(render_template(template, version)),
+        )
+    });
+    let aliases = aliases
+        .iter()
+        .map(|template| (template, OciTag::Alias(render_template(template, version))));
+    let mut rendered = Vec::new();
+    for (template, tag) in tags.chain(aliases) {
         if !is_valid_tag(tag.name()) {
             return Err(format!(
-                "OCI tag {template:?} must render to letters, digits, `_`, `.`, and `-`, not starting with `.` or `-`, and at most 128 characters"
+                "OCI tag {template:?} must render to letters, digits, `_`, `.`, and `-`, not starting with `.` or `-`, and at most 128 characters; the placeholders are {{version}}, {{major}}, {{minor}}, and {{patch}}"
             ));
         }
         if !seen.insert(tag.name().to_owned()) {
-            return Err(format!("OCI tag {:?} is declared twice", tag.name()));
+            return Err(format!(
+                "OCI tag {:?} is declared twice for version {version}",
+                tag.name()
+            ));
         }
-        match tag {
-            OciTag::Version(_) => versions.push(tag),
-            OciTag::Alias(_) => aliases.push(tag),
-        }
+        rendered.push(tag);
     }
-    versions.extend(aliases);
-    Ok(versions)
+    Ok(rendered)
 }
 
 fn sha256_digest(bytes: &[u8]) -> String {
@@ -1005,6 +1029,7 @@ pub struct OciPublisher {
     registry: RegistryClient,
     repository: String,
     tags: Vec<String>,
+    aliases: Vec<String>,
     images: Vec<LocalImage>,
 }
 
@@ -1027,6 +1052,7 @@ impl OciPublisher {
             RegistryClient::new(&declaration.repository, Some(credentials))?,
             &declaration.repository,
             declaration.tags.clone(),
+            declaration.aliases.clone(),
             images,
         ))
     }
@@ -1035,12 +1061,14 @@ impl OciPublisher {
         registry: RegistryClient,
         repository: &str,
         tags: Vec<String>,
+        aliases: Vec<String>,
         images: Vec<LocalImage>,
     ) -> Self {
         Self {
             registry,
             repository: repository.into(),
             tags,
+            aliases,
             images,
         }
     }
@@ -1050,7 +1078,8 @@ impl OciPublisher {
     }
 
     fn inspect(&self, release: &Release) -> Result<Inspection, PublicationError> {
-        let tags = render_tags(&self.tags, &release.version).map_err(PublicationError::new)?;
+        let tags = render_tags(&self.tags, &self.aliases, &release.version)
+            .map_err(PublicationError::new)?;
         let (index, digest) = image_index(&self.images, &release.version);
         let states = tags
             .into_iter()
@@ -1411,13 +1440,10 @@ mod tests {
     }
 
     #[test]
-    fn renders_version_tags_before_aliases() {
+    fn renders_tags_before_aliases_with_every_placeholder() {
         let tags = render_tags(
-            &[
-                "latest".into(),
-                "{version}".into(),
-                "v{version}-alpine".into(),
-            ],
+            &["{version}".into(), "v{version}-alpine".into()],
+            &["latest".into(), "{major}".into(), "{major}.{minor}".into()],
             &Version::parse("1.2.3-rc.1").unwrap(),
         )
         .unwrap();
@@ -1427,20 +1453,32 @@ mod tests {
                 OciTag::Version("1.2.3-rc.1".into()),
                 OciTag::Version("v1.2.3-rc.1-alpine".into()),
                 OciTag::Alias("latest".into()),
+                OciTag::Alias("1".into()),
+                OciTag::Alias("1.2".into()),
             ]
         );
     }
 
     #[test]
     fn rejects_invalid_tags_and_build_metadata() {
-        assert!(validate_tag_templates(&["latest".into()]).is_err());
-        assert!(validate_tag_templates(&["{version}".into(), "{major}".into()]).is_err());
-        assert!(validate_tag_templates(&["{version}".into(), "{version}".into()]).is_err());
-        assert!(validate_tag_templates(&["-{version}".into()]).is_err());
-        validate_tag_templates(&["{version}".into(), "latest".into()]).unwrap();
+        let strings =
+            |templates: &[&str]| templates.iter().map(|&t| t.to_owned()).collect::<Vec<_>>();
+        let validate = |tags: &[&str], aliases: &[&str]| {
+            validate_tag_templates(&strings(tags), &strings(aliases))
+        };
+        assert!(validate(&[], &["latest"]).is_err());
+        assert!(validate(&["latest"], &[]).is_err());
+        assert!(validate(&["{version}"], &["{version}-slim"]).is_err());
+        assert!(validate(&["{version}"], &["{unknown}"]).is_err());
+        assert!(validate(&["{version}", "{version}"], &[]).is_err());
+        // Renders to the version tag of every stable release.
+        assert!(validate(&["{version}"], &["{major}.{minor}.{patch}"]).is_err());
+        assert!(validate(&["-{version}"], &[]).is_err());
+        validate(&["{version}"], &["latest", "{major}", "{major}.{minor}"]).unwrap();
 
         let error = render_tags(
             &["{version}".into()],
+            &[],
             &Version::parse("1.2.3+build.5").unwrap(),
         )
         .unwrap_err();

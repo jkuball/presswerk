@@ -10,7 +10,7 @@ image for each platform:
     repository = "ghcr.io/owner/project";
     platforms."linux/amd64" = self.packages.x86_64-linux.image;
     platforms."linux/arm64" = self.packages.aarch64-linux.image;
-    tags = [ "{version}" "latest" ];
+    aliases = [ "latest" "{major}" "{major}.{minor}" ];
     public = true;
     username.secret = "GITHUB_ACTOR";
     password.secret = "GITHUB_TOKEN";
@@ -65,20 +65,26 @@ the same images always produce byte-identical manifests and the same index diges
 recognizes its own earlier push. Uncompressed layers take more space and bandwidth than
 compressed ones; registries that deduplicate layers store each one only once.
 
-## Tags
+## Tags and aliases
 
-`tags` lists the tags that point to the index; `{version}` is replaced by the release version.
-At least one tag must contain `{version}`, so every release has a tag of its own. A version with
-SemVer build metadata such as `1.2.0+build.5` cannot be published yet, since OCI tags do not
-allow `+`.
+Both `tags` and `aliases` point to the index, and both are templates: `{version}` is replaced by
+the release version, and `{major}`, `{minor}`, and `{patch}` by its parts.
 
-- A **version tag** contains `{version}`, such as `1.2.0` or `v1.2.0-alpine`. It belongs to this
-  release and is never moved.
-- An **alias** has no `{version}`, such as `latest`. It points to the highest stable version, as
-  read from the version annotation of the index it points to. Presswerk moves it only to a higher
-  stable version, so publishing an older maintenance release or a pre-release leaves it alone and
-  reports `kept`. An alias that points to an index without a version annotation was pushed by
-  something else and is kept as well.
+- **`tags`** belong to the release, such as `1.2.0` or `v1.2.0-alpine`, and are never moved. Each
+  contains `{version}`, so every release has tags of its own. The default is `[ "{version}" ]`.
+- **`aliases`** are what is often called floating or rolling tags, such as `latest`, `1`, or
+  `1.2`. They follow the highest stable version and must not contain `{version}`. The default is
+  no aliases.
+
+Presswerk moves an alias only to a higher stable version than the one it points to, as read from
+the version annotation of that index. This also keeps `{major}` and `{major}.{minor}` within
+their line: after `2.0.0`, a maintenance release `1.4.1` moves `1` and `1.4`, while `latest`
+stays at `2.0.0`. A pre-release moves no alias, and an alias that points to an index without a
+version annotation was pushed by something else and stays as well. An alias left alone is reported
+as `kept`.
+
+A version with SemVer build metadata such as `1.2.0+build.5` cannot be published yet, since OCI
+tags do not allow `+`.
 
 ## Behavior
 

@@ -258,8 +258,8 @@
       # Rendered with a stand-in version, a tag must be a valid OCI tag.
       ociTag = types.addCheck types.nonEmptyStr
         (
-          template: builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" (builtins.replaceStrings [ "{version}" ] [ "0.0.0" ] template) != null
-        ) // { description = "OCI tag, optionally containing {version}"; };
+          template: builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "0.0.0" "0" "0" "0" ] template) != null
+        ) // { description = "OCI tag, optionally containing {version}, {major}, {minor}, or {patch}"; };
 
       ociModule = {
         options = {
@@ -284,8 +284,15 @@
           tags = mkOption {
             type = types.listOf ociTag;
             default = [ "{version}" ];
-            example = [ "{version}" "latest" ];
-            description = "Tags pushed for the release. `{version}` is replaced by the version; such a tag is never moved once it exists. A tag without `{version}`, such as `latest`, is an alias that moves only to a higher stable version.";
+            example = [ "{version}" "v{version}" ];
+            description = "Tags of the release. Each contains `{version}`, which is replaced by the version, and may also use `{major}`, `{minor}`, and `{patch}`. A tag is never moved once it exists.";
+          };
+
+          aliases = mkOption {
+            type = types.listOf ociTag;
+            default = [ ];
+            example = [ "latest" "{major}" "{major}.{minor}" ];
+            description = "Floating tags, also called rolling tags, that follow the release line, such as `latest`, `{major}`, or `{major}.{minor}`. An alias may use `{major}`, `{minor}`, and `{patch}`, but not `{version}`. It moves only to a higher stable version than the one it points to, so `{major}` stays within its major version.";
           };
 
           public = mkOption {
@@ -441,7 +448,8 @@
               default = {
                 repository = "ghcr.io/owner/project";
                 platforms."linux/amd64" = self.packages.x86_64-linux.image;
-                tags = [ "{version}" "latest" ];
+                tags = [ "{version}" ];
+                aliases = [ "latest" "{major}" ];
                 public = true;
                 username.secret = "GITHUB_ACTOR";
                 password.secret = "GITHUB_TOKEN";
@@ -477,12 +485,16 @@
                 message = "publishers.oci.${name}.platforms must contain at least one image";
               }
               {
-                assertion = lib.any (lib.hasInfix "{version}") oci.tags;
-                message = "publishers.oci.${name}.tags must contain at least one tag with {version}, so every release has a tag of its own";
+                assertion = oci.tags != [ ] && lib.all (lib.hasInfix "{version}") oci.tags;
+                message = "publishers.oci.${name}.tags must contain {version} in every tag, and at least one tag, so every release has a tag of its own; declare tags that follow other versions under aliases";
               }
               {
-                assertion = lib.allUnique oci.tags;
-                message = "publishers.oci.${name}.tags must not contain duplicates";
+                assertion = !lib.any (lib.hasInfix "{version}") oci.aliases;
+                message = "publishers.oci.${name}.aliases must not contain {version}, which names a single version; declare such tags under tags";
+              }
+              {
+                assertion = lib.allUnique (oci.tags ++ oci.aliases);
+                message = "publishers.oci.${name}.tags and aliases must not contain duplicates";
               }
             ])
             config.publishers.oci) ++ [

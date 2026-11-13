@@ -1622,7 +1622,7 @@ where
     }
     // Only version tags count: aliases are best effort and may point to another release.
     for (name, publisher) in &previous_declaration.publishers.oci {
-        let tags = crate::oci::render_tags(&publisher.tags, previous_version)
+        let tags = crate::oci::render_tags(&publisher.tags, &publisher.aliases, previous_version)
             .map_err(|error| PublicationError::new(format!("oci.{name}: {error}")))?;
         for tag in tags {
             let crate::oci::OciTag::Version(tag) = tag else {
