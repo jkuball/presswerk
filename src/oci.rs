@@ -2,9 +2,10 @@
 //!
 //! Images come as Docker image archives, the output of `dockerTools.buildImage` and
 //! `buildLayeredImage` (a tarball, possibly compressed) or `streamLayeredImage` (an executable
-//! that writes the archive). Presswerk compresses their layers with gzip and writes the OCI
-//! manifests itself. Each manifest in the index records the Nix store path of its image, so a retry
-//! recognizes the release's index by its store paths, whatever bytes the compressor produced.
+//! that writes the archive). Presswerk compresses their layers with gzip or zstd, as configured,
+//! and writes the OCI manifests itself. Each manifest in the index records the Nix store path of
+//! its image, so a retry recognizes the release's index by its store paths, whatever bytes the
+//! compressor produced.
 
 use crate::declaration::Compression;
 use crate::publication::{
