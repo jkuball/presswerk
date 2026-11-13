@@ -90,9 +90,9 @@ tags do not allow `+`.
 ## Behavior
 
 Before anything is written, Presswerk compares every image tag, from `tags` and `aliases` alike,
-with this release. An index belongs to the release when it carries the release version and the same
-store path for every platform; the layers themselves are not compared, so a retry recognizes the
-release even if its layers were compressed differently.
+with this release. An image tag matches the release when it points to the same version, built from
+the same store paths. The pushed bytes are not compared, so a retry still matches even if it
+compressed the layers differently.
 
 - **Missing:** the image tag does not exist, or an alias points to a lower version. Presswerk pushes
   it.
@@ -117,12 +117,14 @@ reason:
 When an image tag is missing and no other image tag points to an index of this release yet,
 Presswerk reads each image, uploads every layer and config the registry does not have yet, and puts
 each platform's manifest and the index by digest. It then points the `tags` and finally the aliases
-at the index. Right before it writes an image tag, it inspects that image tag again. A write that
-fails, for example because the response was lost, is inspected once more: it counts as done only if
-the image tag now points to this index, so two runs of the same release at the same time both
-succeed. Registries offer no conditional tag update, so a different image pushed under the same
-image tag in the moment between the last inspection and the write is overwritten; a later run
-reports it as a conflict.
+at the index.
+
+Right before it writes an image tag, it inspects that image tag again. A write that fails, for
+example because the response was lost, is inspected once more: it counts as done only if the image
+tag now points to this index, so two runs of the same release at the same time both succeed.
+Registries offer no conditional tag update, so a different image pushed under the same image tag in
+the moment between the last inspection and the write is overwritten; a later run reports it as a
+conflict.
 
 A release's images are complete once all of its `tags` point to an index whose
 `org.opencontainers.image.version` annotation is the release version. Aliases do not count, since
