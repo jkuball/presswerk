@@ -31,10 +31,10 @@ Declaring publishers for other targets in the flake itself is planned.
 Before anything is written, `presswerk publish` checks the release tag and every publisher. A tag
 that is lightweight or points to another commit is conflicting, and so is any conflicting state a
 publisher reports: `publish` then stops without writing anything. Otherwise it pushes the tag and
-completes the publishers one after another, the OCI publishers first and the GitHub Releases last,
-so a release is never announced while its images are still missing.
+completes the publishers one after another.
 
 `publish` never builds anything, and evaluating an output for another system does not build it
 either. Before anything is written, `publish` fetches every artifact a publisher needs from the
-local store or a substituter, and stops if one is missing. The CI job that builds a system must
-therefore push its outputs to a binary cache that the publishing job can read.
+local Nix store or a substituter, and stops if one is missing. Whatever builds the artifacts only
+has to make them available to `publish`: in a binary cache it can read, or in the same Nix store,
+such as when one machine builds and publishes.
