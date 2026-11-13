@@ -48,7 +48,8 @@ Every field is required, and unknown fields are rejected.
   asset names to absolute store paths of files and may be missing in older declarations.
   `oci` may be missing in older declarations. Each OCI publisher has a `repository` starting with
   the registry host, `platforms`, which maps platforms such as `linux/amd64` to absolute store
-  paths of image archives or executables that stream one, `tags`, a list of tag templates where `{version}`
-  stands for the version, `public`, whether the images may be pulled anonymously, which may be
-  missing in older declarations and then means `false`, and `username.secret` and
-  `password.secret` naming the environment variables that hold the registry credentials.
+  paths of image archives or executables that write an uncompressed one to stdout, `tags`, a list
+  of tag templates where `{version}` stands for the version, `public`, whether the images may be
+  pulled anonymously, which may be missing in older declarations and then means `false`, and
+  `username.secret` and `password.secret` naming the environment variables that hold the registry
+  credentials.

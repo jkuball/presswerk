@@ -278,7 +278,7 @@
                 "linux/arm64" = self.packages.aarch64-linux.image;
               }
             '';
-            description = "The image for each platform, keyed by `os/architecture[/variant]`, which must match the image's config. Each is a Docker image archive, gzip- or zstd-compressed or not, such as the output of `dockerTools.buildImage` or `buildLayeredImage`, or an executable that writes one to stdout, such as the output of `streamLayeredImage`. `publish` fetches them from the local store or a substituter without building. The images of all platforms form one image index.";
+            description = "The image for each platform, keyed by `os/architecture[/variant]`, which must match the image's config. Each is a Docker image archive, gzip- or zstd-compressed or not, such as the output of `dockerTools.buildImage` or `buildLayeredImage`, or an executable that writes an uncompressed one to stdout, such as the output of `streamLayeredImage`. `publish` fetches them from the local store or a substituter without building. The images of all platforms form one image index.";
           };
 
           tags = mkOption {

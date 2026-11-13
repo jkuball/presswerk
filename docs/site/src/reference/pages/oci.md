@@ -35,11 +35,12 @@ publishers
 ## Images
 
 Each image is a Docker image archive, which may be compressed with gzip or zstd, such as the output
-of `dockerTools.buildImage` or `dockerTools.buildLayeredImage`, or an executable that writes such an
-archive to stdout, such as the output of `dockerTools.streamLayeredImage`. The executable bit tells
-the two apart: Presswerk runs an image only if it is executable. Like a release asset, `publish`
-fetches every image from the local store or a substituter before it writes anything, and never
-builds one; an executable runs after it was fetched.
+of `dockerTools.buildImage` or `dockerTools.buildLayeredImage`, or an executable that writes an
+uncompressed archive to stdout, such as the output of `dockerTools.streamLayeredImage`. The
+executable bit tells the two apart: Presswerk runs an image only if it is executable. Like a
+release asset, `publish` fetches every image from the local store or a substituter before it writes
+anything, and never builds one. An executable runs after it was fetched, and its archive is
+unpacked into a temporary directory, because every digest must be known before the first push.
 
 ```nix
 perSystem = { pkgs, self', ... }: {
