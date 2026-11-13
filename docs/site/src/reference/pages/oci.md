@@ -140,15 +140,11 @@ A username that is no secret can be given as `username.value` instead, such as
 `oauth2accesstoken` for Google Artifact Registry. It is written into the declaration like any
 other option. The password always comes from an environment variable.
 
-`publish` always needs the credentials. `plan` and `prepare` only read the previous release's tags,
-and how they read depends on `public`:
-
-- `public = true`: anyone may pull the images, so the tags are read anonymously, with a token for
-  pull access only. The credential variables are never read, even if they are set. If the registry
-  refuses the anonymous read, Presswerk stops and reports that the repository does not seem to be
-  publicly readable.
-- `public = false`, the default: the tags are read with the credentials, so `plan` and `prepare`
-  need them as soon as a previous release declared this publisher.
+`publish` always needs the credentials. By default, `plan` and `prepare` need them too, as soon as a
+previous release declared this publisher, since they read that release's tags. With
+`public = true;`, they read the tags anonymously instead, with pull access only, and never read the
+credential variables. If the registry refuses the anonymous read, Presswerk stops and reports that
+the repository does not seem to be publicly readable.
 
 Common registries take these credentials:
 
