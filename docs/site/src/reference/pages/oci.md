@@ -112,19 +112,11 @@ Presswerk reads each image, uploads every layer and config the registry does not
 each platform's manifest and the index by digest. It then points the `tags` and finally the aliases
 at the index.
 
-Right before Presswerk writes an image tag, it inspects that image tag again. A write that fails,
-for example because the response was lost, is inspected once more: it counts as done only if the
-image tag now points to this index, so two runs of the same release at the same time both succeed.
-Registries offer no conditional tag update, so a different image pushed under the same image tag in
-the moment between the last inspection and the write is overwritten; a later run reports it as a
-conflict.
-
 A release's images are complete once all of its `tags` point to an index whose
-`org.opencontainers.image.version` annotation is the release version. Aliases do not count, since
-they are best effort and may already point to a later release. Before `plan` and `prepare` start the
-next release, they check this for every OCI publisher of the previous release, without fetching
-images or comparing digests; a missing image tag or a different annotation stops them, so a release
-whose `publish` broke off is rerun first.
+`org.opencontainers.image.version` annotation is the release version. Aliases do not count. Before
+`plan` and `prepare` start the next release, they check this for every OCI publisher of the previous
+release, without fetching images or comparing digests; a missing image tag or a different annotation
+stops them, so a release whose `publish` broke off is rerun first.
 
 A rerun of a complete release only inspects the image tags and reports `already pushed`, without
 reading its images. An image tag that was deleted is restored on the next run, pointing at the index
