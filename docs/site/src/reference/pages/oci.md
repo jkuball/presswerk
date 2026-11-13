@@ -89,23 +89,24 @@ tags do not allow `+`.
 
 ## Behavior
 
-Before anything is written, Presswerk compares every tag with this release. An index belongs to
-the release when it carries the release version and the same store path for every platform; the
-layers themselves are not compared, so a retry recognizes the release even if its layers were
-compressed differently.
+Before anything is written, Presswerk compares every image tag, from `tags` and `aliases` alike,
+with this release. An index belongs to the release when it carries the release version and the same
+store path for every platform; the layers themselves are not compared, so a retry recognizes the
+release even if its layers were compressed differently.
 
-- **Missing:** the tag does not exist, or an alias points to a lower version. Presswerk pushes it.
-- **Matching:** the tag already points to an index of this release. It is left as it is.
-- **Conflicting:** a tag, or an alias for the same version, points to an index with other images.
-  Presswerk stops before the Git tag is pushed and never overwrites it.
-- **Unknown:** the registry does not answer whether a tag exists, such as with a server
+- **Missing:** the image tag does not exist, or an alias points to a lower version. Presswerk pushes
+  it.
+- **Matching:** the image tag already points to an index of this release. It is left as it is.
+- **Conflicting:** one of the `tags`, or an alias for the same version, points to an index with
+  other images. Presswerk stops before the Git tag is pushed and never overwrites it.
+- **Unknown:** the registry does not answer whether one of the `tags` exists, such as with a server
   error. Presswerk stops.
 
-Aliases are written last and are best effort, as described under
-[mutable aliases](https://github.com/jkuball/presswerk/blob/main/docs/conception/publication.md#mutable-aliases).
-An alias that cannot be read or moved does not fail the release: once the tags exist, the
-images count as published, `publish` continues with the next publishers, and the alias row reports
-the reason:
+Aliases are written last and are best effort, as described under [mutable
+aliases](https://github.com/jkuball/presswerk/blob/main/docs/conception/publication.md#mutable-aliases).
+An alias that cannot be read or moved does not fail the release: once all `tags` exist, the images
+count as published, `publish` continues with the next publishers, and the alias row reports the
+reason:
 
 ```console
   alias     ghcr.io/owner/project:latest  not moved: could not push ghcr.io/owner/project:latest: HTTP 500; rerun to repair
@@ -113,27 +114,27 @@ the reason:
 
 `publish` then also prints a warning. The next run of the release moves the alias.
 
-When a tag is missing and no other tag points to an index of this release yet, Presswerk reads
-each image, uploads every layer and config the registry does not have yet, and puts each
-platform's manifest and the index by digest. It then points the tags and finally the
-aliases at the index. Right before it writes a tag, it inspects that tag again. A
-write that fails, for example because the response was lost, is inspected once more: it counts as
-done only if the tag now points to this index, so two runs of the same release at the same time
-both succeed. Registries offer no conditional tag update, so a different image pushed under the
-same tag in the moment between the last inspection and the write is overwritten; a later run
+When an image tag is missing and no other image tag points to an index of this release yet,
+Presswerk reads each image, uploads every layer and config the registry does not have yet, and puts
+each platform's manifest and the index by digest. It then points the `tags` and finally the aliases
+at the index. Right before it writes an image tag, it inspects that image tag again. A write that
+fails, for example because the response was lost, is inspected once more: it counts as done only if
+the image tag now points to this index, so two runs of the same release at the same time both
+succeed. Registries offer no conditional tag update, so a different image pushed under the same
+image tag in the moment between the last inspection and the write is overwritten; a later run
 reports it as a conflict.
 
-A release's images are complete once every tag points to an index whose
+A release's images are complete once all of its `tags` point to an index whose
 `org.opencontainers.image.version` annotation is the release version. Aliases do not count, since
 they are best effort and may already point to a later release. Before `plan` and `prepare` start the
 next release, they check this for every OCI publisher of the previous release, without fetching
-images or comparing digests; a missing tag or a different annotation stops them, so a release
+images or comparing digests; a missing image tag or a different annotation stops them, so a release
 whose `publish` broke off is rerun first.
 
-A rerun of a complete release only inspects the tags and reports `already pushed`, without
-reading its images. A tag that was deleted is restored on the next run, pointing at the index
-the other tags still point to, or without uploading layers the registry still has. GitHub
-Container Registry restores a deleted version together with its tags as soon as its index is
+A rerun of a complete release only inspects the image tags and reports `already pushed`, without
+reading its images. An image tag that was deleted is restored on the next run, pointing at the index
+the other image tags still point to, or without uploading layers the registry still has. GitHub
+Container Registry restores a deleted version together with its image tags as soon as its index is
 pushed again.
 
 ## Credentials
