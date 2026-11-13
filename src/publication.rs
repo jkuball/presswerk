@@ -1633,7 +1633,8 @@ where
                 Some(manifest) => match crate::oci::annotated_version(&manifest) {
                     Some(version) if version == *previous_version => continue,
                     Some(version) => format!("the tag points to version {version}"),
-                    None => "the tag points to an image without a version annotation".to_owned(),
+                    None => "the tag does not point to an image index with a version annotation"
+                        .to_owned(),
                 },
             };
             return Err(PublicationError::new(format!(

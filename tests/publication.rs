@@ -744,7 +744,18 @@ fn an_incomplete_oci_predecessor_blocks_the_next_release() {
                 ("0.1.0", br#"{"schemaVersion":2,"manifests":[]}"#.to_vec()),
                 ("v0.1.0", annotated_index("0.1.0")),
             ],
-            "0.1.0 (oci.default) is incomplete: the tag points to an image without a version annotation",
+            "0.1.0 (oci.default) is incomplete: the tag does not point to an image index with a version annotation",
+        ),
+        (
+            // A single image manifest, even with the right annotation, is not the release's index.
+            vec![
+                (
+                    "0.1.0",
+                    br#"{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[],"annotations":{"org.opencontainers.image.version":"0.1.0"}}"#.to_vec(),
+                ),
+                ("v0.1.0", annotated_index("0.1.0")),
+            ],
+            "0.1.0 (oci.default) is incomplete: the tag does not point to an image index with a version annotation",
         ),
     ] {
         let (result, _) = verify_oci_predecessor(&previous, &manifests);

@@ -1213,13 +1213,22 @@ impl Inspection {
     }
 }
 
+/// The version annotated on an OCI image index, as Presswerk pushes it; `None` for any other
+/// manifest, so only an index can complete a release or hold an alias back.
 pub(crate) fn annotated_version(manifest: &[u8]) -> Option<Version> {
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct Annotated {
+        media_type: String,
+        #[allow(dead_code)]
+        manifests: Vec<serde_json::Value>,
         #[serde(default)]
         annotations: BTreeMap<String, String>,
     }
     let annotated: Annotated = serde_json::from_slice(manifest).ok()?;
+    if annotated.media_type != INDEX_MEDIA_TYPE {
+        return None;
+    }
     Version::parse(annotated.annotations.get(VERSION_ANNOTATION)?).ok()
 }
 
