@@ -1,8 +1,8 @@
 //! The OCI publisher: pushes images built with Nix to an OCI registry under the release's tags.
 //!
 //! Images come as Docker image archives, the output of `dockerTools.buildImage` and
-//! `buildLayeredImage` (a tarball, possibly compressed) or `streamLayeredImage` (a script that
-//! writes the archive). Presswerk pushes their layers uncompressed, exactly as the archive holds
+//! `buildLayeredImage` (a tarball, possibly compressed) or `streamLayeredImage` (an executable
+//! that writes the archive). Presswerk pushes their layers uncompressed, exactly as the archive holds
 //! them, so the manifest and index it pushes depend only on the image content: a retry produces
 //! byte-identical manifests with identical digests, without relying on a deterministic
 //! compressor.
@@ -19,6 +19,7 @@ use std::env;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -366,8 +367,10 @@ struct RootFs {
 }
 
 impl LocalImage {
-    /// Read a fetched image: a Docker image archive, gzip- or zstd-compressed or not, or a
-    /// script that streams one, such as the output of `dockerTools.streamLayeredImage`.
+    /// Read a fetched image: an executable that streams a Docker image archive, such as the
+    /// output of `dockerTools.streamLayeredImage`, or the archive itself, gzip- or
+    /// zstd-compressed or not. The Nix store keeps only the executable bit of a file's mode, so
+    /// that bit, not the content, tells the two apart.
     pub fn load(platform: &str, path: impl AsRef<Path>) -> Result<Self, String> {
         let path = path.as_ref();
         let expected = Platform::parse(platform)?;
@@ -377,37 +380,39 @@ impl LocalImage {
                 path.display()
             )
         };
-        if !std::fs::metadata(path)
-            .map_err(|error| failed(&error))?
-            .is_file()
-        {
+        let metadata = std::fs::metadata(path).map_err(|error| failed(&error))?;
+        if !metadata.is_file() {
             return Err(failed(
-                &"not a file; expected an image archive or a script that streams one",
+                &"not a file; expected an image archive or an executable that streams one",
             ));
         }
         let directory = tempfile::tempdir().map_err(|error| failed(&error))?;
-        let mut file = File::open(path).map_err(|error| failed(&error))?;
-        let mut magic = [0; 4];
-        let read = read_prefix(&mut file, &mut magic).map_err(|error| failed(&error))?;
-        let magic = &magic[..read];
-        file.rewind().map_err(|error| failed(&error))?;
 
-        if magic.starts_with(b"#!") {
-            drop(file);
+        if metadata.permissions().mode() & 0o111 != 0 {
             let mut child = Command::new(path)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::inherit())
                 .spawn()
-                .map_err(|error| failed(&format!("could not run the image script: {error}")))?;
+                .map_err(|error| failed(&format!("could not run the image executable: {error}")))?;
             let stdout = child.stdout.take().expect("piped stdout");
             let unpacked = unpack(stdout, directory.path());
             let status = child.wait().map_err(|error| failed(&error))?;
             unpacked.map_err(|error| failed(&error))?;
             if !status.success() {
-                return Err(failed(&format!("the image script exited with {status}")));
+                return Err(failed(&format!(
+                    "the image executable exited with {status}"
+                )));
             }
-        } else if magic.starts_with(&[0x1f, 0x8b]) {
+            return Self::from_directory(&expected, directory).map_err(|error| failed(&error));
+        }
+
+        let mut file = File::open(path).map_err(|error| failed(&error))?;
+        let mut magic = [0; 4];
+        let read = read_prefix(&mut file, &mut magic).map_err(|error| failed(&error))?;
+        let magic = &magic[..read];
+        file.rewind().map_err(|error| failed(&error))?;
+        if magic.starts_with(&[0x1f, 0x8b]) {
             unpack(
                 flate2::read::GzDecoder::new(BufReader::new(file)),
                 directory.path(),
@@ -551,7 +556,7 @@ fn unpack(reader: impl Read, directory: &Path) -> io::Result<()> {
     archive.set_preserve_mtime(false);
     archive.set_unpack_xattrs(false);
     archive.unpack(directory)?;
-    // Read to the end, so a streaming script is not cut off after the end-of-archive marker.
+    // Read to the end, so a streaming executable is not cut off after the end-of-archive marker.
     io::copy(&mut archive.into_inner(), &mut io::sink())?;
     Ok(())
 }
@@ -1013,7 +1018,7 @@ impl OciPublisher {
             &declaration.password.secret,
         )?;
         let images = declaration
-            .images
+            .platforms
             .iter()
             .map(|(platform, path)| LocalImage::load(platform, path))
             .collect::<Result<Vec<_>, _>>()

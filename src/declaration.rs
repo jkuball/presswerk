@@ -423,8 +423,8 @@ pub struct Publishers {
 pub struct OciPublisher {
     /// Registry host and repository path, such as `ghcr.io/owner/project`.
     pub repository: String,
-    /// One image per platform, such as `linux/amd64`, each a path in the Nix store.
-    pub images: BTreeMap<String, String>,
+    /// The image for each platform, such as `linux/amd64`, each a path in the Nix store.
+    pub platforms: BTreeMap<String, String>,
     /// Tag templates; `{version}` is replaced by the release version.
     pub tags: Vec<String>,
     /// Whether anyone may pull the images; the previous-release check then reads anonymously.
@@ -438,10 +438,10 @@ pub struct OciPublisher {
 impl OciPublisher {
     fn validate(&self) -> Result<(), String> {
         crate::oci::RepositoryReference::parse(&self.repository)?;
-        if self.images.is_empty() {
+        if self.platforms.is_empty() {
             return Err("an OCI publisher needs at least one image".into());
         }
-        for (platform, path) in &self.images {
+        for (platform, path) in &self.platforms {
             crate::oci::Platform::parse(platform)?;
             if !path.starts_with('/') {
                 return Err(format!(

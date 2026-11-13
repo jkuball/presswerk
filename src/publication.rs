@@ -1093,7 +1093,7 @@ pub fn publish_to_remote(
         .oci
         .iter()
         .flat_map(|(name, publisher)| {
-            publisher.images.iter().map(move |(platform, path)| {
+            publisher.platforms.iter().map(move |(platform, path)| {
                 (format!("oci.{name} image {platform}"), path.as_str())
             })
         });

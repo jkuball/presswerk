@@ -270,7 +270,7 @@
             description = "Registry host, with an optional port, and repository path the images are pushed to. Credentials never go here, only into `username` and `password`. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
           };
 
-          images = mkOption {
+          platforms = mkOption {
             type = types.attrsOf artifactFile;
             example = lib.literalExpression ''
               {
@@ -278,7 +278,7 @@
                 "linux/arm64" = self.packages.aarch64-linux.image;
               }
             '';
-            description = "One image per platform, keyed by `os/architecture[/variant]`, which must match the image's config. Each is the output of `dockerTools.buildImage`, `buildLayeredImage`, or `streamLayeredImage`, which `publish` fetches from the local store or a substituter without building. All images form one image index.";
+            description = "The image for each platform, keyed by `os/architecture[/variant]`, which must match the image's config. Each is a Docker image archive, gzip- or zstd-compressed or not, such as the output of `dockerTools.buildImage` or `buildLayeredImage`, or an executable that writes one to stdout, such as the output of `streamLayeredImage`. `publish` fetches them from the local store or a substituter without building. The images of all platforms form one image index.";
           };
 
           tags = mkOption {
@@ -440,7 +440,7 @@
             {
               default = {
                 repository = "ghcr.io/owner/project";
-                images."linux/amd64" = self.packages.x86_64-linux.image;
+                platforms."linux/amd64" = self.packages.x86_64-linux.image;
                 tags = [ "{version}" "latest" ];
                 public = true;
                 username.secret = "GITHUB_ACTOR";
@@ -473,8 +473,8 @@
           (lib.mapAttrsToList
             (name: oci: [
               {
-                assertion = oci.images != { };
-                message = "publishers.oci.${name}.images must contain at least one image";
+                assertion = oci.platforms != { };
+                message = "publishers.oci.${name}.platforms must contain at least one image";
               }
               {
                 assertion = lib.any (lib.hasInfix "{version}") oci.tags;

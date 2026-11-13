@@ -169,6 +169,27 @@ fn an_image_must_match_its_declared_platform_and_carry_uncompressed_layers() {
 }
 
 #[test]
+fn only_executables_are_run_whatever_the_file_starts_with() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("ran");
+    let script = format!("#!/bin/sh\ntouch '{}'\n", marker.display());
+
+    let readable = write(directory.path(), "readable", script.as_bytes());
+    std::fs::set_permissions(&readable, std::fs::Permissions::from_mode(0o444)).unwrap();
+    assert!(LocalImage::load("linux/amd64", &readable).is_err());
+    assert!(
+        !marker.exists(),
+        "a file without the executable bit was run"
+    );
+
+    let executable = write(directory.path(), "executable", script.as_bytes());
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o555)).unwrap();
+    assert!(LocalImage::load("linux/amd64", &executable).is_err());
+    assert!(marker.exists(), "an executable was not run");
+}
+
+#[test]
 fn the_image_index_is_reproducible_sorted_and_annotated_with_the_version() {
     let directory = tempfile::tempdir().unwrap();
     let load = |platform: &str, architecture: &str| {

@@ -648,7 +648,7 @@ fn oci_predecessor(tags: &[&str]) -> ReleaseDeclaration {
         "default".into(),
         OciPublisher {
             repository: "ghcr.io/owner/project".into(),
-            images: [("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into())].into(),
+            platforms: [("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into())].into(),
             tags: tags.iter().map(|tag| (*tag).into()).collect(),
             public: true,
             username: Token {

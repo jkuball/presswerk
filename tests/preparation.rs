@@ -598,7 +598,7 @@ fn the_plan_lists_each_publisher_with_its_release_and_assets() {
 fn oci_publisher(tags: &[&str]) -> OciPublisher {
     OciPublisher {
         repository: "ghcr.io/owner/project".into(),
-        images: BTreeMap::from([
+        platforms: BTreeMap::from([
             ("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into()),
             ("linux/arm64".into(), "/nix/store/def-image.tar.gz".into()),
         ]),

@@ -322,7 +322,7 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
         for (name, publisher) in &plan.publishers.oci {
             let _ = writeln!(output, "  oci.{name}  {}", publisher.repository);
             // Store paths are left out: the release commit's images get their own paths.
-            for platform in publisher.images.keys() {
+            for platform in publisher.platforms.keys() {
                 let _ = writeln!(output, "    image    {platform}");
             }
             for tag in crate::oci::render_tags(&publisher.tags, version).unwrap_or_default() {

@@ -302,14 +302,14 @@ in
           imports = [ publisher ];
           publishers.oci.default = {
             repository = "ghcr.io/owner/project";
-            images."linux/amd64" = image;
+            platforms."linux/amd64" = image;
             username.secret = "REGISTRY_USERNAME";
             password.secret = "REGISTRY_TOKEN";
           };
         }).publishers.oci.default;
       expected = {
         repository = "ghcr.io/owner/project";
-        images."linux/amd64" = image.outPath;
+        platforms."linux/amd64" = image.outPath;
         tags = [ "{version}" ];
         public = false;
         username.secret = "REGISTRY_USERNAME";
@@ -325,7 +325,7 @@ in
           imports = [ publisher ];
           publishers.oci.default = {
             repository = "ghcr.io/owner/project";
-            images."linux/amd64" = image;
+            platforms."linux/amd64" = image;
             username.secret = "REGISTRY_USERNAME";
             password.secret = "REGISTRY_TOKEN";
           } // oci;
@@ -346,8 +346,8 @@ in
           { repository = "ghcr.io/owner/project?x=1"; }
           { repository = "ghcr.io/owner/project#fragment"; }
           { repository = "ghcr.io?x=1/owner/project"; }
-          { images = { }; }
-          { images."linux/amd64" = "/nix/store/00000000000000000000000000000000-fake.tar.gz"; }
+          { platforms = { }; }
+          { platforms."linux/amd64" = "/nix/store/00000000000000000000000000000000-fake.tar.gz"; }
           # Every release needs a tag of its own.
           { tags = [ "latest" ]; }
           { tags = [ "{version}" "{version}" ]; }
