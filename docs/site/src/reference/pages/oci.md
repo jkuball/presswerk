@@ -38,23 +38,11 @@ publishers
 
 Each image is a Docker image archive, which may be compressed with gzip or zstd, such as the output
 of `dockerTools.buildImage` or `dockerTools.buildLayeredImage`, or an executable that writes an
-uncompressed archive to stdout, such as the output of `dockerTools.streamLayeredImage`. The
-executable bit tells the two apart: Presswerk runs an image only if it is executable. Like a
+uncompressed archive to stdout, such as the output of `dockerTools.streamLayeredImage`. Like a
 release asset, `publish` fetches every image from the local store or a substituter before it writes
-anything, and never builds one. An executable runs after it was fetched, and its archive is
-unpacked into a temporary directory, because every digest must be known before the first push. So
-`streamLayeredImage` keeps the image out of the Nix store and binary caches, but does not make
-`publish` faster or lighter: it still writes the whole image to disk before pushing it.
-
-```nix
-perSystem = { pkgs, self', ... }: {
-  packages.image = pkgs.dockerTools.streamLayeredImage {
-    name = "project";
-    contents = [ self'.packages.default ];
-    config.Cmd = [ "/bin/project" ];
-  };
-};
-```
+anything, and never builds one. A streamed image keeps the image out of the Nix store and binary
+caches, but does not make `publish` faster: it is written to a temporary directory before it is
+pushed.
 
 The platform key, such as `linux/amd64` or `linux/arm/v7`, must match the operating system,
 architecture, and variant in the image's config, so an image cannot end up under the wrong

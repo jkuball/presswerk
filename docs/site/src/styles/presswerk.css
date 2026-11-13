@@ -132,6 +132,15 @@ nav.sidebar a[aria-current='page']:focus {
   border-radius: 0;
   box-shadow: inset 3px 0 0 var(--pw-accent);
 }
+/* Hovering another page shows the same wash, without the bar, and fades in so the jump is soft. */
+nav.sidebar a:not([aria-current='page']):hover {
+  background-color: var(--pw-accent-wash);
+}
+@media (prefers-reduced-motion: no-preference) {
+  nav.sidebar a {
+    transition: background-color 120ms ease-out;
+  }
+}
 
 /*
  * Asides escalate with one colour: tip is neutral, note carries the accent rule,
@@ -447,3 +456,4 @@ nav.sidebar a,
 .social-icons a:hover {
   color: var(--pw-accent);
 }
+
