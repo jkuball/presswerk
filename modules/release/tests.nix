@@ -361,6 +361,9 @@ in
           # Without a registry host.
           { repository = "owner/project"; }
           { repository = "ghcr.io/Owner/project"; }
+          # One spelling per registry.
+          { repository = "GHCR.IO/owner/project"; }
+          { repository = "ghcr.io:0443/owner/project"; }
           # Credentials, queries, and fragments never enter the declaration.
           { repository = "user:secret@ghcr.io/owner/project"; }
           { repository = "token@ghcr.io/owner/project"; }
@@ -387,7 +390,7 @@ in
           { compression.gzip.enable = false; }
           { compression.zstd = { enable = true; level = 23; }; }
         ];
-      expected = [ true true true true true true true true true false false false false false false false false false false false false false false false false false false false false false false ];
+      expected = [ true true true true true true true true true false false false false false false false false false false false false false false false false false false false false false false false false ];
     };
 
     "test OCI publishers of one repository share no image tag" = {
@@ -414,13 +417,14 @@ in
           # `{major}.{minor}.{patch}` renders the same tag as `{version}`.
           { debug = { tags = [ "{version}-debug" ]; aliases = [ "{major}.{minor}.{patch}" ]; }; }
           # Other spellings of the same repository: accepted, but compared as one.
-          { debug = { repository = "GHCR.IO:443/owner/project"; tags = [ "{version}-debug" ]; }; }
-          { debug = { repository = "GHCR.IO:443/owner/project"; tags = [ "{version}-debug" ]; aliases = [ "latest" ]; }; }
+          { debug = { repository = "ghcr.io:443/owner/project"; tags = [ "{version}-debug" ]; }; }
+          { debug = { repository = "ghcr.io:443/owner/project"; tags = [ "{version}-debug" ]; aliases = [ "latest" ]; }; }
+          { debug = { repository = "localhost:443/owner/project"; tags = [ "{version}-debug" ]; aliases = [ "latest" ]; }; }
           { hub.repository = "docker.io/alpine"; mirror = { repository = "registry-1.docker.io/library/alpine"; tags = [ "{version}-mirror" ]; }; }
           { hub.repository = "docker.io/alpine"; mirror.repository = "registry-1.docker.io/library/alpine"; }
           { hub.repository = "docker.io/alpine"; mirror.repository = "docker.io/owner/alpine"; }
         ];
-      expected = [ true true true false false false true false true false true ];
+      expected = [ true true true false false false true false true true false true ];
     };
 
     "test a release needs no publishers" = {

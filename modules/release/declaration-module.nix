@@ -23,12 +23,12 @@
         map (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "1.2.3" "1" "2" "3" ])
           (oci.tags ++ oci.aliases);
       # The registry and name that identify an OCI repository however it is spelled, as the CLI
-      # compares them: hosts are lowercase without a default port, and Docker Hub's hosts and its
-      # `library/` shorthand are one.
+      # compares them: without a default port, and with Docker Hub's hosts and its `library/`
+      # shorthand as one.
       ociRepositoryIdentity = repository:
         let
           parts = builtins.match "([^/]+)/(.*)" repository;
-          host = lib.toLower (builtins.head parts);
+          host = builtins.head parts;
           name = builtins.elemAt parts 1;
           hostAndPort = builtins.match "(.*):([0-9]+)" host;
           hostname = if hostAndPort == null then host else builtins.head hostAndPort;
@@ -295,9 +295,10 @@
         options = {
           repository = mkOption {
             # A plain host and optional port: no credentials, query, or fragment in the declaration.
-            type = types.strMatching "(([A-Za-z0-9-]+[.])+[A-Za-z0-9-]+(:[0-9]+)?|[A-Za-z0-9.-]+:[0-9]+|localhost|\\[[0-9A-Fa-f:]+](:[0-9]+)?)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
+            # One lowercase spelling per registry, so publishers of one repository are recognized.
+            type = types.strMatching "(([a-z0-9-]+[.])+[a-z0-9-]+(:(0|[1-9][0-9]*))?|[a-z0-9.-]+:(0|[1-9][0-9]*)|localhost|\\[[0-9a-f:]+](:(0|[1-9][0-9]*))?)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
             example = "ghcr.io/owner/project";
-            description = "Registry host, with an optional port, and repository path the images are pushed to. Credentials never go here, only into `username` and `password`. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
+            description = "Registry host, with an optional port, and repository path the images are pushed to, in lowercase. Credentials never go here, only into `username` and `password`. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
           };
 
           platforms = mkOption {

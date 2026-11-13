@@ -48,6 +48,7 @@ pub struct RepositoryReference {
     pub registry: Url,
     /// The repository name within the registry, such as `owner/project`.
     pub name: String,
+    identity: String,
 }
 
 impl RepositoryReference {
@@ -69,6 +70,16 @@ impl RepositoryReference {
         if !valid_host(host) {
             return Err(invalid(
                 "must start with a plain registry host and optional port, without credentials, query, or fragment",
+            ));
+        }
+        // One spelling per registry, so that publishers of one repository are recognized as such.
+        if host.bytes().any(|byte| byte.is_ascii_uppercase())
+            || host
+                .rsplit_once(':')
+                .is_some_and(|(_, port)| port.len() > 1 && port.starts_with('0'))
+        {
+            return Err(invalid(
+                "must spell its registry host in lowercase and its port without leading zeros",
             ));
         }
         if name.is_empty()
@@ -97,6 +108,23 @@ impl RepositoryReference {
         } else {
             "https"
         };
+        let default_port = if scheme == "http" { "80" } else { "443" };
+        let canonical_host = match host.rsplit_once(':') {
+            Some((hostname, port)) if port == default_port => hostname,
+            _ => host,
+        };
+        let identity = if matches!(
+            canonical_host,
+            "docker.io" | "index.docker.io" | "registry-1.docker.io"
+        ) {
+            if name.contains('/') {
+                format!("docker.io/{name}")
+            } else {
+                format!("docker.io/library/{name}")
+            }
+        } else {
+            format!("{canonical_host}/{name}")
+        };
         let (host, name) = if host == "docker.io" {
             let name = if name.contains('/') {
                 name.to_owned()
@@ -112,34 +140,18 @@ impl RepositoryReference {
         if registry.path() != "/" || registry.query().is_some() {
             return Err(invalid("has an invalid registry host"));
         }
-        Ok(Self { registry, name })
+        Ok(Self {
+            registry,
+            name,
+            identity,
+        })
     }
 
-    /// The registry and name that identify the repository, however it was spelled: hosts are
-    /// lowercase without a default port, and Docker Hub's hosts and its `library/` shorthand are
-    /// one.
+    /// The registry and name that identify the repository, however it was spelled: without a
+    /// default port, and with Docker Hub's hosts and its `library/` shorthand as one.
     #[must_use]
-    pub fn identity(&self) -> String {
-        let host = self.registry.host_str().unwrap_or_default();
-        let port = self
-            .registry
-            .port()
-            .map(|port| format!(":{port}"))
-            .unwrap_or_default();
-        if port.is_empty()
-            && matches!(
-                host,
-                "docker.io" | "index.docker.io" | "registry-1.docker.io"
-            )
-        {
-            if self.name.contains('/') {
-                format!("docker.io/{}", self.name)
-            } else {
-                format!("docker.io/library/{}", self.name)
-            }
-        } else {
-            format!("{host}{port}/{}", self.name)
-        }
+    pub fn identity(&self) -> &str {
+        &self.identity
     }
 }
 
@@ -1753,12 +1765,16 @@ mod tests {
 
     #[test]
     fn spellings_of_one_repository_share_an_identity() {
-        let identity = |repository| RepositoryReference::parse(repository).unwrap().identity();
+        let identity = |repository| {
+            RepositoryReference::parse(repository)
+                .unwrap()
+                .identity()
+                .to_owned()
+        };
         for (left, right) in [
             ("docker.io/alpine", "docker.io/library/alpine"),
             ("docker.io/owner/image", "registry-1.docker.io/owner/image"),
             ("docker.io/owner/image", "index.docker.io/owner/image"),
-            ("GHCR.IO/owner/image", "ghcr.io/owner/image"),
             ("ghcr.io:443/owner/image", "ghcr.io/owner/image"),
             ("localhost:80/image", "localhost/image"),
         ] {
@@ -1772,6 +1788,17 @@ mod tests {
             identity("docker.io/alpine"),
             identity("docker.io/owner/alpine")
         );
+        // Loopback registries use HTTP, so 443 is no default port there.
+        assert_ne!(identity("localhost:443/image"), identity("localhost/image"));
+        // One spelling per registry.
+        for spelling in [
+            "GHCR.IO/owner/image",
+            "LOCALHOST:443/image",
+            "ghcr.io:0443/owner/image",
+            "[::1]:080/image",
+        ] {
+            assert!(RepositoryReference::parse(spelling).is_err(), "{spelling}");
+        }
     }
 
     #[test]

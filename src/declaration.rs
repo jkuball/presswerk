@@ -92,7 +92,8 @@ impl ReleaseDeclaration {
                 .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?;
             let repository = crate::oci::RepositoryReference::parse(&publisher.repository)
                 .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?
-                .identity();
+                .identity()
+                .to_owned();
             for tag in tags {
                 let key = (repository.clone(), tag.name().to_owned());
                 if let Some(other) = pushed.insert(key, name) {
