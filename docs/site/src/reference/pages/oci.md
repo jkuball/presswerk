@@ -48,12 +48,10 @@ The platform key, such as `linux/amd64` or `linux/arm/v7`, must match the operat
 architecture, and variant in the image's config, so an image cannot end up under the wrong
 platform. The image's name and tag inside the archive are ignored.
 
-Presswerk pushes every layer uncompressed, exactly as the archive holds it, and writes the OCI
-manifests itself. The images of all platforms form one OCI image index, even if there is only one,
-annotated with the version as `org.opencontainers.image.version`. Because nothing is recompressed,
-the same images always produce byte-identical manifests and the same index digest: a retry
-recognizes its own earlier push. Uncompressed layers take more space and bandwidth than
-compressed ones; registries that deduplicate layers store each one only once.
+Presswerk compresses every layer with gzip and writes the OCI manifests itself. The images of all
+platforms form one OCI image index, even if there is only one. The index is annotated with the
+version as `org.opencontainers.image.version`, and each of its manifests with the store path of its
+image as `dev.presswerk.store-path`.
 
 ## Tags and aliases
 
@@ -78,12 +76,15 @@ tags do not allow `+`.
 
 ## Behavior
 
-Before anything is written, Presswerk compares every tag with the index digest of this release:
+Before anything is written, Presswerk compares every tag with this release. An index belongs to
+the release when it carries the release version and the same store path for every platform; the
+layers themselves are not compared, so a retry recognizes the release even if its layers were
+compressed differently.
 
 - **Missing:** the tag does not exist, or an alias points to a lower version. Presswerk pushes it.
-- **Matching:** the tag already points to exactly this index. It is left as it is.
-- **Conflicting:** a version tag, or an alias for the same version, points to another digest.
-  Presswerk stops before the release tag is pushed and never overwrites it.
+- **Matching:** the tag already points to an index of this release. It is left as it is.
+- **Conflicting:** a version tag, or an alias for the same version, points to an index with other
+  images. Presswerk stops before the release tag is pushed and never overwrites it.
 - **Unknown:** the registry does not answer whether a version tag exists, such as with a server
   error. Presswerk stops.
 
@@ -99,9 +100,11 @@ the reason:
 
 `publish` then also prints a warning. The next run of the release moves the alias.
 
-When a tag is missing, Presswerk uploads every layer and config the registry does not have yet,
-puts each platform's manifest and the index by digest, and then points the version tags and
-finally the aliases at the index. Right before it writes a tag, it inspects that tag again. A
+When a tag is missing and no other tag points to an index of this release yet, Presswerk reads
+the images, uploads every layer and config the registry does not have yet, and puts each
+platform's manifest and the index by digest. It then points the version tags and finally the
+aliases at the index. Images are read before anything is written, so an image that cannot be read
+or is built for another platform stops the release before its tag is pushed. Right before it writes a tag, it inspects that tag again. A
 write that fails, for example because the response was lost, is inspected once more: it counts as
 done only if the tag now points to this index, so two runs of the same release at the same time
 both succeed. Registries offer no conditional tag update, so a different image pushed under the
@@ -115,8 +118,9 @@ next release, they check this for every OCI publisher of the previous release, w
 images or comparing digests; a missing tag or a different annotation stops them, so a release
 whose `publish` broke off is rerun first.
 
-A rerun of a complete release only inspects the tags and reports `already pushed`. A tag that
-was deleted is restored on the next run, without uploading layers the registry still has. GitHub
+A rerun of a complete release only inspects the tags and reports `already pushed`, without
+reading its images. A tag that was deleted is restored on the next run, pointing at the index
+the other tags still point to, or without uploading layers the registry still has. GitHub
 Container Registry restores a deleted version together with its tags as soon as its index is
 pushed again.
 

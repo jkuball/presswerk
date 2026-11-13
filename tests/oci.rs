@@ -87,7 +87,7 @@ fn stream_script(directory: &Path, name: &str, archive: &Path) -> PathBuf {
 }
 
 #[test]
-fn every_dockertools_format_converts_to_the_same_uncompressed_oci_manifest() {
+fn every_dockertools_format_converts_to_the_same_oci_manifest_with_gzipped_layers() {
     let directory = tempfile::tempdir().unwrap();
     let archive = docker_archive("amd64", "hello");
     let plain = write(directory.path(), "image.tar", &archive);
@@ -121,8 +121,16 @@ fn every_dockertools_format_converts_to_the_same_uncompressed_oci_manifest() {
             .iter()
             .all(|layer| layer["mediaType"] == LAYER_MEDIA_TYPE)
     );
-    // Uncompressed layers: the layer digest is the config's diff_id.
+    // The pushed layer is the gzipped archive layer, so it decompresses to the config's diff_id.
+    let pushed = std::fs::read(&images[0].layers[0].path).unwrap();
+    let mut unpacked = Vec::new();
+    flate2::read::GzDecoder::new(pushed.as_slice())
+        .read_to_end(&mut unpacked)
+        .unwrap();
+    let config: Value =
+        serde_json::from_slice(&std::fs::read(&images[0].config.path).unwrap()).unwrap();
     assert_eq!(layers[0]["digest"], images[0].layers[0].digest);
+    assert_eq!(json!(digest(&unpacked)), config["rootfs"]["diff_ids"][0]);
 }
 
 #[test]
@@ -287,13 +295,18 @@ impl MockRegistry {
         format!("{}/team/app", self.address)
     }
 
-    fn publisher(&self, images: Vec<LocalImage>, tags: &[&str], aliases: &[&str]) -> OciPublisher {
+    fn publisher(
+        &self,
+        images: Vec<(String, PathBuf)>,
+        tags: &[&str],
+        aliases: &[&str],
+    ) -> OciPublisher {
         self.publisher_with(images, tags, aliases, "secret-password")
     }
 
     fn publisher_with(
         &self,
-        images: Vec<LocalImage>,
+        images: Vec<(String, PathBuf)>,
         tags: &[&str],
         aliases: &[&str],
         password: &str,
@@ -309,6 +322,7 @@ impl MockRegistry {
             aliases.iter().map(|alias| (*alias).into()).collect(),
             images,
         )
+        .unwrap()
     }
 
     fn anonymous_client(&self) -> RegistryClient {
@@ -612,6 +626,10 @@ impl Images {
         }
     }
 
+    fn platforms(&self) -> Vec<(String, PathBuf)> {
+        self.paths.clone()
+    }
+
     fn load(&self) -> Vec<LocalImage> {
         self.paths
             .iter()
@@ -633,7 +651,7 @@ fn pushes_a_new_release_and_a_rerun_writes_nothing() {
     let registry = MockRegistry::start();
     let images = Images::new("hello");
     let repository = registry.repository();
-    let publisher = registry.publisher(images.load(), &["{version}"], &["latest"]);
+    let publisher = registry.publisher(images.platforms(), &["{version}"], &["latest"]);
     let release = release("1.0.0");
 
     assert_eq!(publisher.state(&release).unwrap(), PublisherState::Missing);
@@ -670,7 +688,7 @@ fn pushes_a_new_release_and_a_rerun_writes_nothing() {
 
     // A retry with freshly loaded images reproduces the same digests and writes nothing.
     let writes = registry.writes().len();
-    let rerun = registry.publisher(images.load(), &["{version}"], &["latest"]);
+    let rerun = registry.publisher(images.platforms(), &["{version}"], &["latest"]);
     assert_eq!(rerun.state(&release).unwrap(), PublisherState::Published);
     assert_eq!(
         rerun.complete_steps(&release).unwrap(),
@@ -707,14 +725,14 @@ fn a_deleted_tag_is_restored_without_uploading_blobs_again() {
     let images = Images::new("hello");
     let release = release("1.0.0");
     registry
-        .publisher(images.load(), &["{version}"], &[])
+        .publisher(images.platforms(), &["{version}"], &[])
         .publish(&release)
         .unwrap();
     let digest = registry.tag("1.0.0").unwrap();
     registry.state.lock().unwrap().tags.remove("1.0.0");
     let writes = registry.writes().len();
 
-    let publisher = registry.publisher(images.load(), &["{version}"], &[]);
+    let publisher = registry.publisher(images.platforms(), &["{version}"], &[]);
     assert_eq!(publisher.state(&release).unwrap(), PublisherState::Missing);
     let steps = publisher.publish(&release).unwrap();
     assert_eq!(steps[0].step, AssetStep::AlreadyUploaded);
@@ -729,14 +747,14 @@ fn a_tag_that_points_elsewhere_conflicts_before_anything_is_written() {
     let release = release("1.0.0");
     let other = Images::new("other");
     registry
-        .publisher(other.load(), &["{version}"], &[])
+        .publisher(other.platforms(), &["{version}"], &[])
         .publish(&release)
         .unwrap();
     let other_digest = registry.tag("1.0.0").unwrap();
     let writes = registry.writes().len();
 
     let images = Images::new("hello");
-    let publisher = registry.publisher(images.load(), &["{version}"], &["latest"]);
+    let publisher = registry.publisher(images.platforms(), &["{version}"], &["latest"]);
     let PublisherState::Conflicting(message) = publisher.state(&release).unwrap() else {
         panic!("expected a conflict");
     };
@@ -755,11 +773,87 @@ fn an_unknown_tag_state_fails_closed() {
     let registry = MockRegistry::start();
     registry.fault(Fault::InspectStatus(500));
     let images = Images::new("hello");
-    let publisher = registry.publisher(images.load(), &["{version}"], &[]);
+    let publisher = registry.publisher(images.platforms(), &["{version}"], &[]);
     let error = publisher.state(&release("1.0.0")).unwrap_err().to_string();
     assert!(error.contains("cannot tell"), "{error}");
     assert!(publisher.publish(&release("1.0.0")).is_err());
     assert!(registry.writes().is_empty());
+}
+
+#[test]
+fn a_published_release_is_recognized_by_its_store_paths_without_reading_its_images() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    let release = release("1.0.0");
+    registry
+        .publisher(images.platforms(), &["{version}"], &["latest"])
+        .publish(&release)
+        .unwrap();
+
+    // The same store paths, now unreadable: a complete release needs none of them.
+    for (_, path) in images.platforms() {
+        std::fs::remove_file(path).unwrap();
+    }
+    let rerun = registry.publisher(images.platforms(), &["{version}"], &["latest"]);
+    assert_eq!(rerun.state(&release).unwrap(), PublisherState::Published);
+
+    // Another compressor would produce other layer and index digests; the index still counts as
+    // this release's as long as it records the same store paths.
+    let index_digest = registry.tag("1.0.0").unwrap();
+    let recompressed = {
+        let mut state = registry.state.lock().unwrap();
+        let (media_type, bytes) = state.manifests[&index_digest].clone();
+        let mut index: Value = serde_json::from_slice(&bytes).unwrap();
+        index["manifests"][0]["digest"] = json!(format!("sha256:{}", "0".repeat(64)));
+        let bytes = serde_json::to_vec(&index).unwrap();
+        let digest = digest(&bytes);
+        state.manifests.insert(digest.clone(), (media_type, bytes));
+        digest
+    };
+    registry.set_tag("1.0.0", &recompressed);
+    registry.set_tag("latest", &recompressed);
+    assert_eq!(rerun.state(&release).unwrap(), PublisherState::Published);
+    let steps = rerun.publish(&release).unwrap();
+    assert!(
+        steps
+            .iter()
+            .all(|step| step.step == AssetStep::AlreadyUploaded),
+        "{steps:?}"
+    );
+    assert_eq!(registry.tag("1.0.0"), Some(recompressed));
+}
+
+#[test]
+fn a_broken_image_stops_the_release_before_anything_is_written() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    // The amd64 archive declared as arm64.
+    let (_, amd) = images.platforms().remove(0);
+    let publisher = registry.publisher(vec![("linux/arm64".into(), amd)], &["{version}"], &[]);
+    let error = publisher.state(&release("1.0.0")).unwrap_err().to_string();
+    assert!(error.contains("declared as linux/arm64"), "{error}");
+    let state = registry.state.lock().unwrap();
+    assert!(state.blobs.is_empty() && state.manifests.is_empty());
+}
+
+#[test]
+fn an_index_of_other_store_paths_for_the_same_version_is_a_conflict() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    let release = release("1.0.0");
+    registry
+        .publisher(images.platforms(), &["{version}"], &[])
+        .publish(&release)
+        .unwrap();
+    let other = Images::new("hello");
+    let state = registry
+        .publisher(other.platforms(), &["{version}"], &[])
+        .state(&release)
+        .unwrap();
+    assert!(
+        matches!(&state, PublisherState::Conflicting(message) if message.contains("not the image index of version 1.0.0")),
+        "{state:?}"
+    );
 }
 
 #[test]
@@ -771,7 +865,7 @@ fn lost_responses_are_inspected_again_and_accepted_only_when_matching() {
     registry.fault(Fault::LoseResponse(Box::leak(layer.into_boxed_str())));
     registry.fault(Fault::LoseResponse("1.0.0"));
     registry
-        .publisher(loaded, &["{version}"], &[])
+        .publisher(images.platforms(), &["{version}"], &[])
         .publish(&release("1.0.0"))
         .unwrap();
     assert!(registry.state.lock().unwrap().faults.is_empty());
@@ -783,7 +877,7 @@ fn a_tag_written_concurrently_to_another_image_is_a_conflict() {
     registry.fault(Fault::HijackTag("1.0.0"));
     let images = Images::new("hello");
     let error = registry
-        .publisher(images.load(), &["{version}"], &[])
+        .publisher(images.platforms(), &["{version}"], &[])
         .publish(&release("1.0.0"))
         .unwrap_err()
         .to_string();
@@ -798,7 +892,7 @@ fn major_and_minor_aliases_follow_their_own_line() {
     let (tags, aliases) = (["{version}"], ["latest", "{major}", "{major}.{minor}"]);
     for version in ["1.4.0", "2.0.0", "1.4.1"] {
         registry
-            .publisher(images.load(), &tags, &aliases)
+            .publisher(images.platforms(), &tags, &aliases)
             .publish(&release(version))
             .unwrap();
     }
@@ -819,13 +913,13 @@ fn aliases_move_only_to_a_higher_stable_version() {
     let alias = |steps: Vec<ArtifactStep>| steps.last().unwrap().step.clone();
 
     registry
-        .publisher(images.load(), &tags, &aliases)
+        .publisher(images.platforms(), &tags, &aliases)
         .publish(&release("1.1.0"))
         .unwrap();
     let latest = registry.tag("latest").unwrap();
 
     // An older maintenance release leaves `latest` alone.
-    let older = registry.publisher(images.load(), &tags, &aliases);
+    let older = registry.publisher(images.platforms(), &tags, &aliases);
     let steps = older.publish(&release("1.0.1")).unwrap();
     assert_eq!(alias(steps), AssetStep::Kept("1.1.0 is higher".into()));
     assert_eq!(registry.tag("latest"), Some(latest.clone()));
@@ -836,14 +930,14 @@ fn aliases_move_only_to_a_higher_stable_version() {
 
     // A pre-release never moves it.
     let steps = registry
-        .publisher(images.load(), &tags, &aliases)
+        .publisher(images.platforms(), &tags, &aliases)
         .publish(&release("1.2.0-rc.1"))
         .unwrap();
     assert_eq!(alias(steps), AssetStep::Kept("pre-release".into()));
     assert_eq!(registry.tag("latest"), Some(latest.clone()));
 
     // A higher stable release moves it.
-    let newer = registry.publisher(images.load(), &tags, &aliases);
+    let newer = registry.publisher(images.platforms(), &tags, &aliases);
     assert_eq!(
         newer.state(&release("1.2.0")).unwrap(),
         PublisherState::Missing
@@ -871,7 +965,7 @@ fn aliases_move_only_to_a_higher_stable_version() {
         state.tags.insert("stable".into(), digest);
     }
     let steps = registry
-        .publisher(images.load(), &["{version}"], &["stable"])
+        .publisher(images.platforms(), &["{version}"], &["stable"])
         .publish(&release("1.3.0"))
         .unwrap();
     let AssetStep::Kept(reason) = alias(steps) else {
@@ -885,7 +979,7 @@ fn a_public_repository_is_read_anonymously_with_pull_access_only() {
     let registry = MockRegistry::start();
     let images = Images::new("hello");
     registry
-        .publisher(images.load(), &["{version}"], &[])
+        .publisher(images.platforms(), &["{version}"], &[])
         .publish(&release("1.0.0"))
         .unwrap();
     let pushed = registry.tag("1.0.0").unwrap();
@@ -928,7 +1022,8 @@ fn a_private_repository_rejects_an_anonymous_read() {
 fn credentials_are_checked_and_never_printed() {
     let registry = MockRegistry::start();
     let images = Images::new("hello");
-    let publisher = registry.publisher_with(images.load(), &["{version}"], &[], "wrong-password");
+    let publisher =
+        registry.publisher_with(images.platforms(), &["{version}"], &[], "wrong-password");
     let error = publisher.state(&release("1.0.0")).unwrap_err().to_string();
     assert!(error.contains("rejected the credentials"), "{error}");
     assert!(!error.contains("wrong-password"));
@@ -967,7 +1062,7 @@ fn a_failed_alias_is_a_warning_that_a_rerun_repairs() {
     let release = release("1.0.0");
     registry.fault(Fault::RejectTag("latest"));
 
-    let publisher = registry.publisher(images.load(), &tags, &aliases);
+    let publisher = registry.publisher(images.platforms(), &tags, &aliases);
     let steps = publisher.publish(&release).unwrap();
     let alias = steps.last().unwrap();
     assert_eq!(alias.name, format!("{repository}:latest"));
@@ -986,7 +1081,7 @@ fn a_failed_alias_is_a_warning_that_a_rerun_repairs() {
         PublisherState::AliasesPending
     );
 
-    let rerun = registry.publisher(images.load(), &tags, &aliases);
+    let rerun = registry.publisher(images.platforms(), &tags, &aliases);
     let steps = rerun.publish(&release).unwrap();
     assert_eq!(steps[2].step, AssetStep::AlreadyUploaded);
     assert_eq!(steps.last().unwrap().step, AssetStep::Uploaded);
@@ -1001,7 +1096,7 @@ fn an_unreadable_alias_is_a_warning_while_the_release_completes() {
     let release = release("1.0.0");
     registry.fault(Fault::UnreadableTag("latest"));
 
-    let publisher = registry.publisher(images.load(), &["{version}"], &["latest"]);
+    let publisher = registry.publisher(images.platforms(), &["{version}"], &["latest"]);
     assert_eq!(publisher.state(&release).unwrap(), PublisherState::Missing);
     let steps = publisher.publish(&release).unwrap();
     assert_eq!(steps[2].step, AssetStep::Uploaded);

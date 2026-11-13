@@ -2,10 +2,9 @@
 //!
 //! Images come as Docker image archives, the output of `dockerTools.buildImage` and
 //! `buildLayeredImage` (a tarball, possibly compressed) or `streamLayeredImage` (an executable
-//! that writes the archive). Presswerk pushes their layers uncompressed, exactly as the archive holds
-//! them, so the manifest and index it pushes depend only on the image content: a retry produces
-//! byte-identical manifests with identical digests, without relying on a deterministic
-//! compressor.
+//! that writes the archive). Presswerk compresses their layers with gzip and writes the OCI
+//! manifests itself. Each manifest in the index records the Nix store path of its image, so a retry
+//! recognizes the release's index by its store paths, whatever bytes the compressor produced.
 
 use crate::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, Publisher,
@@ -22,15 +21,18 @@ use std::io::{self, BufReader, Read, Seek};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use url::Url;
 
 pub const INDEX_MEDIA_TYPE: &str = "application/vnd.oci.image.index.v1+json";
 pub const MANIFEST_MEDIA_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
 pub const CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.image.config.v1+json";
-pub const LAYER_MEDIA_TYPE: &str = "application/vnd.oci.image.layer.v1.tar";
+pub const LAYER_MEDIA_TYPE: &str = "application/vnd.oci.image.layer.v1.tar+gzip";
 /// The index annotation that records the release version, so aliases can be compared.
 pub const VERSION_ANNOTATION: &str = "org.opencontainers.image.version";
+/// The annotation on each manifest in an index that records the Nix store path of its image, so a
+/// later run recognizes the release's index without comparing compressed bytes.
+pub const STORE_PATH_ANNOTATION: &str = "dev.presswerk.store-path";
 
 const VERSION_PLACEHOLDER: &str = "{version}";
 const MANIFEST_ACCEPT: &str = "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json";
@@ -337,6 +339,8 @@ pub struct Descriptor {
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform: Option<Platform>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub annotations: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -357,15 +361,18 @@ struct ImageIndex {
     annotations: BTreeMap<String, String>,
 }
 
-/// An image read from a Docker image archive and converted to an OCI image manifest.
+/// An image read from a Docker image archive and converted to an OCI image manifest with
+/// gzip-compressed layers.
 #[derive(Debug)]
 pub struct LocalImage {
     pub platform: Platform,
+    /// Where the image was read from, recorded in the index.
+    pub store_path: String,
     pub config: Blob,
     pub layers: Vec<Blob>,
     pub manifest: Vec<u8>,
     pub manifest_digest: String,
-    /// Holds the unpacked layers until the image is pushed.
+    /// Holds the unpacked and compressed layers until the image is pushed.
     _directory: tempfile::TempDir,
 }
 
@@ -428,7 +435,8 @@ impl LocalImage {
                     "the image executable exited with {status}"
                 )));
             }
-            return Self::from_directory(&expected, directory).map_err(|error| failed(&error));
+            return Self::from_directory(&expected, path, directory)
+                .map_err(|error| failed(&error));
         }
 
         let mut file = File::open(path).map_err(|error| failed(&error))?;
@@ -450,10 +458,14 @@ impl LocalImage {
             unpack(BufReader::new(file), directory.path()).map_err(|error| failed(&error))?;
         }
 
-        Self::from_directory(&expected, directory).map_err(|error| failed(&error))
+        Self::from_directory(&expected, path, directory).map_err(|error| failed(&error))
     }
 
-    fn from_directory(expected: &Platform, directory: tempfile::TempDir) -> Result<Self, String> {
+    fn from_directory(
+        expected: &Platform,
+        path: &Path,
+        directory: tempfile::TempDir,
+    ) -> Result<Self, String> {
         let root = directory.path();
         let entries: Vec<ArchiveEntry> = serde_json::from_slice(
             &std::fs::read(root.join("manifest.json"))
@@ -510,16 +522,32 @@ impl LocalImage {
         let digests: Vec<_> = layers.iter().map(|layer| &layer.digest).collect();
         if digests.iter().copied().ne(diff_ids.iter()) {
             return Err(
-                "the layers do not match the image config's diff_ids; Presswerk pushes layers uncompressed and needs an archive with uncompressed layers"
+                "the layers do not match the image config's diff_ids; the archive must hold uncompressed layers, as Docker image archives do"
                     .into(),
             );
         }
+        // Registries store and serve layers as pushed, so they are compressed here, once per
+        // distinct layer.
+        let mut compressed = BTreeMap::new();
+        let layers = layers
+            .iter()
+            .map(|layer| {
+                if let Some(blob) = compressed.get(&layer.digest) {
+                    return Ok(Blob::clone(blob));
+                }
+                let blob = compress(layer, &root.join(format!("{}.tar.gz", compressed.len())))
+                    .map_err(|error| format!("could not compress a layer: {error}"))?;
+                compressed.insert(layer.digest.clone(), blob.clone());
+                Ok(blob)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
 
         let descriptor = |media_type: &str, blob: &Blob| Descriptor {
             media_type: media_type.into(),
             digest: blob.digest.clone(),
             size: blob.size,
             platform: None,
+            annotations: BTreeMap::new(),
         };
         let manifest = serde_json::to_vec(&ImageManifest {
             schema_version: 2,
@@ -534,6 +562,7 @@ impl LocalImage {
         let manifest_digest = sha256_digest(&manifest);
         Ok(Self {
             platform,
+            store_path: path.display().to_string(),
             config,
             layers,
             manifest,
@@ -550,6 +579,7 @@ impl LocalImage {
             digest: self.manifest_digest.clone(),
             size: self.manifest.len() as u64,
             platform: Some(self.platform.clone()),
+            annotations: BTreeMap::from([(STORE_PATH_ANNOTATION.into(), self.store_path.clone())]),
         }
     }
 
@@ -561,6 +591,17 @@ impl LocalImage {
             .filter(|blob| seen.insert(&blob.digest))
             .collect()
     }
+}
+
+/// Compress a layer with gzip into a new file.
+fn compress(layer: &Blob, path: &Path) -> io::Result<Blob> {
+    let mut encoder = flate2::write::GzEncoder::new(
+        io::BufWriter::new(File::create(path)?),
+        flate2::Compression::default(),
+    );
+    io::copy(&mut BufReader::new(File::open(&layer.path)?), &mut encoder)?;
+    io::Write::flush(&mut encoder.finish()?)?;
+    Blob::from_file(path.to_owned())
 }
 
 fn read_prefix(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
@@ -1036,7 +1077,16 @@ pub struct OciPublisher {
     repository: String,
     tags: Vec<String>,
     aliases: Vec<String>,
-    images: Vec<LocalImage>,
+    /// The image of each platform, by store path; read only when something must be pushed.
+    platforms: BTreeMap<Platform, PathBuf>,
+    images: OnceLock<Vec<LocalImage>>,
+}
+
+/// An index the registry already holds for this release, which further tags point to.
+#[derive(Debug, Clone)]
+struct RemoteIndex {
+    digest: String,
+    bytes: Vec<u8>,
 }
 
 impl OciPublisher {
@@ -1046,19 +1096,16 @@ impl OciPublisher {
     ) -> Result<Self, PublicationError> {
         let credentials =
             Credentials::from_environment(&declaration.username, &declaration.password.secret)?;
-        let images = declaration
-            .platforms
-            .iter()
-            .map(|(platform, path)| LocalImage::load(platform, path))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(PublicationError::new)?;
-        Ok(Self::new(
+        Self::new(
             RegistryClient::new(&declaration.repository, Some(credentials))?,
             &declaration.repository,
             declaration.tags.clone(),
             declaration.aliases.clone(),
-            images,
-        ))
+            declaration
+                .platforms
+                .iter()
+                .map(|(platform, path)| (platform.clone(), PathBuf::from(path))),
+        )
     }
 
     pub fn new(
@@ -1066,85 +1113,158 @@ impl OciPublisher {
         repository: &str,
         tags: Vec<String>,
         aliases: Vec<String>,
-        images: Vec<LocalImage>,
-    ) -> Self {
-        Self {
+        platforms: impl IntoIterator<Item = (String, PathBuf)>,
+    ) -> Result<Self, PublicationError> {
+        let platforms = platforms
+            .into_iter()
+            .map(|(platform, path)| Ok((Platform::parse(&platform)?, path)))
+            .collect::<Result<_, String>>()
+            .map_err(PublicationError::new)?;
+        Ok(Self {
             registry,
             repository: repository.into(),
             tags,
             aliases,
-            images,
-        }
+            platforms,
+            images: OnceLock::new(),
+        })
     }
 
     fn reference(&self, tag: &str) -> String {
         format!("{}:{tag}", self.repository)
     }
 
+    /// Read every image, once: before anything is written, so a broken image stops the release.
+    fn images(&self) -> Result<&[LocalImage], PublicationError> {
+        if let Some(images) = self.images.get() {
+            return Ok(images);
+        }
+        let images = self
+            .platforms
+            .iter()
+            .map(|(platform, path)| LocalImage::load(&platform.to_string(), path))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(PublicationError::new)?;
+        Ok(self.images.get_or_init(|| images))
+    }
+
+    /// Whether an index is this release's: the same version, and the same store path for every
+    /// platform. Compressed bytes may differ between runs, so digests are not compared.
+    fn is_release_index(&self, manifest: &[u8], version: &Version) -> bool {
+        #[derive(Deserialize)]
+        struct Entry {
+            platform: Option<Platform>,
+            #[serde(default)]
+            annotations: BTreeMap<String, String>,
+        }
+        #[derive(Deserialize)]
+        struct Index {
+            manifests: Vec<Entry>,
+        }
+        if annotated_version(manifest).as_ref() != Some(version) {
+            return false;
+        }
+        let Ok(index) = serde_json::from_slice::<Index>(manifest) else {
+            return false;
+        };
+        let images: Option<BTreeMap<_, _>> = index
+            .manifests
+            .into_iter()
+            .map(|entry| {
+                let path = entry.annotations.get(STORE_PATH_ANNOTATION)?.clone();
+                Some((entry.platform?, PathBuf::from(path)))
+            })
+            .collect();
+        images.as_ref() == Some(&self.platforms)
+    }
+
     fn inspect(&self, release: &Release) -> Result<Inspection, PublicationError> {
         let tags = render_tags(&self.tags, &self.aliases, &release.version)
             .map_err(PublicationError::new)?;
-        let (index, digest) = image_index(&self.images, &release.version);
-        let states = tags
-            .into_iter()
-            .map(|tag| {
-                let state = self.tag_state(&tag, release, &digest)?;
-                Ok((tag, state))
-            })
-            .collect::<Result<_, PublicationError>>()?;
-        Ok(Inspection {
-            index,
-            digest,
+        let mut existing = None;
+        let mut states = Vec::new();
+        for tag in tags {
+            let (state, index) = self.tag_state(&tag, release)?;
+            existing = existing.or(index);
+            states.push((tag, state));
+        }
+        let inspection = Inspection {
+            existing,
             tags: states,
-        })
+        };
+        if inspection.existing.is_none() && inspection.conflict().is_none() {
+            let needs_push = inspection.tags.iter().any(|(_, state)| {
+                matches!(
+                    state,
+                    TagState::Missing | TagState::Behind | TagState::Unknown(_)
+                )
+            });
+            if needs_push {
+                self.images()?;
+            }
+        }
+        Ok(inspection)
     }
 
+    /// The state of a tag, with the index it points to if that is already this release's.
     fn tag_state(
         &self,
         tag: &OciTag,
         release: &Release,
-        digest: &str,
-    ) -> Result<TagState, PublicationError> {
+    ) -> Result<(TagState, Option<RemoteIndex>), PublicationError> {
+        let matching = |digest: String, bytes: Vec<u8>| {
+            (TagState::Matching, Some(RemoteIndex { digest, bytes }))
+        };
         match tag {
-            OciTag::Version(name) => Ok(match self.registry.manifest_digest(name)? {
-                None => TagState::Missing,
-                Some(actual) if actual == digest => TagState::Matching,
-                Some(actual) => TagState::Conflicting(format!(
-                    "{} points to {actual}, expected {digest}",
-                    self.reference(name)
-                )),
+            OciTag::Version(name) => Ok(match self.registry.manifest(name)? {
+                None => (TagState::Missing, None),
+                Some((actual, manifest)) if self.is_release_index(&manifest, &release.version) => {
+                    matching(actual, manifest)
+                }
+                Some((actual, _)) => (
+                    TagState::Conflicting(format!(
+                        "{} points to {actual}, which is not the image index of version {} with these images",
+                        self.reference(name),
+                        release.version
+                    )),
+                    None,
+                ),
             }),
             OciTag::Alias(name) => {
                 let prerelease = !release.version.pre.is_empty();
                 // Aliases are best effort: an alias that cannot be read is reported, not fatal.
                 let current = match self.registry.manifest(name) {
                     Ok(current) => current,
-                    Err(error) => return Ok(TagState::Unknown(error.to_string())),
+                    Err(error) => return Ok((TagState::Unknown(error.to_string()), None)),
                 };
                 let Some((actual, manifest)) = current else {
-                    return Ok(if prerelease {
-                        TagState::Kept("pre-release".into())
-                    } else {
-                        TagState::Missing
-                    });
+                    return Ok((
+                        if prerelease {
+                            TagState::Kept("pre-release".into())
+                        } else {
+                            TagState::Missing
+                        },
+                        None,
+                    ));
                 };
-                if actual == digest {
-                    return Ok(TagState::Matching);
+                if self.is_release_index(&manifest, &release.version) {
+                    return Ok(matching(actual, manifest));
                 }
                 if prerelease {
-                    return Ok(TagState::Kept("pre-release".into()));
+                    return Ok((TagState::Kept("pre-release".into()), None));
                 }
-                Ok(match annotated_version(&manifest) {
+                let state = match annotated_version(&manifest) {
                     None => TagState::Kept(format!("points to {actual} without a version")),
                     Some(current) if current > release.version => {
                         TagState::Kept(format!("{current} is higher"))
                     }
                     Some(current) if current == release.version => TagState::Conflicting(format!(
-                        "{} points to {actual} for version {current}, expected {digest}",
+                        "{} points to {actual}, an index of version {current} with other images",
                         self.reference(name)
                     )),
                     Some(_) => TagState::Behind,
-                })
+                };
+                Ok((state, None))
             }
         }
     }
@@ -1183,20 +1303,16 @@ impl OciPublisher {
         &self,
         tag: &OciTag,
         release: &Release,
-        inspection: &Inspection,
+        index: &RemoteIndex,
     ) -> Result<(), String> {
         match self
-            .tag_state(tag, release, &inspection.digest)
+            .tag_state(tag, release)
             .map_err(|error| error.to_string())?
+            .0
         {
             TagState::Missing | TagState::Behind => self
                 .registry
-                .put_manifest(
-                    tag.name(),
-                    INDEX_MEDIA_TYPE,
-                    &inspection.index,
-                    &inspection.digest,
-                )
+                .put_manifest(tag.name(), INDEX_MEDIA_TYPE, &index.bytes, &index.digest)
                 .map_err(|error| error.to_string()),
             TagState::Unknown(reason) | TagState::Conflicting(reason) => Err(reason),
             TagState::Matching | TagState::Kept(_) => Ok(()),
@@ -1205,12 +1321,12 @@ impl OciPublisher {
 
     fn steps(&self, inspection: &Inspection, images: Vec<AssetStep>) -> ArtifactSteps {
         let mut steps: ArtifactSteps = self
-            .images
-            .iter()
+            .platforms
+            .keys()
             .zip(images)
-            .map(|(image, step)| ArtifactStep {
+            .map(|(platform, step)| ArtifactStep {
                 kind: ArtifactKind::Image,
-                name: image.platform.to_string(),
+                name: platform.to_string(),
                 step,
             })
             .collect();
@@ -1228,12 +1344,38 @@ impl OciPublisher {
         }));
         steps
     }
+
+    /// The release's index: the one a tag already points to, or a new one built from the images,
+    /// which are pushed first.
+    fn release_index(
+        &self,
+        inspection: &Inspection,
+        release: &Release,
+    ) -> Result<(RemoteIndex, Vec<AssetStep>), PublicationError> {
+        if let Some(index) = &inspection.existing {
+            return Ok((
+                index.clone(),
+                vec![AssetStep::AlreadyUploaded; self.platforms.len()],
+            ));
+        }
+        let images = self.images()?;
+        let steps = images
+            .iter()
+            .map(|image| self.push_image(image))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (bytes, digest) = image_index(images, &release.version);
+        if self.registry.manifest_digest(&digest)?.is_none() {
+            self.registry
+                .put_manifest(&digest, INDEX_MEDIA_TYPE, &bytes, &digest)?;
+        }
+        Ok((RemoteIndex { digest, bytes }, steps))
+    }
 }
 
 #[derive(Debug)]
 struct Inspection {
-    index: Vec<u8>,
-    digest: String,
+    /// An index of this release that a tag already points to.
+    existing: Option<RemoteIndex>,
     tags: Vec<(OciTag, TagState)>,
 }
 
@@ -1306,19 +1448,7 @@ impl Publisher for OciPublisher {
         if let Some(conflict) = inspection.conflict() {
             return Err(PublicationError::new(conflict));
         }
-        let images = self
-            .images
-            .iter()
-            .map(|image| self.push_image(image))
-            .collect::<Result<Vec<_>, _>>()?;
-        if self.registry.manifest_digest(&inspection.digest)?.is_none() {
-            self.registry.put_manifest(
-                &inspection.digest,
-                INDEX_MEDIA_TYPE,
-                &inspection.index,
-                &inspection.digest,
-            )?;
-        }
+        let (index, images) = self.release_index(&inspection, release)?;
 
         let mut steps = self.steps(&inspection, images);
         let tag_steps = steps.len() - inspection.tags.len();
@@ -1332,9 +1462,9 @@ impl Publisher for OciPublisher {
             if let OciTag::Alias(_) = tag {
                 // Aliases come last and are best effort: a failure is a warning that a rerun
                 // repairs, and never stops the release.
-                if let Err(reason) = self.move_alias(tag, release, &inspection) {
+                if let Err(reason) = self.move_alias(tag, release, &index) {
                     step.step = AssetStep::Warning(reason);
-                } else if let Ok(state) = self.tag_state(tag, release, &inspection.digest) {
+                } else if let Ok((state, _)) = self.tag_state(tag, release) {
                     step.step = match state {
                         TagState::Matching => AssetStep::Uploaded,
                         TagState::Kept(reason) => AssetStep::Kept(reason),
@@ -1352,13 +1482,13 @@ impl Publisher for OciPublisher {
             // tag that now points elsewhere must not be overwritten. A tag that was missing is
             // reported as pushed even if it reappeared meanwhile, such as when a registry restores
             // a deleted version's tags once its index is pushed again.
-            match self.tag_state(tag, release, &inspection.digest)? {
+            match self.tag_state(tag, release)?.0 {
                 TagState::Missing | TagState::Behind => {
                     self.registry.put_manifest(
                         tag.name(),
                         INDEX_MEDIA_TYPE,
-                        &inspection.index,
-                        &inspection.digest,
+                        &index.bytes,
+                        &index.digest,
                     )?;
                     step.step = AssetStep::Uploaded;
                 }
@@ -1381,7 +1511,7 @@ impl Publisher for OciPublisher {
 
     fn complete_steps(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
         let inspection = self.inspect(release)?;
-        let images = vec![AssetStep::AlreadyUploaded; self.images.len()];
+        let images = vec![AssetStep::AlreadyUploaded; self.platforms.len()];
         Ok(self.steps(&inspection, images))
     }
 }
