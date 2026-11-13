@@ -63,9 +63,10 @@ paths, without reading the images again.
 
 ## Tags and aliases
 
-A release's images are pushed under its `tags`, such as `1.2.0` or `v1.2.0-alpine`. Each tag
-contains `{version}`, so every release has tags of its own, and a tag is never moved once it is
-pushed. By default, a release is tagged with its version alone.
+A release's images are pushed under its `tags`, such as `{version}` for `1.2.0` or
+`v{version}-alpine` for `v1.2.0-alpine`. Every tag must contain `{version}`, so every release has
+tags of its own, and a tag is never moved once it is pushed. By default, a release is tagged with
+its version alone.
 
 `aliases` are what is often called floating or rolling tags, such as `latest`, `1`, or `1.2`. They
 must not contain `{version}` and follow the highest stable version, so they move from release to
