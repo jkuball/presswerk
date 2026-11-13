@@ -45,9 +45,9 @@ is read. A streamed image keeps the image out of the Nix store and binary caches
 
 The platform key, such as `linux/amd64` or `linux/arm/v7`, must match the operating system,
 architecture, and variant in the image's config, so an image cannot end up under the wrong
-platform. Presswerk checks this while it pushes the image, which happens after the release tag is
-pushed. A wrong key stops the release before the image is tagged, but the release tag already
-exists, so the fix needs a new release. The image's name and tag inside the archive are ignored.
+platform. Presswerk checks this only while it pushes the image, after the Git tag is already
+pushed. A wrong key therefore leaves the version tagged in Git but without images, and only a new
+version can fix it. The image's name and tag inside the archive are ignored.
 
 Presswerk compresses every layer and writes the OCI manifests itself. Layers are compressed with
 gzip, which every client can pull. With `compression.zstd.enable = true;` they are compressed with
