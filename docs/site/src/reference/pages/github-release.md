@@ -45,10 +45,6 @@ output is a single file, such as a tarball. A directory is rejected.
 }
 ```
 
-Evaluating an output for another system does not build it. `publish` fetches each asset from the
-local store or a substituter and stops before writing anything if one is missing, so the CI job
-that builds a system must push its outputs to a binary cache that the publishing job can read.
-
 Presswerk attaches the file as it is. A binary that links libraries from `/nix/store` runs only
 where those libraries exist; build a static or bundled binary if the asset must run elsewhere.
 

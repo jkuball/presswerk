@@ -33,3 +33,8 @@ that is lightweight or points to another commit is conflicting, and so is any co
 publisher reports: `publish` then stops without writing anything. Otherwise it pushes the tag and
 completes the publishers one after another, the OCI publishers first and the GitHub Releases last,
 so a release is never announced while its images are still missing.
+
+`publish` never builds anything, and evaluating an output for another system does not build it
+either. Before anything is written, `publish` fetches every artifact a publisher needs from the
+local store or a substituter, and stops if one is missing. The CI job that builds a system must
+therefore push its outputs to a binary cache that the publishing job can read.
