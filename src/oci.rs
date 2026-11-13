@@ -23,7 +23,7 @@ use std::io::{self, BufReader, Read, Seek};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use url::Url;
 
 pub const INDEX_MEDIA_TYPE: &str = "application/vnd.oci.image.index.v1+json";
@@ -376,14 +376,15 @@ struct ImageConfig {
     variant: Option<String>,
 }
 
-/// The largest JSON file, such as `manifest.json` or the image config, read from an archive.
+/// How much of an archive's JSON files, such as `manifest.json` and the image config, is kept in
+/// memory, in all.
 const METADATA_LIMIT: u64 = 16 << 20;
 
 /// A file of an image archive: a layer, handed on compressed, or a JSON file, kept.
 #[derive(Debug, Clone)]
 enum Member {
     Layer { digest: String, size: u64 },
-    Metadata(Vec<u8>),
+    Metadata(Arc<[u8]>),
 }
 
 /// The files of an image archive, by their normalized path in it.
@@ -418,6 +419,7 @@ impl Members {
         put: &mut dyn FnMut(&Blob<'_>) -> Result<(), String>,
     ) -> Result<Self, ReadError> {
         let mut members = Self::default();
+        let mut metadata_left = METADATA_LIMIT;
         let mut archive = tar::Archive::new(reader);
         for entry in archive.entries()? {
             let mut entry = entry?;
@@ -462,15 +464,23 @@ impl Members {
                 continue;
             }
             let member = if name.ends_with(".json") || name == "repositories" {
-                if entry.header().size()? > METADATA_LIMIT {
-                    return Err(ReadError::Archive(io::Error::other(format!(
-                        "{name} is larger than {} MiB",
+                let too_large = || {
+                    ReadError::Archive(io::Error::other(format!(
+                        "the archive's JSON files are larger than {} MiB",
                         METADATA_LIMIT >> 20
-                    ))));
+                    )))
+                };
+                if entry.size() > metadata_left {
+                    return Err(too_large());
                 }
                 let mut bytes = Vec::new();
-                entry.read_to_end(&mut bytes)?;
-                Member::Metadata(bytes)
+                (&mut entry)
+                    .take(metadata_left + 1)
+                    .read_to_end(&mut bytes)?;
+                metadata_left = metadata_left
+                    .checked_sub(bytes.len() as u64)
+                    .ok_or_else(too_large)?;
+                Member::Metadata(bytes.into())
             } else {
                 let path = directory.join("layer");
                 let (digest, size) = compress(&mut entry, compression, &path)?;
@@ -515,7 +525,9 @@ impl Members {
     fn metadata(&self, name: &str) -> Result<&[u8], String> {
         match self.get(name)? {
             Member::Metadata(bytes) => Ok(bytes),
-            Member::Layer { .. } => Err(format!("{name} is not a JSON file")),
+            Member::Layer { .. } => Err(format!(
+                "{name} must be a .json file, as in the archives dockerTools writes"
+            )),
         }
     }
 }
@@ -662,7 +674,9 @@ impl Image {
                 Member::Layer { digest, size } => {
                     Ok(descriptor(compression.layer_media_type(), digest, *size))
                 }
-                Member::Metadata(_) => Err(format!("layer {layer} is a JSON file")),
+                Member::Metadata(_) => Err(format!(
+                    "layer {layer} must not be a .json file, as in the archives dockerTools writes"
+                )),
             })
             .collect::<Result<Vec<_>, String>>()?;
         let config_digest = sha256_digest(config);

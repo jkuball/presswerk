@@ -1425,3 +1425,89 @@ fn an_unreadable_alias_is_a_warning_while_the_release_completes() {
         PublisherState::AliasesPending
     );
 }
+
+#[test]
+fn json_files_are_bounded_in_size_and_in_all() {
+    let directory = tempfile::tempdir().unwrap();
+    // A PAX size overrides the header's own size.
+    let mut builder = tar::Builder::new(Vec::new());
+    let large = vec![b' '; (16 << 20) + 1];
+    builder
+        .append_pax_extensions([("size", large.len().to_string().as_bytes())])
+        .unwrap();
+    let mut header = tar::Header::new_ustar();
+    header.set_size(0);
+    header.set_mode(0o644);
+    header.set_path("manifest.json").unwrap();
+    header.set_cksum();
+    builder.append(&header, large.as_slice()).unwrap();
+    let path = write(directory.path(), "pax.tar", &builder.into_inner().unwrap());
+    let error = convert("linux/amd64", &path, Compression::default())
+        .err()
+        .unwrap();
+    assert!(error.contains("larger than 16 MiB"), "{error}");
+
+    // Hard links share a JSON file instead of copying it, and distinct JSON files count together.
+    let mut builder = tar::Builder::new(Vec::new());
+    let padding = vec![b' '; 9 << 20];
+    append(&mut builder, "first.json", &padding);
+    for index in 0..100 {
+        append_link(
+            &mut builder,
+            tar::EntryType::Link,
+            &format!("link-{index}.json"),
+            "first.json",
+        );
+    }
+    let shared = builder.into_inner().unwrap();
+    let path = write(directory.path(), "shared.tar", &shared);
+    let error = convert("linux/amd64", &path, Compression::default())
+        .err()
+        .unwrap();
+    assert!(error.contains("no readable manifest.json"), "{error}");
+
+    let mut builder = tar::Builder::new(Vec::new());
+    append(&mut builder, "first.json", &padding);
+    append(&mut builder, "second.json", &padding);
+    let path = write(
+        directory.path(),
+        "distinct.tar",
+        &builder.into_inner().unwrap(),
+    );
+    let error = convert("linux/amd64", &path, Compression::default())
+        .err()
+        .unwrap();
+    assert!(error.contains("larger than 16 MiB"), "{error}");
+}
+
+#[test]
+fn configs_and_layers_are_told_apart_by_their_json_names() {
+    let directory = tempfile::tempdir().unwrap();
+    let layer = tar(&[("etc/greeting", b"hello")]);
+    let config = serde_json::to_vec(&json!({ "architecture": "amd64", "os": "linux" })).unwrap();
+    for (config_name, layer_name, expected) in [
+        ("config", "layer.tar", "config must be a .json file"),
+        (
+            "config.json",
+            "layer.json",
+            "layer.json must not be a .json file",
+        ),
+    ] {
+        let manifest =
+            serde_json::to_vec(&json!([{ "Config": config_name, "Layers": [layer_name] }]))
+                .unwrap();
+        let path = write(
+            directory.path(),
+            "image.tar",
+            &tar(&[
+                ("manifest.json", &manifest),
+                (config_name, &config),
+                (layer_name, &layer),
+            ]),
+        );
+        let error = convert("linux/amd64", &path, Compression::default())
+            .err()
+            .unwrap();
+        assert!(error.contains(expected), "{error}");
+    }
+}

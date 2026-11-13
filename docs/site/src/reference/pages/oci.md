@@ -36,9 +36,10 @@ publishers
 
 ## Images
 
-Each image is a Docker image archive, which may be compressed with gzip or zstd, such as the output
-of `dockerTools.buildImage` or `dockerTools.buildLayeredImage`, or an executable that writes an
-uncompressed archive to stdout, such as the output of `dockerTools.streamLayeredImage`. Like a
+Each image is a Docker image archive in the layout `dockerTools` writes, which may be compressed
+with gzip or zstd, such as the output of `dockerTools.buildImage` or `dockerTools.buildLayeredImage`,
+or an executable that writes an uncompressed archive to stdout, such as the output of
+`dockerTools.streamLayeredImage`. Like a
 release asset, `publish` fetches every image from the local store or a substituter before it writes
 anything, and never builds one. An image is read only while it is pushed: each layer is compressed
 and uploaded as it is read, so at most one compressed layer is on disk at a time. A streamed image
