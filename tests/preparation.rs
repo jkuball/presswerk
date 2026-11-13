@@ -4,7 +4,7 @@ use anyhow::bail;
 use git2::Oid;
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::declaration::{
-    Analyzer, BadgeOptions, BadgeVersionFile, Changelog, ConventionalAnalyzer,
+    Analyzer, BadgeOptions, BadgeVersionFile, Changelog, Compression, ConventionalAnalyzer,
     GithubReleasePublisher, GitmojiAnalyzer, OciPublisher, Publishers, ReleaseDeclaration, Tag,
     Token, TomlVersionFile, Username, VersionFile,
 };
@@ -605,6 +605,7 @@ fn oci_publisher(tags: &[&str], aliases: &[&str]) -> OciPublisher {
         tags: tags.iter().map(|tag| (*tag).into()).collect(),
         aliases: aliases.iter().map(|alias| (*alias).into()).collect(),
         public: false,
+        compression: Compression::default(),
         username: Username::Secret("REGISTRY_USERNAME".into()),
         password: Token {
             secret: "REGISTRY_TOKEN".into(),

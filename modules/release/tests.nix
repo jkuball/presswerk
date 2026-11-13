@@ -313,6 +313,7 @@ in
         tags = [ "{version}" ];
         aliases = [ ];
         public = false;
+        compression.gzip.level = 6;
         username.secret = "REGISTRY_USERNAME";
         password.secret = "REGISTRY_TOKEN";
       };
@@ -353,6 +354,8 @@ in
           { aliases = [ "latest" "{major}" "{minor}" "{major}.{minor}" ]; }
           { public = true; }
           { username = { value = "oauth2accesstoken"; }; }
+          { compression.zstd = { enable = true; level = 19; }; }
+          { compression.gzip.level = 9; }
           { repository = "[::1]:5000/project"; }
           { repository = "europe-docker.pkg.dev/project/repo/image"; }
           # Without a registry host.
@@ -379,8 +382,12 @@ in
           { aliases = [ "{major}.{minor}.{patch}" ]; }
           # A username comes from exactly one source.
           { username = { secret = "REGISTRY_USERNAME"; value = "user"; }; }
+          # Exactly one compression, with a level in range.
+          { compression = { gzip.enable = true; zstd.enable = true; }; }
+          { compression.gzip.enable = false; }
+          { compression.zstd = { enable = true; level = 23; }; }
         ];
-      expected = [ true true true true true true true false false false false false false false false false false false false false false false false false false false ];
+      expected = [ true true true true true true true true true false false false false false false false false false false false false false false false false false false false false false false ];
     };
 
     "test a release needs no publishers" = {

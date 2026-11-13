@@ -48,7 +48,10 @@ The platform key, such as `linux/amd64` or `linux/arm/v7`, must match the operat
 architecture, and variant in the image's config, so an image cannot end up under the wrong
 platform. The image's name and tag inside the archive are ignored.
 
-Presswerk compresses every layer with gzip and writes the OCI manifests itself. The images of all
+Presswerk compresses every layer and writes the OCI manifests itself. Layers are compressed with
+gzip, which every client can pull. With `compression.zstd.enable = true;` they are compressed with
+zstd instead, which is smaller and faster to unpack, but needs Docker 23, containerd 1.5, or a
+similarly recent client to pull. Each format has its own `level`. The images of all
 platforms form one OCI image index, even if there is only one. The index is annotated with the
 version as `org.opencontainers.image.version`, and each of its manifests with the store path of its
 image as `dev.presswerk.store-path`.

@@ -261,7 +261,7 @@
           template: builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "0.0.0" "0" "0" "0" ] template) != null
         ) // { description = "OCI tag, optionally containing {version}, {major}, {minor}, or {patch}"; };
 
-      ociModule = {
+      ociModule = { config, ... }: {
         options = {
           repository = mkOption {
             # A plain host and optional port: no credentials, query, or fragment in the declaration.
@@ -299,6 +299,30 @@
             type = types.bool;
             default = false;
             description = "Whether anyone may pull the images without credentials. `plan` and `prepare` then check the previous release's tags anonymously and never read `username` or `password`; otherwise they need the credentials for that check. `publish` always needs the credentials.";
+          };
+
+          compression = {
+            gzip = {
+              enable = mkOption {
+                type = types.bool;
+                default = !config.compression.zstd.enable;
+                defaultText = lib.literalExpression "!compression.zstd.enable";
+                description = "Compress layers with gzip, which every client can pull. This is the default.";
+              };
+              level = mkOption {
+                type = types.ints.between 1 9;
+                default = 6;
+                description = "The gzip level, from 1 (fastest) to 9 (smallest).";
+              };
+            };
+            zstd = {
+              enable = lib.mkEnableOption "zstd compression of layers, which is smaller and faster to unpack, but needs Docker 23, containerd 1.5, or a similarly recent client to pull";
+              level = mkOption {
+                type = types.ints.between 1 22;
+                default = 3;
+                description = "The zstd level, from 1 (fastest) to 22 (smallest).";
+              };
+            };
           };
 
           username = mkOption {
@@ -504,6 +528,10 @@
               {
                 assertion = !lib.any (lib.hasInfix "{version}") oci.aliases;
                 message = "publishers.oci.${name}.aliases must not contain {version}, which names a single version; declare such tags under tags";
+              }
+              {
+                assertion = oci.compression.gzip.enable != oci.compression.zstd.enable;
+                message = "publishers.oci.${name}.compression needs exactly one of gzip and zstd enabled";
               }
               {
                 assertion = (oci.username.secret == null) != (oci.username.value == null);

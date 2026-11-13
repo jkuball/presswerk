@@ -6,6 +6,7 @@
 //! manifests itself. Each manifest in the index records the Nix store path of its image, so a retry
 //! recognizes the release's index by its store paths, whatever bytes the compressor produced.
 
+use crate::declaration::Compression;
 use crate::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, Publisher,
     PublisherState, Release,
@@ -27,7 +28,8 @@ use url::Url;
 pub const INDEX_MEDIA_TYPE: &str = "application/vnd.oci.image.index.v1+json";
 pub const MANIFEST_MEDIA_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
 pub const CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.image.config.v1+json";
-pub const LAYER_MEDIA_TYPE: &str = "application/vnd.oci.image.layer.v1.tar+gzip";
+pub const GZIP_LAYER_MEDIA_TYPE: &str = "application/vnd.oci.image.layer.v1.tar+gzip";
+pub const ZSTD_LAYER_MEDIA_TYPE: &str = "application/vnd.oci.image.layer.v1.tar+zstd";
 /// The index annotation that records the release version, so aliases can be compared.
 pub const VERSION_ANNOTATION: &str = "org.opencontainers.image.version";
 /// The annotation on each manifest in an index that records the Nix store path of its image, so a
@@ -364,7 +366,7 @@ struct ImageIndex {
 }
 
 /// An image read from a Docker image archive and converted to an OCI image manifest with
-/// gzip-compressed layers.
+/// compressed layers.
 #[derive(Debug)]
 pub struct LocalImage {
     pub platform: Platform,
@@ -406,7 +408,11 @@ impl LocalImage {
     /// output of `dockerTools.streamLayeredImage`, or the archive itself, gzip- or
     /// zstd-compressed or not. The Nix store keeps only the executable bit of a file's mode, so
     /// that bit, not the content, tells the two apart.
-    pub fn load(platform: &str, path: impl AsRef<Path>) -> Result<Self, String> {
+    pub fn load(
+        platform: &str,
+        path: impl AsRef<Path>,
+        compression: Compression,
+    ) -> Result<Self, String> {
         let path = path.as_ref();
         let expected = Platform::parse(platform)?;
         let failed = |error: &dyn fmt::Display| {
@@ -439,7 +445,7 @@ impl LocalImage {
                     "the image executable exited with {status}"
                 )));
             }
-            return Self::from_directory(&expected, path, directory)
+            return Self::from_directory(&expected, path, compression, directory)
                 .map_err(|error| failed(&error));
         }
 
@@ -455,19 +461,20 @@ impl LocalImage {
             )
             .map_err(|error| failed(&error))?;
         } else if magic == [0x28, 0xb5, 0x2f, 0xfd] {
-            let decoder = ruzstd::decoding::StreamingDecoder::new(BufReader::new(file))
-                .map_err(|error| failed(&error))?;
+            let decoder = zstd::Decoder::new(file).map_err(|error| failed(&error))?;
             unpack(decoder, directory.path()).map_err(|error| failed(&error))?;
         } else {
             unpack(BufReader::new(file), directory.path()).map_err(|error| failed(&error))?;
         }
 
-        Self::from_directory(&expected, path, directory).map_err(|error| failed(&error))
+        Self::from_directory(&expected, path, compression, directory)
+            .map_err(|error| failed(&error))
     }
 
     fn from_directory(
         expected: &Platform,
         path: &Path,
+        compression: Compression,
         directory: tempfile::TempDir,
     ) -> Result<Self, String> {
         let root = directory.path();
@@ -543,6 +550,7 @@ impl LocalImage {
                 }
                 let blob = compress(
                     layer,
+                    compression,
                     &compressed_directory
                         .path()
                         .join(format!("{}.tar.gz", compressed.len())),
@@ -566,7 +574,7 @@ impl LocalImage {
             config: descriptor(CONFIG_MEDIA_TYPE, &config),
             layers: layers
                 .iter()
-                .map(|layer| descriptor(LAYER_MEDIA_TYPE, layer))
+                .map(|layer| descriptor(compression.layer_media_type(), layer))
                 .collect(),
         })
         .expect("serialize an image manifest");
@@ -605,14 +613,33 @@ impl LocalImage {
     }
 }
 
-/// Compress a layer with gzip into a new file.
-fn compress(layer: &Blob, path: &Path) -> io::Result<Blob> {
-    let mut encoder = flate2::write::GzEncoder::new(
-        io::BufWriter::new(File::create(path)?),
-        flate2::Compression::default(),
-    );
-    io::copy(&mut BufReader::new(File::open(&layer.path)?), &mut encoder)?;
-    io::Write::flush(&mut encoder.finish()?)?;
+impl Compression {
+    fn layer_media_type(self) -> &'static str {
+        match self {
+            Self::Gzip { .. } => GZIP_LAYER_MEDIA_TYPE,
+            Self::Zstd { .. } => ZSTD_LAYER_MEDIA_TYPE,
+        }
+    }
+}
+
+/// Compress a layer into a new file.
+fn compress(layer: &Blob, compression: Compression, path: &Path) -> io::Result<Blob> {
+    let mut source = BufReader::new(File::open(&layer.path)?);
+    let target = io::BufWriter::new(File::create(path)?);
+    let mut target = match compression {
+        Compression::Gzip { level } => {
+            let mut encoder =
+                flate2::write::GzEncoder::new(target, flate2::Compression::new(level));
+            io::copy(&mut source, &mut encoder)?;
+            encoder.finish()?
+        }
+        Compression::Zstd { level } => {
+            let mut encoder = zstd::Encoder::new(target, level)?;
+            io::copy(&mut source, &mut encoder)?;
+            encoder.finish()?
+        }
+    };
+    io::Write::flush(&mut target)?;
     Blob::from_file(path.to_owned())
 }
 
@@ -1091,6 +1118,7 @@ pub struct OciPublisher {
     aliases: Vec<String>,
     /// The image of each platform, by store path; read only when something must be pushed.
     platforms: BTreeMap<Platform, PathBuf>,
+    compression: Compression,
     images: OnceLock<Vec<LocalImage>>,
 }
 
@@ -1117,6 +1145,7 @@ impl OciPublisher {
                 .platforms
                 .iter()
                 .map(|(platform, path)| (platform.clone(), PathBuf::from(path))),
+            declaration.compression,
         )
     }
 
@@ -1126,6 +1155,7 @@ impl OciPublisher {
         tags: Vec<String>,
         aliases: Vec<String>,
         platforms: impl IntoIterator<Item = (String, PathBuf)>,
+        compression: Compression,
     ) -> Result<Self, PublicationError> {
         let platforms = platforms
             .into_iter()
@@ -1138,6 +1168,7 @@ impl OciPublisher {
             tags,
             aliases,
             platforms,
+            compression,
             images: OnceLock::new(),
         })
     }
@@ -1154,7 +1185,7 @@ impl OciPublisher {
         let images = self
             .platforms
             .iter()
-            .map(|(platform, path)| LocalImage::load(&platform.to_string(), path))
+            .map(|(platform, path)| LocalImage::load(&platform.to_string(), path, self.compression))
             .collect::<Result<Vec<_>, _>>()
             .map_err(PublicationError::new)?;
         Ok(self.images.get_or_init(|| images))

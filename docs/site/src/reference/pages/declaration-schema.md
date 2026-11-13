@@ -52,6 +52,8 @@ Every field is required, and unknown fields are rejected.
   `aliases` are lists of templates that may use `{major}`, `{minor}`, and `{patch}`; every tag
   contains `{version}`, no alias does, and `aliases` may be missing in older declarations.
   `public` says whether the images may be pulled anonymously; it may be missing in older
-  declarations and then means `false`. `username` has either `secret`, naming the environment
-  variable that holds the username, or `value`, the username itself. `password.secret` names the
-  environment variable that holds the password or token.
+  declarations and then means `false`. `compression` has either `gzip` or `zstd`, each with its
+  `level`; it may be missing in older declarations and then means gzip at level 6. `username` has
+  either `secret`, naming the environment variable that holds the username, or `value`, the
+  username itself. `password.secret` names the environment variable that holds the password or
+  token.

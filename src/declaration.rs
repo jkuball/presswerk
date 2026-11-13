@@ -435,8 +435,26 @@ pub struct OciPublisher {
     /// Missing in declarations written before the option existed.
     #[serde(default)]
     pub public: bool,
+    /// How layers are compressed for the registry.
+    /// Missing in declarations written before the option existed.
+    #[serde(default)]
+    pub compression: Compression,
     pub username: Username,
     pub password: Token,
+}
+
+/// The compression of pushed image layers, with its level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+pub enum Compression {
+    Gzip { level: u32 },
+    Zstd { level: i32 },
+}
+
+impl Default for Compression {
+    fn default() -> Self {
+        Self::Gzip { level: 6 }
+    }
 }
 
 /// The registry username: the name of an environment variable read at run time, or the username
@@ -463,6 +481,15 @@ impl OciPublisher {
             }
         }
         crate::oci::validate_tag_templates(&self.tags, &self.aliases)?;
+        match self.compression {
+            Compression::Gzip { level } if !(1..=9).contains(&level) => {
+                return Err(format!("gzip level {level} must be between 1 and 9"));
+            }
+            Compression::Zstd { level } if !(1..=22).contains(&level) => {
+                return Err(format!("zstd level {level} must be between 1 and 22"));
+            }
+            _ => {}
+        }
         if let Username::Secret(name) | Username::Value(name) = &self.username
             && name.is_empty()
         {
