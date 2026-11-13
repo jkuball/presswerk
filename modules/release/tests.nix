@@ -350,7 +350,7 @@ in
         [
           { }
           { repository = "localhost:5000/project"; }
-          { aliases = [ "latest" "{major}" "{major}.{minor}" ]; }
+          { aliases = [ "latest" "{major}" "{minor}" "{major}.{minor}" ]; }
           { public = true; }
           { username = { value = "oauth2accesstoken"; }; }
           { repository = "[::1]:5000/project"; }
@@ -376,10 +376,11 @@ in
           { aliases = [ "{version}-slim" ]; }
           { aliases = [ "{unknown}" ]; }
           { aliases = [ "latest" "latest" ]; }
+          { aliases = [ "{major}.{minor}.{patch}" ]; }
           # A username comes from exactly one source.
           { username = { secret = "REGISTRY_USERNAME"; value = "user"; }; }
         ];
-      expected = [ true true true true true true true false false false false false false false false false false false false false false false false false false ];
+      expected = [ true true true true true true true false false false false false false false false false false false false false false false false false false false ];
     };
 
     "test a release needs no publishers" = {

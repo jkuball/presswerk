@@ -837,6 +837,66 @@ fn a_broken_image_stops_the_release_before_anything_is_written() {
 }
 
 #[test]
+fn layers_named_like_compressed_output_are_compressed_intact() {
+    let directory = tempfile::tempdir().unwrap();
+    let layer = tar(&[("etc/greeting", b"hello")]);
+    let config = serde_json::to_vec(&json!({
+        "architecture": "amd64",
+        "os": "linux",
+        "rootfs": { "type": "layers", "diff_ids": [digest(&layer)] },
+    }))
+    .unwrap();
+    let manifest =
+        serde_json::to_vec(&json!([{ "Config": "config.json", "Layers": ["0.tar.gz"] }])).unwrap();
+    let path = write(
+        directory.path(),
+        "image.tar",
+        &tar(&[
+            ("manifest.json", &manifest),
+            ("config.json", &config),
+            ("0.tar.gz", &layer),
+        ]),
+    );
+    let image = LocalImage::load("linux/amd64", &path).unwrap();
+    let mut unpacked = Vec::new();
+    flate2::read::GzDecoder::new(std::fs::read(&image.layers[0].path).unwrap().as_slice())
+        .read_to_end(&mut unpacked)
+        .unwrap();
+    assert_eq!(unpacked, layer);
+}
+
+#[test]
+fn an_index_with_two_manifests_for_one_platform_is_not_the_release() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    let release = release("1.0.0");
+    let publisher = registry.publisher(images.platforms(), &["{version}"], &[]);
+    publisher.publish(&release).unwrap();
+
+    // Another linux/amd64 manifest ahead of the release's own, which a client could pick.
+    let foreign = {
+        let mut state = registry.state.lock().unwrap();
+        let index_digest = state.tags["1.0.0"].clone();
+        let mut index: Value = serde_json::from_slice(&state.manifests[&index_digest].1).unwrap();
+        let mut other = index["manifests"][0].clone();
+        other["digest"] = json!(format!("sha256:{}", "1".repeat(64)));
+        other["annotations"]["dev.presswerk.store-path"] = json!("/nix/store/other-image");
+        index["manifests"].as_array_mut().unwrap().insert(0, other);
+        let bytes = serde_json::to_vec(&index).unwrap();
+        let digest = digest(&bytes);
+        state
+            .manifests
+            .insert(digest.clone(), (INDEX_MEDIA_TYPE.into(), bytes));
+        digest
+    };
+    registry.set_tag("1.0.0", &foreign);
+    assert!(matches!(
+        publisher.state(&release).unwrap(),
+        PublisherState::Conflicting(_)
+    ));
+}
+
+#[test]
 fn an_index_of_other_store_paths_for_the_same_version_is_a_conflict() {
     let registry = MockRegistry::start();
     let images = Images::new("hello");

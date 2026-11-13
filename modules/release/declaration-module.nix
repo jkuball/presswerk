@@ -510,8 +510,9 @@
                 message = "publishers.oci.${name}.username needs exactly one of secret and value";
               }
               {
-                assertion = lib.allUnique (oci.tags ++ oci.aliases);
-                message = "publishers.oci.${name}.tags and aliases must not contain duplicates";
+                # Rendered with a stand-in version whose parts differ, as the CLI checks it.
+                assertion = lib.allUnique (map (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "1.2.3" "1" "2" "3" ]) (oci.tags ++ oci.aliases));
+                message = "publishers.oci.${name}.tags and aliases must not render to the same tag";
               }
             ])
             config.publishers.oci) ++ [

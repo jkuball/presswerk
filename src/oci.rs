@@ -235,7 +235,9 @@ pub fn validate_tag_templates(tags: &[String], aliases: &[String]) -> Result<(),
             "OCI alias {alias:?} must not contain {{version}}, which names a single version; declare it under tags"
         ));
     }
-    render_tags(tags, aliases, &Version::new(0, 0, 0)).map(|_| ())
+    // Distinct parts, so `{major}` and `{minor}` differ while `{major}.{minor}.{patch}` still
+    // collides with `{version}`.
+    render_tags(tags, aliases, &Version::new(1, 2, 3)).map(|_| ())
 }
 
 /// Replace the version placeholders of a template.
@@ -372,8 +374,10 @@ pub struct LocalImage {
     pub layers: Vec<Blob>,
     pub manifest: Vec<u8>,
     pub manifest_digest: String,
-    /// Holds the unpacked and compressed layers until the image is pushed.
+    /// Holds the unpacked layers and the config until the image is pushed.
     _directory: tempfile::TempDir,
+    /// Holds the compressed layers until the image is pushed.
+    _compressed: tempfile::TempDir,
 }
 
 #[derive(Debug, Deserialize)]
@@ -527,7 +531,9 @@ impl LocalImage {
             );
         }
         // Registries store and serve layers as pushed, so they are compressed here, once per
-        // distinct layer.
+        // distinct layer, into a directory of their own that no archive member can name.
+        let compressed_directory =
+            tempfile::tempdir().map_err(|error| format!("could not compress a layer: {error}"))?;
         let mut compressed = BTreeMap::new();
         let layers = layers
             .iter()
@@ -535,8 +541,13 @@ impl LocalImage {
                 if let Some(blob) = compressed.get(&layer.digest) {
                     return Ok(Blob::clone(blob));
                 }
-                let blob = compress(layer, &root.join(format!("{}.tar.gz", compressed.len())))
-                    .map_err(|error| format!("could not compress a layer: {error}"))?;
+                let blob = compress(
+                    layer,
+                    &compressed_directory
+                        .path()
+                        .join(format!("{}.tar.gz", compressed.len())),
+                )
+                .map_err(|error| format!("could not compress a layer: {error}"))?;
                 compressed.insert(layer.digest.clone(), blob.clone());
                 Ok(blob)
             })
@@ -568,6 +579,7 @@ impl LocalImage {
             manifest,
             manifest_digest,
             _directory: directory,
+            _compressed: compressed_directory,
         })
     }
 
@@ -1167,15 +1179,19 @@ impl OciPublisher {
         let Ok(index) = serde_json::from_slice::<Index>(manifest) else {
             return false;
         };
-        let images: Option<BTreeMap<_, _>> = index
-            .manifests
-            .into_iter()
-            .map(|entry| {
-                let path = entry.annotations.get(STORE_PATH_ANNOTATION)?.clone();
-                Some((entry.platform?, PathBuf::from(path)))
-            })
-            .collect();
-        images.as_ref() == Some(&self.platforms)
+        let mut images = BTreeMap::new();
+        for entry in index.manifests {
+            let (Some(platform), Some(path)) =
+                (entry.platform, entry.annotations.get(STORE_PATH_ANNOTATION))
+            else {
+                return false;
+            };
+            // A second manifest for a platform could be the one a client picks.
+            if images.insert(platform, PathBuf::from(path)).is_some() {
+                return false;
+            }
+        }
+        images == self.platforms
     }
 
     fn inspect(&self, release: &Release) -> Result<Inspection, PublicationError> {
@@ -1605,6 +1621,7 @@ mod tests {
         assert!(validate(&["{version}"], &["{version}-slim"]).is_err());
         assert!(validate(&["{version}"], &["{unknown}"]).is_err());
         assert!(validate(&["{version}", "{version}"], &[]).is_err());
+        assert!(validate(&["{version}"], &["{major}", "{minor}"]).is_ok());
         // Renders to the version tag of every stable release.
         assert!(validate(&["{version}"], &["{major}.{minor}.{patch}"]).is_err());
         assert!(validate(&["-{version}"], &[]).is_err());
