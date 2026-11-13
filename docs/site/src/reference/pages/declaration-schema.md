@@ -52,5 +52,6 @@ Every field is required, and unknown fields are rejected.
   `aliases` are lists of templates that may use `{major}`, `{minor}`, and `{patch}`; every tag
   contains `{version}`, no alias does, and `aliases` may be missing in older declarations.
   `public` says whether the images may be pulled anonymously; it may be missing in older
-  declarations and then means `false`. `username.secret` and `password.secret` name the
-  environment variables that hold the registry credentials.
+  declarations and then means `false`. `username` has either `secret`, naming the environment
+  variable that holds the username, or `value`, the username itself. `password.secret` names the
+  environment variable that holds the password or token.

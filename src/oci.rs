@@ -615,7 +615,10 @@ impl fmt::Debug for Credentials {
 }
 
 impl Credentials {
-    pub fn from_environment(username: &str, password: &str) -> Result<Self, PublicationError> {
+    pub fn from_environment(
+        username: &crate::declaration::Username,
+        password: &str,
+    ) -> Result<Self, PublicationError> {
         let read = |name: &str| {
             let value = env::var(name).map_err(|_| {
                 PublicationError::new(format!(
@@ -630,7 +633,10 @@ impl Credentials {
             Ok(value)
         };
         Ok(Self {
-            username: read(username)?,
+            username: match username {
+                crate::declaration::Username::Secret(name) => read(name)?,
+                crate::declaration::Username::Value(username) => username.clone(),
+            },
             password: read(password)?,
         })
     }
@@ -1038,10 +1044,8 @@ impl OciPublisher {
     pub fn from_declaration(
         declaration: &crate::declaration::OciPublisher,
     ) -> Result<Self, PublicationError> {
-        let credentials = Credentials::from_environment(
-            &declaration.username.secret,
-            &declaration.password.secret,
-        )?;
+        let credentials =
+            Credentials::from_environment(&declaration.username, &declaration.password.secret)?;
         let images = declaration
             .platforms
             .iter()

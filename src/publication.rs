@@ -1434,7 +1434,7 @@ fn verify_predecessor_with_trust_mode(
                 None
             } else {
                 Some(crate::oci::Credentials::from_environment(
-                    &publisher.username.secret,
+                    &publisher.username,
                     &publisher.password.secret,
                 )?)
             };

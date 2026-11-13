@@ -1,7 +1,7 @@
 mod support;
 
 use presswerk::analysis::{Analysis, Bump};
-use presswerk::declaration::{OciPublisher, ReleaseDeclaration, Token};
+use presswerk::declaration::{OciPublisher, ReleaseDeclaration, Token, Username};
 use presswerk::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GitTagPublisher, GithubClient,
     GithubPublisher, GithubReleaseReader, GithubReleaseState, LocalAsset, PublicationError,
@@ -652,9 +652,7 @@ fn oci_predecessor(tags: &[&str], aliases: &[&str]) -> ReleaseDeclaration {
             tags: tags.iter().map(|tag| (*tag).into()).collect(),
             aliases: aliases.iter().map(|alias| (*alias).into()).collect(),
             public: true,
-            username: Token {
-                secret: "REGISTRY_USERNAME".into(),
-            },
+            username: Username::Secret("REGISTRY_USERNAME".into()),
             password: Token {
                 secret: "REGISTRY_TOKEN".into(),
             },

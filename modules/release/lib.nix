@@ -87,6 +87,8 @@ in
         };
       changelog.path = releaseConfig.changelog.path;
       publishers.github-release = releaseConfig.publishers.github-release;
-      publishers.oci = releaseConfig.publishers.oci;
+      publishers.oci = lib.mapAttrs
+        (_name: oci: oci // { username = lib.filterAttrs (_source: value: value != null) oci.username; })
+        releaseConfig.publishers.oci;
     };
 }

@@ -435,8 +435,17 @@ pub struct OciPublisher {
     /// Missing in declarations written before the option existed.
     #[serde(default)]
     pub public: bool,
-    pub username: Token,
+    pub username: Username,
     pub password: Token,
+}
+
+/// The registry username: the name of an environment variable read at run time, or the username
+/// itself, which is no secret for registries such as Google Artifact Registry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Username {
+    Secret(String),
+    Value(String),
 }
 
 impl OciPublisher {
@@ -454,9 +463,11 @@ impl OciPublisher {
             }
         }
         crate::oci::validate_tag_templates(&self.tags, &self.aliases)?;
-        self.username
-            .validate()
-            .map_err(|error| error.to_string())?;
+        if let Username::Secret(name) | Username::Value(name) = &self.username
+            && name.is_empty()
+        {
+            return Err("the registry username must not be empty".into());
+        }
         self.password.validate().map_err(|error| error.to_string())
     }
 }

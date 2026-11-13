@@ -302,8 +302,21 @@
           };
 
           username = mkOption {
-            type = types.submodule (secretModule "registry username" "REGISTRY_USERNAME");
-            description = "Registry username, read from an environment variable at run time.";
+            type = types.submodule {
+              options.secret = mkOption {
+                type = types.nullOr types.nonEmptyStr;
+                default = null;
+                example = "REGISTRY_USERNAME";
+                description = "Name of the environment variable that holds the registry username.";
+              };
+              options.value = mkOption {
+                type = types.nullOr types.nonEmptyStr;
+                default = null;
+                example = "oauth2accesstoken";
+                description = "The registry username itself, for registries where it is no secret, such as `oauth2accesstoken` for Google Artifact Registry. It is written into the release declaration.";
+              };
+            };
+            description = "Registry username: either `secret`, read from an environment variable at run time, or `value`.";
           };
 
           password = mkOption {
@@ -491,6 +504,10 @@
               {
                 assertion = !lib.any (lib.hasInfix "{version}") oci.aliases;
                 message = "publishers.oci.${name}.aliases must not contain {version}, which names a single version; declare such tags under tags";
+              }
+              {
+                assertion = (oci.username.secret == null) != (oci.username.value == null);
+                message = "publishers.oci.${name}.username needs exactly one of secret and value";
               }
               {
                 assertion = lib.allUnique (oci.tags ++ oci.aliases);

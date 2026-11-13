@@ -6,7 +6,7 @@ use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::declaration::{
     Analyzer, BadgeOptions, BadgeVersionFile, Changelog, ConventionalAnalyzer,
     GithubReleasePublisher, GitmojiAnalyzer, OciPublisher, Publishers, ReleaseDeclaration, Tag,
-    Token, TomlVersionFile, VersionFile,
+    Token, TomlVersionFile, Username, VersionFile,
 };
 use presswerk::evaluation::EvaluatedReleaseDeclaration;
 use presswerk::preparation::{build_release_plan, is_worktree_dirty, prepare_release, render_plan};
@@ -605,9 +605,7 @@ fn oci_publisher(tags: &[&str], aliases: &[&str]) -> OciPublisher {
         tags: tags.iter().map(|tag| (*tag).into()).collect(),
         aliases: aliases.iter().map(|alias| (*alias).into()).collect(),
         public: false,
-        username: Token {
-            secret: "REGISTRY_USERNAME".into(),
-        },
+        username: Username::Secret("REGISTRY_USERNAME".into()),
         password: Token {
             secret: "REGISTRY_TOKEN".into(),
         },

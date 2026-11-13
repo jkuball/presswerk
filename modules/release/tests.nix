@@ -318,6 +318,22 @@ in
       };
     };
 
+    "test a literal OCI username normalizes without the secret" = {
+      expr =
+        (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.oci.default = {
+            repository = "europe-docker.pkg.dev/project/repo/image";
+            platforms."linux/amd64" = image;
+            username.value = "oauth2accesstoken";
+            password.secret = "GAR_TOKEN";
+          };
+        }).publishers.oci.default.username;
+      expected.value = "oauth2accesstoken";
+    };
+
     "test OCI publishers reject invalid declarations" = {
       expr = map
         (oci: succeeds (mkRelease {
@@ -336,6 +352,7 @@ in
           { repository = "localhost:5000/project"; }
           { aliases = [ "latest" "{major}" "{major}.{minor}" ]; }
           { public = true; }
+          { username = { value = "oauth2accesstoken"; }; }
           { repository = "[::1]:5000/project"; }
           { repository = "europe-docker.pkg.dev/project/repo/image"; }
           # Without a registry host.
@@ -359,8 +376,10 @@ in
           { aliases = [ "{version}-slim" ]; }
           { aliases = [ "{unknown}" ]; }
           { aliases = [ "latest" "latest" ]; }
+          # A username comes from exactly one source.
+          { username = { secret = "REGISTRY_USERNAME"; value = "user"; }; }
         ];
-      expected = [ true true true true true true false false false false false false false false false false false false false false false false false ];
+      expected = [ true true true true true true true false false false false false false false false false false false false false false false false false false ];
     };
 
     "test a release needs no publishers" = {

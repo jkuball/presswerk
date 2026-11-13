@@ -1,3 +1,4 @@
+use presswerk::declaration::Username;
 use presswerk::oci::{
     Credentials, INDEX_MEDIA_TYPE, LAYER_MEDIA_TYPE, LocalImage, OciPublisher, RegistryClient,
     image_index,
@@ -934,13 +935,25 @@ fn credentials_are_checked_and_never_printed() {
     assert!(!format!("{publisher:?}").contains("wrong-password"));
 
     let missing = presswerk::oci::Credentials::from_environment(
-        "PRESSWERK_TEST_UNSET_USERNAME",
+        &Username::Secret("PRESSWERK_TEST_UNSET_USERNAME".into()),
         "PRESSWERK_TEST_UNSET_PASSWORD",
     )
     .unwrap_err()
     .to_string();
     assert!(
         missing.contains("PRESSWERK_TEST_UNSET_USERNAME"),
+        "{missing}"
+    );
+
+    // A literal username needs no variable; only the password is read.
+    let missing = presswerk::oci::Credentials::from_environment(
+        &Username::Value("oauth2accesstoken".into()),
+        "PRESSWERK_TEST_UNSET_PASSWORD",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        missing.contains("PRESSWERK_TEST_UNSET_PASSWORD"),
         "{missing}"
     );
 }
