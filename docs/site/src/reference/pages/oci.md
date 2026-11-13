@@ -40,7 +40,9 @@ uncompressed archive to stdout, such as the output of `dockerTools.streamLayered
 executable bit tells the two apart: Presswerk runs an image only if it is executable. Like a
 release asset, `publish` fetches every image from the local store or a substituter before it writes
 anything, and never builds one. An executable runs after it was fetched, and its archive is
-unpacked into a temporary directory, because every digest must be known before the first push.
+unpacked into a temporary directory, because every digest must be known before the first push. So
+`streamLayeredImage` keeps the image out of the Nix store and binary caches, but does not make
+`publish` faster or lighter: it still writes the whole image to disk before pushing it.
 
 ```nix
 perSystem = { pkgs, self', ... }: {
