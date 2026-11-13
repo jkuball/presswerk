@@ -40,15 +40,14 @@ Each image is a Docker image archive in the layout `dockerTools` writes, which m
 with gzip or zstd, such as the output of `dockerTools.buildImage` or
 `dockerTools.buildLayeredImage`, or an executable that writes an uncompressed archive to stdout,
 such as the output of `dockerTools.streamLayeredImage`. Each layer is compressed and uploaded as it
-is read, one at a time, and only a layer larger than 64 MiB compressed is written to a temporary
-file. A streamed image keeps the image out of the Nix store and binary caches, but does not make
+is read. A streamed image keeps the image out of the Nix store and binary caches, but does not make
 `publish` faster, since every layer is still read and compressed.
 
 The platform key, such as `linux/amd64` or `linux/arm/v7`, must match the operating system,
 architecture, and variant in the image's config, so an image cannot end up under the wrong
-platform. Presswerk checks this while it pushes the image, after the release tag is pushed: a wrong
-key writes no manifest or tag, but stops a release whose tag already exists, so the fix is a new
-release. The image's name and tag inside the archive are ignored.
+platform. Presswerk checks this while it pushes the image, which happens after the release tag is
+pushed. A wrong key stops the release before the image is tagged, but the release tag already
+exists, so the fix needs a new release. The image's name and tag inside the archive are ignored.
 
 Presswerk compresses every layer and writes the OCI manifests itself. Layers are compressed with
 gzip, which every client can pull. With `compression.zstd.enable = true;` they are compressed with
@@ -58,7 +57,9 @@ similarly recent client to pull.
 The images of all platforms form one OCI image index, even if there is only one. An index lists one
 manifest per platform behind a single tag, and a client pulls the manifest for its own platform.
 The index is annotated with the version as `org.opencontainers.image.version`, and each of its
-manifests with the store path of its image as `dev.presswerk.store-path`.
+manifests with the store path of its image as `dev.presswerk.store-path`. The store path stands for
+everything the image was built from, so a later run recognizes the release's index by its store
+paths, without reading the images again.
 
 ## Tags and aliases
 
