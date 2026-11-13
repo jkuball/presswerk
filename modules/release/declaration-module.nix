@@ -22,29 +22,12 @@
       renderOciTags = oci:
         map (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "1.2.3" "1" "2" "3" ])
           (oci.tags ++ oci.aliases);
-      # The registry and name that identify an OCI repository however it is spelled, as the CLI
-      # compares them: without a default port, and with Docker Hub's hosts and its `library/`
-      # shorthand as one.
-      ociRepositoryIdentity = repository:
-        let
-          parts = builtins.match "([^/]+)/(.*)" repository;
-          host = builtins.head parts;
-          name = builtins.elemAt parts 1;
-          hostAndPort = builtins.match "(.*):([0-9]+)" host;
-          hostname = if hostAndPort == null then host else builtins.head hostAndPort;
-          defaultPort = if builtins.elem hostname [ "localhost" "127.0.0.1" "[::1]" ] then "80" else "443";
-          canonicalHost = if hostAndPort != null && builtins.elemAt hostAndPort 1 == defaultPort then hostname else host;
-        in
-        if builtins.elem canonicalHost [ "docker.io" "index.docker.io" "registry-1.docker.io" ] then
-          "docker.io/${if lib.hasInfix "/" name then name else "library/${name}"}"
-        else
-          "${canonicalHost}/${name}";
       # Image tags that two OCI publishers of one repository would both push.
       sharedOciTags = lib.concatLists (lib.mapAttrsToList
         (name: oci: lib.concatLists (lib.mapAttrsToList
           (other: otherOci:
-            map (tag: { inherit name other tag; repository = ociRepositoryIdentity oci.repository; })
-              (lib.optionals (name < other && ociRepositoryIdentity oci.repository == ociRepositoryIdentity otherOci.repository)
+            map (tag: { inherit name other tag; inherit (oci) repository; })
+              (lib.optionals (name < other && oci.repository == otherOci.repository)
                 (lib.intersectLists (renderOciTags oci) (renderOciTags otherOci))))
           config.publishers.oci))
         config.publishers.oci);
@@ -295,10 +278,9 @@
         options = {
           repository = mkOption {
             # A plain host and optional port: no credentials, query, or fragment in the declaration.
-            # One lowercase spelling per registry, so publishers of one repository are recognized.
-            type = types.strMatching "(([a-z0-9-]+[.])+[a-z0-9-]+(:(0|[1-9][0-9]*))?|[a-z0-9.-]+:(0|[1-9][0-9]*)|localhost|\\[[0-9a-f:]+](:(0|[1-9][0-9]*))?)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
+            type = types.strMatching "(([A-Za-z0-9-]+[.])+[A-Za-z0-9-]+(:[0-9]+)?|[A-Za-z0-9.-]+:[0-9]+|localhost|\\[[0-9A-Fa-f:]+](:[0-9]+)?)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
             example = "ghcr.io/owner/project";
-            description = "Registry host, with an optional port, and repository path the images are pushed to, in lowercase. Credentials never go here, only into `username` and `password`. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
+            description = "Registry host, with an optional port, and repository path the images are pushed to. Credentials never go here, only into `username` and `password`. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
           };
 
           platforms = mkOption {

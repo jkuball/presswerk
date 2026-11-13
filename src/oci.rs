@@ -48,7 +48,6 @@ pub struct RepositoryReference {
     pub registry: Url,
     /// The repository name within the registry, such as `owner/project`.
     pub name: String,
-    identity: String,
 }
 
 impl RepositoryReference {
@@ -72,15 +71,6 @@ impl RepositoryReference {
                 "must start with a plain registry host and optional port, without credentials, query, or fragment",
             ));
         }
-        let (hostname, port) = split_port(host);
-        // One spelling per registry, so that publishers of one repository are recognized as such.
-        if host.bytes().any(|byte| byte.is_ascii_uppercase())
-            || port.is_some_and(|port| port.len() > 1 && port.starts_with('0'))
-        {
-            return Err(invalid(
-                "must spell its registry host in lowercase and its port without leading zeros",
-            ));
-        }
         if name.is_empty()
             || !name.split('/').all(|component| {
                 !component.is_empty()
@@ -95,21 +85,22 @@ impl RepositoryReference {
                 "must have a lowercase repository path of letters, digits, and separators",
             ));
         }
+        let hostname = host.rsplit_once(':').map_or(host, |(hostname, port)| {
+            if port.bytes().all(|byte| byte.is_ascii_digit()) {
+                hostname
+            } else {
+                host
+            }
+        });
         let scheme = if matches!(hostname, "localhost" | "127.0.0.1" | "[::1]") {
             "http"
         } else {
             "https"
         };
-        let default_port = if scheme == "http" { "80" } else { "443" };
-        let canonical_host = if port == Some(default_port) {
-            hostname
-        } else {
-            host
-        };
         // Docker Hub answers under several hosts and names official images without `library/`;
         // its registry API is registry-1.docker.io.
-        let (identity, host, name) = if matches!(
-            canonical_host,
+        let (host, name) = if matches!(
+            host,
             "docker.io" | "index.docker.io" | "registry-1.docker.io"
         ) {
             let name = if name.contains('/') {
@@ -117,43 +108,17 @@ impl RepositoryReference {
             } else {
                 format!("library/{name}")
             };
-            (format!("docker.io/{name}"), "registry-1.docker.io", name)
+            ("registry-1.docker.io", name)
         } else {
-            (
-                format!("{canonical_host}/{name}"),
-                canonical_host,
-                name.to_owned(),
-            )
+            (host, name.to_owned())
         };
         let registry = Url::parse(&format!("{scheme}://{host}/"))
             .map_err(|error| invalid(&format!("has an invalid registry host: {error}")))?;
         if registry.path() != "/" || registry.query().is_some() {
             return Err(invalid("has an invalid registry host"));
         }
-        Ok(Self {
-            registry,
-            name,
-            identity,
-        })
+        Ok(Self { registry, name })
     }
-
-    /// The registry and name that identify the repository, however it was spelled: without a
-    /// default port, and with Docker Hub's hosts and its `library/` shorthand as one.
-    #[must_use]
-    pub fn identity(&self) -> &str {
-        &self.identity
-    }
-}
-
-/// A registry host's name and its port, if any; an IPv6 address's colons are not a port.
-fn split_port(host: &str) -> (&str, Option<&str>) {
-    let name_end = if host.starts_with('[') {
-        host.find(']').map_or(host.len(), |index| index + 1)
-    } else {
-        host.find(':').unwrap_or(host.len())
-    };
-    let (name, port) = host.split_at(name_end);
-    (name, port.strip_prefix(':'))
 }
 
 /// A registry host: a DNS name, IPv4 address, or bracketed IPv6 address, with an optional port.
@@ -1765,42 +1730,11 @@ mod tests {
     }
 
     #[test]
-    fn spellings_of_one_repository_share_an_identity() {
-        let identity = |repository| {
-            RepositoryReference::parse(repository)
-                .unwrap()
-                .identity()
-                .to_owned()
-        };
-        for (left, right) in [
-            ("docker.io/alpine", "docker.io/library/alpine"),
-            ("docker.io/owner/image", "registry-1.docker.io/owner/image"),
-            ("docker.io/owner/image", "index.docker.io/owner/image"),
-            ("ghcr.io:443/owner/image", "ghcr.io/owner/image"),
-            ("localhost:80/image", "localhost/image"),
-        ] {
-            assert_eq!(identity(left), identity(right), "{left} and {right}");
-        }
-        assert_ne!(
-            identity("ghcr.io:5000/owner/image"),
-            identity("ghcr.io/owner/image")
-        );
-        assert_ne!(
-            identity("docker.io/alpine"),
-            identity("docker.io/owner/alpine")
-        );
-        // Loopback registries use HTTP, so 443 is no default port there.
-        assert_ne!(identity("localhost:443/image"), identity("localhost/image"));
-        // One spelling per registry.
-        // An IPv6 address's last group is no port.
-        for address in ["[2001:db8::01]/owner/image", "[::0]/image"] {
-            assert!(RepositoryReference::parse(address).is_ok(), "{address}");
-        }
-        // Every spelling of Docker Hub pushes to the same registry and name.
+    fn every_docker_hub_spelling_pushes_to_its_registry() {
         for spelling in [
             "docker.io/alpine",
-            "docker.io:443/alpine",
             "index.docker.io/alpine",
+            "registry-1.docker.io/alpine",
             "registry-1.docker.io/library/alpine",
         ] {
             let parsed = RepositoryReference::parse(spelling).unwrap();
@@ -1809,14 +1743,6 @@ mod tests {
                 ("https://registry-1.docker.io/", "library/alpine"),
                 "{spelling}"
             );
-        }
-        for spelling in [
-            "GHCR.IO/owner/image",
-            "LOCALHOST:443/image",
-            "ghcr.io:0443/owner/image",
-            "[::1]:080/image",
-        ] {
-            assert!(RepositoryReference::parse(spelling).is_err(), "{spelling}");
         }
     }
 

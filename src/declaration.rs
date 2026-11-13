@@ -90,15 +90,12 @@ impl ReleaseDeclaration {
         for (name, publisher) in &self.publishers.oci {
             let tags = crate::oci::render_tags(&publisher.tags, &publisher.aliases, &stand_in)
                 .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?;
-            let repository = crate::oci::RepositoryReference::parse(&publisher.repository)
-                .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?
-                .identity()
-                .to_owned();
             for tag in tags {
-                let key = (repository.clone(), tag.name().to_owned());
+                let key = (publisher.repository.as_str(), tag.name().to_owned());
                 if let Some(other) = pushed.insert(key, name) {
                     return Err(DeclarationError::Invalid(format!(
-                        "oci.{other} and oci.{name} both push to {repository} and must not share a tag or alias; both render {} for version {stand_in}",
+                        "oci.{other} and oci.{name} both push to {} and must not share a tag or alias; both render {} for version {stand_in}",
+                        publisher.repository,
                         tag.name()
                     )));
                 }
