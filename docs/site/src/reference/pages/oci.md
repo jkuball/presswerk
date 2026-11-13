@@ -119,9 +119,9 @@ Presswerk reads each image, uploads every layer and config the registry does not
 each platform's manifest and the index by digest. It then points the `tags` and finally the aliases
 at the index.
 
-Right before it writes an image tag, it inspects that image tag again. A write that fails, for
-example because the response was lost, is inspected once more: it counts as done only if the image
-tag now points to this index, so two runs of the same release at the same time both succeed.
+Right before Presswerk writes an image tag, it inspects that image tag again. A write that fails,
+for example because the response was lost, is inspected once more: it counts as done only if the
+image tag now points to this index, so two runs of the same release at the same time both succeed.
 Registries offer no conditional tag update, so a different image pushed under the same image tag in
 the moment between the last inspection and the write is overwritten; a later run reports it as a
 conflict.
