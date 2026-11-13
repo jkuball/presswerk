@@ -431,8 +431,10 @@ impl Members {
                 });
                 match target {
                     // A hard link is the file its target is now, not what that name holds later.
+                    // A hard link to a symbolic link stays unresolved: its target would be read
+                    // relative to the hard link, which no image needs.
                     Some(target) if kind.is_hard_link() => {
-                        if let Some(member) = members.resolve(&target) {
+                        if let Some(member) = members.files.get(&target) {
                             let member = member.clone();
                             members.files.insert(name, member);
                         }

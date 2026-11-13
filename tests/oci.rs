@@ -1029,6 +1029,24 @@ fn a_later_entry_replaces_an_earlier_one_as_tar_extraction_does() {
         .unwrap();
     assert_eq!(unpacked, first);
 
+    // A hard link to a symbolic link is not followed, as it would follow later entries.
+    let manifest_in_dir =
+        serde_json::to_vec(&json!([{ "Config": "config.json", "Layers": ["dir/b.tar"] }])).unwrap();
+    let mut builder = tar::Builder::new(Vec::new());
+    append(&mut builder, "dir/x.tar", &first);
+    append_link(&mut builder, tar::EntryType::Symlink, "dir/s.tar", "x.tar");
+    append_link(&mut builder, tar::EntryType::Link, "dir/b.tar", "dir/s.tar");
+    append(&mut builder, "dir/x.tar", &second);
+    append(&mut builder, "config.json", &config(&first));
+    append(&mut builder, "manifest.json", &manifest_in_dir);
+    let path = write(
+        directory.path(),
+        "hardlinked-symlink.tar",
+        &builder.into_inner().unwrap(),
+    );
+    let error = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap_err();
+    assert!(error.contains("no file"), "{error}");
+
     // A link that leaves the archive still replaces the file before it.
     let mut builder = tar::Builder::new(Vec::new());
     append(&mut builder, "b.tar", &first);
