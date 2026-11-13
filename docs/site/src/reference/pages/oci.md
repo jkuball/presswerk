@@ -19,6 +19,10 @@ image for each platform:
 }
 ```
 
+`repository` starts with the registry host and an optional port, and must not contain credentials
+such as `user:token@`, a query, or a fragment. Loopback registries such as `localhost:5000/project`
+are reached over plain HTTP, every other registry over HTTPS.
+
 Container images are the only content the OCI publisher supports so far; publishing Helm charts,
 which registries store as OCI artifacts as well, is planned.
 
@@ -146,14 +150,12 @@ and how they read depends on `public`:
 - `public = false`, the default: the tags are read with the credentials, so `plan` and `prepare`
   need them as soon as a previous release declared this publisher.
 
+Common registries take these credentials:
+
 - **GitHub Container Registry:** `GITHUB_ACTOR` and `GITHUB_TOKEN` in GitHub Actions. The workflow
   needs the `packages: write` permission.
 - **Google Artifact Registry:** `username.value = "oauth2accesstoken";` and an access token, such
   as from `gcloud auth print-access-token`.
-
-The repository must start with the registry host and an optional port, and must not contain
-credentials such as `user:token@`, a query, or a fragment. Loopback registries such as
-`localhost:5000/project` are reached over plain HTTP, every other registry over HTTPS.
 
 ## Options
 
