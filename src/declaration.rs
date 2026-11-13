@@ -83,6 +83,24 @@ impl ReleaseDeclaration {
                 .validate()
                 .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?;
         }
+        // Publishers of one repository that share an image tag would each find the other's index
+        // under it and conflict.
+        let stand_in = Version::new(1, 2, 3);
+        let mut pushed = BTreeMap::new();
+        for (name, publisher) in &self.publishers.oci {
+            let tags = crate::oci::render_tags(&publisher.tags, &publisher.aliases, &stand_in)
+                .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?;
+            for tag in tags {
+                let key = (publisher.repository.as_str(), tag.name().to_owned());
+                if let Some(other) = pushed.insert(key, name) {
+                    return Err(DeclarationError::Invalid(format!(
+                        "oci.{other} and oci.{name} both push to {} and must not share a tag or alias; both render {} for version {stand_in}",
+                        publisher.repository,
+                        tag.name()
+                    )));
+                }
+            }
+        }
 
         Ok(())
     }
@@ -1068,5 +1086,57 @@ mod tests {
             ReleaseDeclaration::from_json(&invalid).unwrap_err(),
             DeclarationError::IncompatibleUnstableSchema(_)
         ));
+    }
+
+    #[test]
+    fn oci_publishers_of_one_repository_share_no_image_tag() {
+        let oci = |repository: &str, tags: Value, aliases: Value| {
+            json!({
+                "repository": repository,
+                "platforms": { "linux/amd64": "/nix/store/00000000000000000000000000000000-image.tar.gz" },
+                "tags": tags,
+                "aliases": aliases,
+                "username": { "secret": "REGISTRY_USERNAME" },
+                "password": { "secret": "REGISTRY_TOKEN" }
+            })
+        };
+        let with = |debug: Value| {
+            let default = oci(
+                "ghcr.io/owner/project",
+                json!(["{version}"]),
+                json!(["latest"]),
+            );
+            declaration(|value| {
+                value["publishers"]["oci"] = json!({ "default": default, "debug": debug });
+            })
+        };
+        assert!(
+            ReleaseDeclaration::from_json(&with(oci(
+                "ghcr.io/owner/project",
+                json!(["{version}-debug"]),
+                json!(["debug"])
+            )))
+            .is_ok()
+        );
+        assert!(
+            ReleaseDeclaration::from_json(&with(oci(
+                "ghcr.io/owner/other",
+                json!(["{version}"]),
+                json!(["latest"])
+            )))
+            .is_ok()
+        );
+        let error = ReleaseDeclaration::from_json(&with(oci(
+            "ghcr.io/owner/project",
+            json!(["{version}-debug"]),
+            json!(["latest"]),
+        )))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("oci.debug and oci.default both push to ghcr.io/owner/project")
+                && error.contains("both render latest"),
+            "{error}"
+        );
     }
 }

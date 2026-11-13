@@ -18,6 +18,19 @@
         (builtins.attrNames (lib.filterAttrs (_type: entry: entry != null) config.analyzer.conventional.catalog));
       catalogEmojis = map (entry: normalizedEmoji entry.emoji) catalogEntries;
       catalogShortcodes = map (entry: entry.shortcode) catalogEntries;
+      # OCI tag templates rendered with a stand-in version whose parts differ, as the CLI checks them.
+      renderOciTags = oci:
+        map (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "1.2.3" "1" "2" "3" ])
+          (oci.tags ++ oci.aliases);
+      # Image tags that two OCI publishers of one repository would both push.
+      sharedOciTags = lib.concatLists (lib.mapAttrsToList
+        (name: oci: lib.concatLists (lib.mapAttrsToList
+          (other: otherOci:
+            map (tag: { inherit name other tag; inherit (oci) repository; })
+              (lib.optionals (name < other && oci.repository == otherOci.repository)
+                (lib.intersectLists (renderOciTags oci) (renderOciTags otherOci))))
+          config.publishers.oci))
+        config.publishers.oci);
 
       relativePath = types.addCheck types.str (
         path:
@@ -538,12 +551,17 @@
                 message = "publishers.oci.${name}.username needs exactly one of secret and value";
               }
               {
-                # Rendered with a stand-in version whose parts differ, as the CLI checks it.
-                assertion = lib.allUnique (map (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "1.2.3" "1" "2" "3" ]) (oci.tags ++ oci.aliases));
+                assertion = lib.allUnique (renderOciTags oci);
                 message = "publishers.oci.${name}.tags and aliases must not render to the same tag";
               }
             ])
             config.publishers.oci) ++ [
+          {
+            assertion = sharedOciTags == [ ];
+            message =
+              let shared = builtins.head sharedOciTags;
+              in "publishers.oci.${shared.name} and publishers.oci.${shared.other} both push to ${shared.repository} and must not share a tag or alias; both render ${shared.tag} for version 1.2.3";
+          }
           {
             assertion = builtins.length enabledAnalyzers == 1;
             message =

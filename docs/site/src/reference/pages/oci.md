@@ -75,7 +75,8 @@ its release, while an alias is only moved when it should be, and a failure to mo
 fail the release. There are no aliases by default.
 
 Both are templates: `{version}` is replaced by the release version, and `{major}`, `{minor}`, and
-`{patch}` by its parts.
+`{patch}` by its parts. Several publishers may push to the same repository, as long as they share no
+tag or alias.
 
 Presswerk moves an alias only to a higher stable version than the one it points to, as read from
 the version annotation of that index. This also keeps `{major}` and `{major}.{minor}` within

@@ -390,6 +390,33 @@ in
       expected = [ true true true true true true true true true false false false false false false false false false false false false false false false false false false false false false false ];
     };
 
+    "test OCI publishers of one repository share no image tag" = {
+      expr = map
+        (others: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.oci = lib.mapAttrs
+            (_name: oci: {
+              repository = "ghcr.io/owner/project";
+              platforms."linux/amd64" = image;
+              username.secret = "REGISTRY_USERNAME";
+              password.secret = "REGISTRY_TOKEN";
+            } // oci)
+            ({ default.aliases = [ "latest" ]; } // others);
+        }).publishers.oci)
+        [
+          { debug.tags = [ "{version}-debug" ]; }
+          { debug = { tags = [ "{version}-debug" ]; aliases = [ "debug" ]; }; }
+          { other = { repository = "ghcr.io/owner/other"; aliases = [ "latest" ]; }; }
+          { debug = { tags = [ "{version}-debug" ]; aliases = [ "latest" ]; }; }
+          { debug = { }; }
+          # `{major}.{minor}.{patch}` renders the same tag as `{version}`.
+          { debug = { tags = [ "{version}-debug" ]; aliases = [ "{major}.{minor}.{patch}" ]; }; }
+        ];
+      expected = [ true true true false false false ];
+    };
+
     "test a release needs no publishers" = {
       expr = (mkRelease {
         sourceRoot = fixtureRoot;
