@@ -975,6 +975,80 @@ fn linked_layers_are_followed_and_kept_once() {
     assert!(error.contains("no file"), "{error}");
 }
 
+fn append(builder: &mut tar::Builder<Vec<u8>>, name: &str, contents: &[u8]) {
+    let mut header = tar::Header::new_gnu();
+    header.set_size(contents.len() as u64);
+    header.set_mode(0o644);
+    builder.append_data(&mut header, name, contents).unwrap();
+}
+
+fn append_link(
+    builder: &mut tar::Builder<Vec<u8>>,
+    kind: tar::EntryType,
+    name: &str,
+    target: &str,
+) {
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(kind);
+    header.set_size(0);
+    builder.append_link(&mut header, name, target).unwrap();
+}
+
+#[test]
+fn a_later_entry_replaces_an_earlier_one_as_tar_extraction_does() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = tar(&[("etc/greeting", b"hello")]);
+    let second = tar(&[("etc/greeting", b"bye")]);
+    let config = |layer: &[u8]| {
+        serde_json::to_vec(&json!({
+            "architecture": "amd64",
+            "os": "linux",
+            "rootfs": { "type": "layers", "diff_ids": [digest(layer)] },
+        }))
+        .unwrap()
+    };
+    let manifest =
+        serde_json::to_vec(&json!([{ "Config": "config.json", "Layers": ["b.tar"] }])).unwrap();
+
+    // A hard link keeps the file its target was when the link was written.
+    let mut builder = tar::Builder::new(Vec::new());
+    append(&mut builder, "a.tar", &first);
+    append_link(&mut builder, tar::EntryType::Link, "b.tar", "a.tar");
+    append(&mut builder, "a.tar", &second);
+    append(&mut builder, "config.json", &config(&first));
+    append(&mut builder, "manifest.json", &manifest);
+    let path = write(
+        directory.path(),
+        "hardlink.tar",
+        &builder.into_inner().unwrap(),
+    );
+    let image = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap();
+    let mut unpacked = Vec::new();
+    flate2::read::GzDecoder::new(std::fs::read(&image.layers[0].path).unwrap().as_slice())
+        .read_to_end(&mut unpacked)
+        .unwrap();
+    assert_eq!(unpacked, first);
+
+    // A link that leaves the archive still replaces the file before it.
+    let mut builder = tar::Builder::new(Vec::new());
+    append(&mut builder, "b.tar", &first);
+    append(&mut builder, "config.json", &config(&first));
+    append_link(
+        &mut builder,
+        tar::EntryType::Symlink,
+        "config.json",
+        "../../outside",
+    );
+    append(&mut builder, "manifest.json", &manifest);
+    let path = write(
+        directory.path(),
+        "escaping.tar",
+        &builder.into_inner().unwrap(),
+    );
+    let error = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap_err();
+    assert!(error.contains("no file"), "{error}");
+}
+
 #[test]
 fn a_manifest_cannot_name_files_outside_the_archive() {
     let directory = tempfile::tempdir().unwrap();

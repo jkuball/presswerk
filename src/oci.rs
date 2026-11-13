@@ -412,22 +412,35 @@ impl Members {
             let Some(name) = normalize(&entry.path()?) else {
                 continue;
             };
+            // A later entry replaces an earlier one of the same name, whatever either is.
+            members.files.remove(&name);
+            members.links.remove(&name);
             let kind = entry.header().entry_type();
             if kind.is_symlink() || kind.is_hard_link() {
-                let Some(target) = entry.link_name()? else {
-                    continue;
-                };
-                let target = if kind.is_symlink() {
-                    Path::new(&name)
-                        .parent()
-                        .unwrap_or(Path::new(""))
-                        .join(target)
-                } else {
-                    target.into_owned()
-                };
-                if let Some(target) = normalize(&target) {
-                    members.files.remove(&name);
-                    members.links.insert(name, target);
+                let target = entry.link_name()?.and_then(|target| {
+                    if kind.is_symlink() {
+                        normalize(
+                            &Path::new(&name)
+                                .parent()
+                                .unwrap_or(Path::new(""))
+                                .join(target),
+                        )
+                    } else {
+                        normalize(&target)
+                    }
+                });
+                match target {
+                    // A hard link is the file its target is now, not what that name holds later.
+                    Some(target) if kind.is_hard_link() => {
+                        if let Some(member) = members.resolve(&target) {
+                            let member = member.clone();
+                            members.files.insert(name, member);
+                        }
+                    }
+                    Some(target) => {
+                        members.links.insert(name, target);
+                    }
+                    None => {}
                 }
                 continue;
             }
@@ -447,7 +460,6 @@ impl Members {
                     member
                 }
             };
-            members.links.remove(&name);
             members.files.insert(name, member);
         }
         // Read to the end, so a streaming executable is not cut off after the end-of-archive marker.
@@ -457,23 +469,29 @@ impl Members {
 
     /// The file an archive path names, following links.
     fn get(&self, name: &str) -> Result<&Member, String> {
-        let mut current = normalize(Path::new(name))
+        let current = normalize(Path::new(name))
             .filter(|_| {
                 Path::new(name)
                     .components()
                     .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
             })
             .ok_or_else(|| format!("the archive refers to {name:?} outside itself"))?;
-        for _ in 0..16 {
-            if let Some(member) = self.files.get(&current) {
-                return Ok(member);
-            }
-            match self.links.get(&current) {
-                Some(target) => current.clone_from(target),
-                None => break,
-            }
+        if let Some(member) = self.resolve(&current) {
+            return Ok(member);
         }
         Err(format!("the archive has no file {name:?}"))
+    }
+
+    /// The file a normalized archive path names, following symbolic links.
+    fn resolve(&self, name: &str) -> Option<&Member> {
+        let mut current = name;
+        for _ in 0..16 {
+            if let Some(member) = self.files.get(current) {
+                return Some(member);
+            }
+            current = self.links.get(current)?;
+        }
+        None
     }
 
     /// The uncompressed contents of a small file, such as `manifest.json`.
