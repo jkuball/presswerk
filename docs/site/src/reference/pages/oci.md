@@ -10,7 +10,8 @@ image for each platform:
     repository = "ghcr.io/owner/project";
     platforms."linux/amd64" = self.packages.x86_64-linux.image;
     platforms."linux/arm64" = self.packages.aarch64-linux.image;
-    aliases = [ "latest" "{major}" "{major}.{minor}" ];
+    tags = [ "{version}" ];
+    aliases = [ "latest" "{major}.{minor}" ];
     public = true;
     username.secret = "GITHUB_ACTOR";
     password.secret = "GITHUB_TOKEN";
@@ -30,6 +31,7 @@ publishers
     image    linux/arm64
     tag      1.2.0
     alias    latest
+    alias    1.2
 ```
 
 ## Images
@@ -138,6 +140,10 @@ them at run time, stops if one is unset or empty, and never prints them. They an
 authentication challenge, either with HTTP basic authentication or with the bearer token flow that
 most registries use.
 
+A username that is no secret can be given as `username.value` instead, such as
+`oauth2accesstoken` for Google Artifact Registry. It is written into the declaration like any
+other option. The password always comes from an environment variable.
+
 `publish` always needs the credentials. `plan` and `prepare` only read the previous release's tags,
 and how they read depends on `public`:
 
@@ -150,8 +156,8 @@ and how they read depends on `public`:
 
 - **GitHub Container Registry:** `GITHUB_ACTOR` and `GITHUB_TOKEN` in GitHub Actions. The workflow
   needs the `packages: write` permission.
-- **Google Artifact Registry:** the username `oauth2accesstoken` and an access token, such as from
-  `gcloud auth print-access-token`.
+- **Google Artifact Registry:** `username.value = "oauth2accesstoken";` and an access token, such
+  as from `gcloud auth print-access-token`.
 
 The repository must start with the registry host and an optional port, and must not contain
 credentials such as `user:token@`, a query, or a fragment. Loopback registries such as
