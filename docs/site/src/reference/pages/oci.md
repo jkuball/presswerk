@@ -41,8 +41,8 @@ of `dockerTools.buildImage` or `dockerTools.buildLayeredImage`, or an executable
 uncompressed archive to stdout, such as the output of `dockerTools.streamLayeredImage`. Like a
 release asset, `publish` fetches every image from the local store or a substituter before it writes
 anything, and never builds one. A streamed image keeps the image out of the Nix store and binary
-caches, but does not make `publish` faster: it is written to a temporary directory before it is
-pushed.
+caches, but does not make `publish` faster: Presswerk checks every image and compresses its layers
+before it writes anything, so the stream is first written to a temporary directory.
 
 The platform key, such as `linux/amd64` or `linux/arm/v7`, must match the operating system,
 architecture, and variant in the image's config, so an image cannot end up under the wrong
@@ -51,10 +51,12 @@ platform. The image's name and tag inside the archive are ignored.
 Presswerk compresses every layer and writes the OCI manifests itself. Layers are compressed with
 gzip, which every client can pull. With `compression.zstd.enable = true;` they are compressed with
 zstd instead, which is smaller and faster to unpack, but needs Docker 23, containerd 1.5, or a
-similarly recent client to pull. Each format has its own `level`. The images of all
-platforms form one OCI image index, even if there is only one. The index is annotated with the
-version as `org.opencontainers.image.version`, and each of its manifests with the store path of its
-image as `dev.presswerk.store-path`.
+similarly recent client to pull.
+
+The images of all platforms form one OCI image index, even if there is only one. An index lists one
+manifest per platform behind a single tag, and a client pulls the manifest for its own platform.
+The index is annotated with the version as `org.opencontainers.image.version`, and each of its
+manifests with the store path of its image as `dev.presswerk.store-path`.
 
 ## Tags and aliases
 
