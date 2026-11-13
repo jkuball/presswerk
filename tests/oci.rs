@@ -887,32 +887,106 @@ fn a_broken_image_stops_the_release_before_anything_is_written() {
 }
 
 #[test]
-fn layers_named_like_compressed_output_are_compressed_intact() {
+fn no_file_of_an_archive_is_stored_uncompressed() {
     let directory = tempfile::tempdir().unwrap();
+    let path = write(
+        directory.path(),
+        "image.tar",
+        &docker_archive("amd64", "hello"),
+    );
+    let image = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap();
+    let stored = image.layers[0].path.parent().unwrap();
+    for file in std::fs::read_dir(stored).unwrap() {
+        let file = file.unwrap().path();
+        if file == image.config.path {
+            continue;
+        }
+        let bytes = std::fs::read(&file).unwrap();
+        assert!(
+            bytes.starts_with(&[0x1f, 0x8b]),
+            "{} is not gzipped",
+            file.display()
+        );
+    }
+}
+
+/// An archive whose second layer is a link to the first, as `docker save` writes repeated layers.
+fn archive_with_linked_layer(link: tar::EntryType, target: &str) -> Vec<u8> {
     let layer = tar(&[("etc/greeting", b"hello")]);
     let config = serde_json::to_vec(&json!({
         "architecture": "amd64",
         "os": "linux",
-        "rootfs": { "type": "layers", "diff_ids": [digest(&layer)] },
+        "rootfs": { "type": "layers", "diff_ids": [digest(&layer), digest(&layer)] },
     }))
     .unwrap();
+    let manifest = serde_json::to_vec(&json!([{
+        "Config": "config.json",
+        "Layers": ["first/layer.tar", "./second/layer.tar"],
+    }]))
+    .unwrap();
+    let mut builder = tar::Builder::new(Vec::new());
+    for (name, contents) in [
+        ("first/layer.tar", layer.as_slice()),
+        ("config.json", &config),
+    ] {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o644);
+        builder.append_data(&mut header, name, contents).unwrap();
+    }
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(link);
+    header.set_size(0);
+    builder
+        .append_link(&mut header, "second/layer.tar", target)
+        .unwrap();
+    let mut header = tar::Header::new_gnu();
+    header.set_size(manifest.len() as u64);
+    header.set_mode(0o644);
+    builder
+        .append_data(&mut header, "manifest.json", manifest.as_slice())
+        .unwrap();
+    builder.into_inner().unwrap()
+}
+
+#[test]
+fn linked_layers_are_followed_and_kept_once() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, link, target) in [
+        ("symlink.tar", tar::EntryType::Symlink, "../first/layer.tar"),
+        ("hardlink.tar", tar::EntryType::Link, "first/layer.tar"),
+    ] {
+        let path = write(
+            directory.path(),
+            name,
+            &archive_with_linked_layer(link, target),
+        );
+        let image = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap();
+        assert_eq!(image.layers.len(), 2);
+        assert_eq!(image.layers[0], image.layers[1]);
+    }
+
+    let path = write(
+        directory.path(),
+        "escaping.tar",
+        &archive_with_linked_layer(tar::EntryType::Symlink, "../../outside.tar"),
+    );
+    let error = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap_err();
+    assert!(error.contains("no file"), "{error}");
+}
+
+#[test]
+fn a_manifest_cannot_name_files_outside_the_archive() {
+    let directory = tempfile::tempdir().unwrap();
     let manifest =
-        serde_json::to_vec(&json!([{ "Config": "config.json", "Layers": ["0.tar.gz"] }])).unwrap();
+        serde_json::to_vec(&json!([{ "Config": "../config.json", "Layers": [] }])).unwrap();
     let path = write(
         directory.path(),
         "image.tar",
-        &tar(&[
-            ("manifest.json", &manifest),
-            ("config.json", &config),
-            ("0.tar.gz", &layer),
-        ]),
+        &tar(&[("manifest.json", &manifest)]),
     );
-    let image = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap();
-    let mut unpacked = Vec::new();
-    flate2::read::GzDecoder::new(std::fs::read(&image.layers[0].path).unwrap().as_slice())
-        .read_to_end(&mut unpacked)
-        .unwrap();
-    assert_eq!(unpacked, layer);
+    let error = LocalImage::load("linux/amd64", &path, Compression::default()).unwrap_err();
+    assert!(error.contains("outside itself"), "{error}");
 }
 
 #[test]

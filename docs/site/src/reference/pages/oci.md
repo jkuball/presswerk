@@ -41,8 +41,8 @@ of `dockerTools.buildImage` or `dockerTools.buildLayeredImage`, or an executable
 uncompressed archive to stdout, such as the output of `dockerTools.streamLayeredImage`. Like a
 release asset, `publish` fetches every image from the local store or a substituter before it writes
 anything, and never builds one. A streamed image keeps the image out of the Nix store and binary
-caches, but does not make `publish` faster: Presswerk checks every image and compresses its layers
-before it writes anything, so the stream is first written to a temporary directory.
+caches, but does not make `publish` faster: Presswerk checks and compresses every image before it
+writes anything. Each layer is compressed as it is read, so no image is stored uncompressed.
 
 The platform key, such as `linux/amd64` or `linux/arm/v7`, must match the operating system,
 architecture, and variant in the image's config, so an image cannot end up under the wrong
