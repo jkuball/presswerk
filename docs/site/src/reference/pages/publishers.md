@@ -2,7 +2,7 @@ A release publisher is Presswerk's interface to the outside world. It is the bri
 immutable release commit with its frozen notes and the places where a release is published, which
 Presswerk does not control and which change on their own. A project usually has more than one
 publisher, for example a GitHub Release next to packages on PyPI, crates.io, or npm, and container
-images on GHCR. `publish` first pushes the tag, then runs every declared publisher.
+images on GHCR.
 
 Every publisher follows the same rules on a retry:
 
@@ -21,10 +21,15 @@ publisher's page.
 
 Presswerk has two built-in publishers:
 
-- [GitHub Release](/reference/publishers/github-release/), declared under
-  [`publishers.github-release`](/reference/options/#publishers.github-release)
-- [OCI](/reference/publishers/oci/) for container images, declared under
-  [`publishers.oci`](/reference/options/#publishers.oci)
+- [GitHub Release](/reference/publishers/github-release/)
+- [OCI](/reference/publishers/oci/) for container images
 
-`publish` runs the OCI publishers before the GitHub Releases, so a release is never announced while
-its images are still missing. Declaring publishers for other targets in the flake itself is planned.
+Declaring publishers for other targets in the flake itself is planned.
+
+## Publishing
+
+Before anything is written, `presswerk publish` checks the release tag and every publisher. A tag
+that is lightweight or points to another commit is conflicting, and so is any conflicting state a
+publisher reports: `publish` then stops without writing anything. Otherwise it pushes the tag and
+completes the publishers one after another, the OCI publishers first and the GitHub Releases last,
+so a release is never announced while its images are still missing.

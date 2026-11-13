@@ -1,15 +1,15 @@
 The OCI publisher pushes container images built with Nix to any registry that speaks the
 [OCI distribution API](https://github.com/opencontainers/distribution-spec), such as GitHub
 Container Registry, Google Artifact Registry, or Docker Hub. Declare it under
-[`publishers.oci`](/reference/options/#publishers.oci), keyed by a name of your choice, with one
-image per platform:
+[`publishers.oci`](/reference/options/#publishers.oci), keyed by a name of your choice, with the
+image for each platform:
 
 ```nix presswerk-module
 {
   publishers.oci.default = {
     repository = "ghcr.io/owner/project";
-    images."linux/amd64" = self.packages.x86_64-linux.image;
-    images."linux/arm64" = self.packages.aarch64-linux.image;
+    platforms."linux/amd64" = self.packages.x86_64-linux.image;
+    platforms."linux/arm64" = self.packages.aarch64-linux.image;
     tags = [ "{version}" "latest" ];
     public = true;
     username.secret = "GITHUB_ACTOR";
@@ -17,6 +17,9 @@ image per platform:
   };
 }
 ```
+
+Container images are the only content the OCI publisher supports so far; publishing Helm charts,
+which registries store as OCI artifacts as well, is planned.
 
 `presswerk plan` lists the publisher with its platforms and the tags it will push:
 
@@ -27,17 +30,16 @@ publishers
     image    linux/arm64
     tag      1.2.0
     alias    latest
-  github-release.default  owner/project
-    release  v1.2.0
 ```
 
 ## Images
 
-Each image is the output of `dockerTools.buildImage` or `dockerTools.buildLayeredImage`, a Docker
-image archive that may be compressed with gzip or zstd, or of `dockerTools.streamLayeredImage`, a
-script that writes such an archive. Like a release asset, `publish` fetches every image from the
-local store or a substituter before it writes anything, and never builds one. A streamed image is
-produced by running its script after it was fetched.
+Each image is a Docker image archive, which may be compressed with gzip or zstd, such as the output
+of `dockerTools.buildImage` or `dockerTools.buildLayeredImage`, or an executable that writes such an
+archive to stdout, such as the output of `dockerTools.streamLayeredImage`. The executable bit tells
+the two apart: Presswerk runs an image only if it is executable. Like a release asset, `publish`
+fetches every image from the local store or a substituter before it writes anything, and never
+builds one; an executable runs after it was fetched.
 
 ```nix
 perSystem = { pkgs, self', ... }: {

@@ -22,7 +22,7 @@ export default defineConfig({
       routeMiddleware: './src/routeData.ts',
       components: { Head: './src/components/Head.astro' },
       head: [
-        ...['option-filter', 'catalog-filter'].map((script) => ({
+        ...['option-filter', 'catalog-filter', 'filter-clear'].map((script) => ({
           tag: 'script',
           attrs: { type: 'module' },
           content: readFileSync(new URL(`./src/scripts/${script}.js`, import.meta.url), 'utf8'),

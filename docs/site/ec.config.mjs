@@ -159,7 +159,7 @@ function releaseOptions() {
   const directory = process.env.PRESSWERK_REFERENCE;
   if (!directory) return [];
   const options = JSON.parse(readFileSync(join(directory, 'options.json'), 'utf8'));
-  return options.map((option) => ({ path: option.loc, anchor: option.anchor }));
+  return options.map((option) => ({ path: option.loc, name: option.loc.join('.') }));
 }
 
 /** The longest documented option that the attribute path starts with; `<name>` matches any name. */
@@ -174,7 +174,7 @@ function matchOption(options, path) {
 }
 
 /**
- * Link release options in Nix code to the options reference. Only attributes set inside a
+ * Link release options in Nix code to the options reference, filtered to the option. Only attributes set inside a
  * `mkRelease { … }` call are linked, with the paths of enclosing attribute sets taken into
  * account, so a `version` attribute of a package elsewhere in the flake stays plain. A block marked
  * `presswerk-module` is a release module, or part of one, as a whole.
@@ -199,18 +199,20 @@ function optionLinks() {
             if (/\{\s*$/.test(text)) scopes = [[]];
             continue;
           }
-          const definition = /^(\s*)([A-Za-z_][\w'-]*(?:\.[A-Za-z_][\w'-]*)*)\s*=(?!=)/.exec(text);
+          const definition = /^(\s*)((?:[A-Za-z_][\w'-]*|"[^"\\$]*")(?:\.(?:[A-Za-z_][\w'-]*|"[^"\\$]*"))*)\s*=(?!=)/.exec(text);
           if (definition) {
-            const parts = definition[2].split('.');
+            // Attribute names may be quoted, such as `platforms."linux/amd64"`.
+            const written = definition[2].match(/[A-Za-z_][\w'-]*|"[^"]*"/g);
+            const parts = written.map((part) => part.replace(/^"(.*)"$/, '$1'));
             const prefix = scopes[scopes.length - 1];
             const option = matchOption(options, [...prefix, ...parts]);
             if (option) {
               // Link the part of the written path that belongs to the option.
-              const own = parts.slice(0, Math.max(0, option.path.length - prefix.length)).join('.');
+              const own = written.slice(0, Math.max(0, option.path.length - prefix.length)).join('.');
               if (own) {
                 const start = definition[1].length;
                 line.addAnnotation(
-                  new LinkAnnotation({ href: `${OPTIONS_PAGE}#${option.anchor}`, inlineRange: { columnStart: start, columnEnd: start + own.length } }),
+                  new LinkAnnotation({ href: `${OPTIONS_PAGE}?filter=${encodeURIComponent(option.name)}`, inlineRange: { columnStart: start, columnEnd: start + own.length } }),
                 );
               }
             }

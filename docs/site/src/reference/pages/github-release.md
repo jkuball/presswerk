@@ -11,26 +11,21 @@ your choice:
 
 ## Behavior
 
-`presswerk publish` pushes the release tag first and then completes every GitHub Release
-publisher.
-
-Before anything is written, Presswerk checks the state of the tag and of every publisher. A tag
-that is lightweight or points to another commit, a release whose prerelease flag does not match
-the version, or several releases for the same tag are *conflicting*: Presswerk stops and never
-overwrites them. An existing release is otherwise never edited, only a draft is published.
-
-For each publisher, Presswerk looks up the release for the tag. GitHub finds only published
-releases by tag, so when there is none, Presswerk also searches every page of the repository's
-release listing for a draft with exactly that tag. Then it acts on what it finds:
+Presswerk looks up the release for the tag. GitHub finds only published releases by tag, so when
+there is none, Presswerk also searches every page of the repository's release listing for a draft
+with exactly that tag. Then it acts on what it finds:
 
 - **Missing:** it creates the release as a draft that targets the release commit, then
   publishes the draft, so the release never appears without its notes. It reports `published`.
 - **Draft:** a previous run stopped between the two steps, so it publishes the existing draft
   instead of creating another one. It reports `draft completed`.
 - **Published:** the release is complete, and it is left as it is. It reports `already published`.
+- **Conflicting:** its prerelease flag does not match the version, or there are several releases
+  for the tag. Presswerk stops before anything is written and never changes them.
 
-So a retry of the same candidate completes missing state and keeps everything that already
-matches. After publishing, Presswerk reads every release back and fails unless it is published.
+An existing release is never edited; at most a draft is published. So a retry of the same candidate
+completes missing state and keeps everything that already matches. After publishing, Presswerk
+reads every release back and fails unless it is published.
 
 ## Assets
 
