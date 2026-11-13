@@ -91,8 +91,7 @@ tags do not allow `+`.
 
 Before anything is written, Presswerk compares every image tag, from `tags` and `aliases` alike,
 with this release. An image tag matches the release when it points to the same version, built from
-the same store paths. The pushed bytes are not compared, so a retry still matches even if it
-compressed the layers differently.
+the same store paths; the pushed bytes themselves are not compared.
 
 - **Missing:** the image tag does not exist, or an alias points to a lower version. Presswerk pushes
   it.
