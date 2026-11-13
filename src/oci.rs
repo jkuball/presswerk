@@ -1219,6 +1219,7 @@ pub(crate) fn annotated_version(manifest: &[u8]) -> Option<Version> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Annotated {
+        schema_version: u32,
         media_type: String,
         #[allow(dead_code)]
         manifests: Vec<serde_json::Value>,
@@ -1226,7 +1227,7 @@ pub(crate) fn annotated_version(manifest: &[u8]) -> Option<Version> {
         annotations: BTreeMap<String, String>,
     }
     let annotated: Annotated = serde_json::from_slice(manifest).ok()?;
-    if annotated.media_type != INDEX_MEDIA_TYPE {
+    if annotated.schema_version != 2 || annotated.media_type != INDEX_MEDIA_TYPE {
         return None;
     }
     Version::parse(annotated.annotations.get(VERSION_ANNOTATION)?).ok()

@@ -757,6 +757,17 @@ fn an_incomplete_oci_predecessor_blocks_the_next_release() {
             ],
             "0.1.0 (oci.default) is incomplete: the tag does not point to an image index with a version annotation",
         ),
+        (
+            // An index needs schema version 2.
+            vec![
+                (
+                    "0.1.0",
+                    br#"{"schemaVersion":1,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[],"annotations":{"org.opencontainers.image.version":"0.1.0"}}"#.to_vec(),
+                ),
+                ("v0.1.0", annotated_index("0.1.0")),
+            ],
+            "0.1.0 (oci.default) is incomplete: the tag does not point to an image index with a version annotation",
+        ),
     ] {
         let (result, _) = verify_oci_predecessor(&previous, &manifests);
         let error = result.unwrap_err().to_string();
