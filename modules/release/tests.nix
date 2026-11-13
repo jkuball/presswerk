@@ -413,8 +413,14 @@ in
           { debug = { }; }
           # `{major}.{minor}.{patch}` renders the same tag as `{version}`.
           { debug = { tags = [ "{version}-debug" ]; aliases = [ "{major}.{minor}.{patch}" ]; }; }
+          # Other spellings of the same repository: accepted, but compared as one.
+          { debug = { repository = "GHCR.IO:443/owner/project"; tags = [ "{version}-debug" ]; }; }
+          { debug = { repository = "GHCR.IO:443/owner/project"; tags = [ "{version}-debug" ]; aliases = [ "latest" ]; }; }
+          { hub.repository = "docker.io/alpine"; mirror = { repository = "registry-1.docker.io/library/alpine"; tags = [ "{version}-mirror" ]; }; }
+          { hub.repository = "docker.io/alpine"; mirror.repository = "registry-1.docker.io/library/alpine"; }
+          { hub.repository = "docker.io/alpine"; mirror.repository = "docker.io/owner/alpine"; }
         ];
-      expected = [ true true true false false false ];
+      expected = [ true true true false false false true false true false true ];
     };
 
     "test a release needs no publishers" = {

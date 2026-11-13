@@ -114,6 +114,33 @@ impl RepositoryReference {
         }
         Ok(Self { registry, name })
     }
+
+    /// The registry and name that identify the repository, however it was spelled: hosts are
+    /// lowercase without a default port, and Docker Hub's hosts and its `library/` shorthand are
+    /// one.
+    #[must_use]
+    pub fn identity(&self) -> String {
+        let host = self.registry.host_str().unwrap_or_default();
+        let port = self
+            .registry
+            .port()
+            .map(|port| format!(":{port}"))
+            .unwrap_or_default();
+        if port.is_empty()
+            && matches!(
+                host,
+                "docker.io" | "index.docker.io" | "registry-1.docker.io"
+            )
+        {
+            if self.name.contains('/') {
+                format!("docker.io/{}", self.name)
+            } else {
+                format!("docker.io/library/{}", self.name)
+            }
+        } else {
+            format!("{host}{port}/{}", self.name)
+        }
+    }
 }
 
 /// A registry host: a DNS name, IPv4 address, or bracketed IPv6 address, with an optional port.
@@ -1722,6 +1749,29 @@ mod tests {
         ] {
             assert!(RepositoryReference::parse(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn spellings_of_one_repository_share_an_identity() {
+        let identity = |repository| RepositoryReference::parse(repository).unwrap().identity();
+        for (left, right) in [
+            ("docker.io/alpine", "docker.io/library/alpine"),
+            ("docker.io/owner/image", "registry-1.docker.io/owner/image"),
+            ("docker.io/owner/image", "index.docker.io/owner/image"),
+            ("GHCR.IO/owner/image", "ghcr.io/owner/image"),
+            ("ghcr.io:443/owner/image", "ghcr.io/owner/image"),
+            ("localhost:80/image", "localhost/image"),
+        ] {
+            assert_eq!(identity(left), identity(right), "{left} and {right}");
+        }
+        assert_ne!(
+            identity("ghcr.io:5000/owner/image"),
+            identity("ghcr.io/owner/image")
+        );
+        assert_ne!(
+            identity("docker.io/alpine"),
+            identity("docker.io/owner/alpine")
+        );
     }
 
     #[test]
