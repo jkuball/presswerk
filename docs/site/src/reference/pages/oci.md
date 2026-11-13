@@ -105,15 +105,7 @@ of four states:
 
 Aliases are written last and are best effort, as described under [mutable
 aliases](https://github.com/jkuball/presswerk/blob/main/docs/conception/publication.md#mutable-aliases).
-An alias that cannot be read or moved does not fail the release: once all `tags` exist, the images
-count as published, `publish` continues with the next publishers, and the alias row reports the
-reason:
-
-```console
-  alias     ghcr.io/owner/project:latest  not moved: could not push ghcr.io/owner/project:latest: HTTP 500; rerun to repair
-```
-
-`publish` then also prints a warning. The next run of the release moves the alias.
+An alias that cannot be read or moved does not fail the release.
 
 When an image tag is missing and no other image tag points to an index of this release yet,
 Presswerk reads each image, uploads every layer and config the registry does not have yet, and puts
