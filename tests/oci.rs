@@ -1165,7 +1165,7 @@ fn an_index_with_two_manifests_for_one_platform_is_not_the_release() {
         let mut index: Value = serde_json::from_slice(&state.manifests[&index_digest].1).unwrap();
         let mut other = index["manifests"][0].clone();
         other["digest"] = json!(format!("sha256:{}", "1".repeat(64)));
-        other["annotations"]["dev.presswerk.store-path"] = json!("/nix/store/other-image");
+        other["annotations"]["dev.presswerk.origin"] = json!("/nix/store/other-image");
         index["manifests"].as_array_mut().unwrap().insert(0, other);
         let bytes = serde_json::to_vec(&index).unwrap();
         let digest = digest(&bytes);

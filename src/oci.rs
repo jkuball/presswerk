@@ -36,7 +36,7 @@ pub const ZSTD_LAYER_MEDIA_TYPE: &str = "application/vnd.oci.image.layer.v1.tar+
 pub const VERSION_ANNOTATION: &str = "org.opencontainers.image.version";
 /// The annotation on each manifest in an index that records the Nix store path of its image, so a
 /// later run recognizes the release's index without comparing compressed bytes.
-pub const STORE_PATH_ANNOTATION: &str = "dev.presswerk.store-path";
+pub const ORIGIN_ANNOTATION: &str = "dev.presswerk.origin";
 
 const VERSION_PLACEHOLDER: &str = "{version}";
 const MANIFEST_ACCEPT: &str = "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json";
@@ -717,7 +717,7 @@ impl Image {
             digest: self.manifest_digest.clone(),
             size: self.manifest.len() as u64,
             platform: Some(self.platform.clone()),
-            annotations: BTreeMap::from([(STORE_PATH_ANNOTATION.into(), self.store_path.clone())]),
+            annotations: BTreeMap::from([(ORIGIN_ANNOTATION.into(), self.store_path.clone())]),
         }
     }
 }
@@ -1329,7 +1329,7 @@ impl OciPublisher {
         let mut images = BTreeMap::new();
         for entry in index.manifests {
             let (Some(platform), Some(path)) =
-                (entry.platform, entry.annotations.get(STORE_PATH_ANNOTATION))
+                (entry.platform, entry.annotations.get(ORIGIN_ANNOTATION))
             else {
                 return false;
             };

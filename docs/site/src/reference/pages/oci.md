@@ -61,7 +61,7 @@ similarly recent client to pull.
 The images of all platforms form one OCI image index, even if there is only one. An index lists one
 manifest per platform behind a single tag, and a client pulls the manifest for its own platform.
 The index is annotated with the version as `org.opencontainers.image.version`, and each of its
-manifests with the store path of its image as `dev.presswerk.store-path`. The store path stands for
+manifests with the store path of its image as `dev.presswerk.origin`. The store path stands for
 everything the image was built from, so a later run recognizes the release's index by its store
 paths, without reading the images again.
 
