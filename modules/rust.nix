@@ -134,15 +134,6 @@
         '';
       };
 
-      checks.presswerk-test = config.rust-project.crane-lib.cargoTest (
-        config.rust-project.crates.presswerk.crane.args
-        // {
-          inherit (config.rust-project) src;
-          cargoArtifacts = self'.packages.presswerk.cargoArtifacts;
-          cargoExtraArgs = "-p presswerk";
-          pname = "presswerk";
-          strictDeps = true;
-        }
-      );
+      checks.presswerk-test = craneLib.cargoTest (presswerkArgs // { inherit cargoArtifacts; });
     };
 }
