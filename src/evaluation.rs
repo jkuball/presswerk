@@ -98,6 +98,8 @@ fn evaluate_pinned_flake(
     let mut command = Command::new("nix");
     command.args([
         "eval",
+        "--extra-experimental-features",
+        "nix-command flakes",
         "--json",
         "--no-update-lock-file",
         "--no-write-lock-file",

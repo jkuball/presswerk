@@ -31,7 +31,14 @@ pub fn fetch<'a>(paths: impl IntoIterator<Item = (String, &'a str)>) -> Result<(
 
 fn store_dir() -> anyhow::Result<String> {
     let output = Command::new("nix")
-        .args(["eval", "--raw", "--expr", "builtins.storeDir"])
+        .args([
+            "eval",
+            "--extra-experimental-features",
+            "nix-command flakes",
+            "--raw",
+            "--expr",
+            "builtins.storeDir",
+        ])
         .output()
         .context("run nix eval to read the store directory")?;
     if !output.status.success() {
