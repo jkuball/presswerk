@@ -4,9 +4,9 @@ use anyhow::bail;
 use git2::Oid;
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::declaration::{
-    Analyzer, BadgeOptions, BadgeVersionFile, Changelog, ConventionalAnalyzer,
-    GithubReleasePublisher, GitmojiAnalyzer, Publishers, ReleaseDeclaration, Tag, Token,
-    TomlVersionFile, VersionFile,
+    Analyzer, BadgeOptions, BadgeVersionFile, Changelog, Compression, ConventionalAnalyzer,
+    GithubReleasePublisher, GitmojiAnalyzer, OciPublisher, Publishers, ReleaseDeclaration, Tag,
+    Token, TomlVersionFile, Username, VersionFile,
 };
 use presswerk::evaluation::EvaluatedReleaseDeclaration;
 use presswerk::preparation::{build_release_plan, is_worktree_dirty, prepare_release, render_plan};
@@ -50,6 +50,7 @@ fn declaration(version: &str) -> ReleaseDeclaration {
                     assets: BTreeMap::new(),
                 },
             )]),
+            oci: BTreeMap::new(),
         },
     }
 }
@@ -315,6 +316,7 @@ fn uses_the_exact_predecessor_declaration_for_release_state_checks() {
                         .push(publisher.repository.clone());
                     Ok(GithubReleaseState::Published { prerelease: false })
                 },
+                |_, _| unreachable!("no OCI publishers are declared"),
             )
             .map_err(Into::into)
         },
@@ -364,6 +366,7 @@ fn refuses_deleted_moved_and_lightweight_remote_predecessor_tags() {
                     None,
                     |_| Ok(previous_declaration.clone()),
                     |_, _, _| Ok(GithubReleaseState::Published { prerelease: false }),
+                    |_, _| unreachable!("no OCI publishers are declared"),
                 )
                 .map_err(Into::into)
             },
@@ -538,6 +541,26 @@ fn the_release_commit_names_the_declared_tag() {
 }
 
 #[test]
+fn the_plan_of_a_release_without_publishers_says_so() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated.declaration.publishers.github_release.clear();
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+
+    assert!(render_plan(&plan).contains("\npublishers\n  none\n\nnotes\n"));
+}
+
+#[test]
 fn the_plan_lists_each_publisher_with_its_release_and_assets() {
     let repository = GitRepo::new();
     write_version(&repository, "0.0.0");
@@ -569,6 +592,57 @@ fn the_plan_lists_each_publisher_with_its_release_and_assets() {
         "  github-release.default  owner/project\n",
         "    release  v0.1.0\n",
         "    asset    example-x86_64-linux\n",
+    )));
+}
+
+fn oci_publisher(tags: &[&str], aliases: &[&str]) -> OciPublisher {
+    OciPublisher {
+        repository: "ghcr.io/owner/project".into(),
+        platforms: BTreeMap::from([
+            ("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into()),
+            ("linux/arm64".into(), "/nix/store/def-image.tar.gz".into()),
+        ]),
+        tags: tags.iter().map(|tag| (*tag).into()).collect(),
+        aliases: aliases.iter().map(|alias| (*alias).into()).collect(),
+        public: false,
+        compression: Compression::default(),
+        username: Username::Secret("REGISTRY_USERNAME".into()),
+        password: Token {
+            secret: "REGISTRY_TOKEN".into(),
+        },
+    }
+}
+
+#[test]
+fn the_plan_lists_oci_images_and_rendered_tags_before_the_release() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated.declaration.publishers.oci.insert(
+        "default".into(),
+        oci_publisher(&["{version}"], &["latest", "{major}.{minor}"]),
+    );
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+
+    assert!(render_plan(&plan).contains(concat!(
+        "\npublishers\n",
+        "  oci.default  ghcr.io/owner/project\n",
+        "    image    linux/amd64\n",
+        "    image    linux/arm64\n",
+        "    tag      0.1.0\n",
+        "    alias    latest\n",
+        "    alias    0.1\n",
+        "  github-release.default  owner/project\n",
+        "    release  v0.1.0\n",
     )));
 }
 

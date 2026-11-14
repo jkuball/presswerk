@@ -52,6 +52,12 @@ let
     publishers.github-release.default.repository = "owner/project";
   };
 
+  image = derivation {
+    name = "image.tar.gz";
+    system = "x86_64-linux";
+    builder = "/bin/sh";
+  };
+
   defaults = mkRelease {
     inherit sourceRoot;
     imports = [ publisher ];
@@ -98,6 +104,7 @@ in
           token.secret = "GITHUB_TOKEN";
           assets = { };
         };
+        publishers.oci = { };
       };
     };
 
@@ -285,6 +292,140 @@ in
         };
       });
       expected = false;
+    };
+
+    "test OCI images normalize to store paths with default tags" = {
+      expr =
+        (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.oci.default = {
+            repository = "ghcr.io/owner/project";
+            platforms."linux/amd64" = image;
+            username.secret = "REGISTRY_USERNAME";
+            password.secret = "REGISTRY_TOKEN";
+          };
+        }).publishers.oci.default;
+      expected = {
+        repository = "ghcr.io/owner/project";
+        platforms."linux/amd64" = image.outPath;
+        tags = [ "{version}" ];
+        aliases = [ ];
+        public = false;
+        compression.gzip.level = 6;
+        username.secret = "REGISTRY_USERNAME";
+        password.secret = "REGISTRY_TOKEN";
+      };
+    };
+
+    "test a literal OCI username normalizes without the secret" = {
+      expr =
+        (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.oci.default = {
+            repository = "europe-docker.pkg.dev/project/repo/image";
+            platforms."linux/amd64" = image;
+            username.value = "oauth2accesstoken";
+            password.secret = "GAR_TOKEN";
+          };
+        }).publishers.oci.default.username;
+      expected.value = "oauth2accesstoken";
+    };
+
+    "test OCI publishers reject invalid declarations" = {
+      expr = map
+        (oci: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.oci.default = {
+            repository = "ghcr.io/owner/project";
+            platforms."linux/amd64" = image;
+            username.secret = "REGISTRY_USERNAME";
+            password.secret = "REGISTRY_TOKEN";
+          } // oci;
+        }).publishers.oci)
+        [
+          { }
+          { repository = "localhost:5000/project"; }
+          { aliases = [ "latest" "{major}" "{minor}" "{major}.{minor}" ]; }
+          { public = true; }
+          { username = { value = "oauth2accesstoken"; }; }
+          { compression.zstd = { enable = true; level = 19; }; }
+          { compression.gzip.level = 9; }
+          { repository = "[::1]:5000/project"; }
+          { repository = "europe-docker.pkg.dev/project/repo/image"; }
+          # Without a registry host.
+          { repository = "owner/project"; }
+          { repository = "ghcr.io/Owner/project"; }
+          # Credentials, queries, and fragments never enter the declaration.
+          { repository = "user:secret@ghcr.io/owner/project"; }
+          { repository = "token@ghcr.io/owner/project"; }
+          { repository = "ghcr.io/owner/project?x=1"; }
+          { repository = "ghcr.io/owner/project#fragment"; }
+          { repository = "ghcr.io?x=1/owner/project"; }
+          { platforms = { }; }
+          { platforms."linux/amd64" = "/nix/store/00000000000000000000000000000000-fake.tar.gz"; }
+          # Every release needs a tag of its own, and every tag names the version.
+          { tags = [ ]; }
+          { tags = [ "latest" ]; }
+          { tags = [ "{version}" "latest" ]; }
+          { tags = [ "{version}" "{version}" ]; }
+          { tags = [ "-{version}" ]; }
+          # An alias follows a line of versions, never a single one.
+          { aliases = [ "{version}-slim" ]; }
+          { aliases = [ "{unknown}" ]; }
+          { aliases = [ "latest" "latest" ]; }
+          { aliases = [ "{major}.{minor}.{patch}" ]; }
+          # A username comes from exactly one source.
+          { username = { secret = "REGISTRY_USERNAME"; value = "user"; }; }
+          # Exactly one compression, with a level in range.
+          { compression = { gzip.enable = true; zstd.enable = true; }; }
+          { compression.gzip.enable = false; }
+          { compression.zstd = { enable = true; level = 23; }; }
+        ];
+      expected = [ true true true true true true true true true false false false false false false false false false false false false false false false false false false false false false false ];
+    };
+
+    "test OCI publishers of one repository share no image tag" = {
+      expr = map
+        (others: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.oci = lib.mapAttrs
+            (_name: oci: {
+              repository = "ghcr.io/owner/project";
+              platforms."linux/amd64" = image;
+              username.secret = "REGISTRY_USERNAME";
+              password.secret = "REGISTRY_TOKEN";
+            } // oci)
+            ({ default.aliases = [ "latest" ]; } // others);
+        }).publishers.oci)
+        [
+          { debug.tags = [ "{version}-debug" ]; }
+          { debug = { tags = [ "{version}-debug" ]; aliases = [ "debug" ]; }; }
+          { other = { repository = "ghcr.io/owner/other"; aliases = [ "latest" ]; }; }
+          { debug = { tags = [ "{version}-debug" ]; aliases = [ "latest" ]; }; }
+          { debug = { }; }
+          # `{major}.{minor}.{patch}` renders the same tag as `{version}`.
+          { debug = { tags = [ "{version}-debug" ]; aliases = [ "{major}.{minor}.{patch}" ]; }; }
+        ];
+      expected = [ true true true false false false ];
+    };
+
+    "test a release needs no publishers" = {
+      expr = (mkRelease {
+        sourceRoot = fixtureRoot;
+        versionFiles.cargo.example.cargoToml = cargoToml;
+      }).publishers;
+      expected = {
+        github-release = { };
+        oci = { };
+      };
     };
 
     "test a badge does not define the version" = {

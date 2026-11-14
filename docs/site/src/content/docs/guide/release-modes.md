@@ -16,11 +16,6 @@ Every release takes the same two steps, whatever runs them:
    `publish` tags it and publishes it. It needs the same history, push access for the tag, and
    credentials that let the publishers create releases.
 
-:::caution[GitHub is required for now]
-Every release currently needs a [GitHub Release publisher](/reference/publishers/),
-so publication talks to GitHub.
-:::
-
 ## What every mode must ensure
 
 Presswerk takes care of the release itself; whatever runs it takes care of the surroundings.

@@ -215,9 +215,12 @@ lookup is:
 1. find the tag rendered from `tag.format`, for example `v1.3.0`, and check that it is an
    ancestor of that commit. Outside the initial `0.0.0` baseline, a missing tag can mean the
    release is [pending](#pending-releases); a tag pointing elsewhere is a conflict;
-1. verify that the previous release is fully published. For the first milestone, its GitHub
-   Release must exist and be published, not missing or a draft. A network or authentication
-   error must not be mistaken for a complete release. The tag format and destinations come from
+1. verify that the previous release is fully published: its tag must point to the release
+   commit on the remote, and every publisher it declared must report its own completion signal.
+   A GitHub Release must exist and be published, not missing or a draft; an OCI publisher's
+   version tags must point to an image index annotated with the version. A release without
+   publishers is complete with its tag alone. A network or authentication error must not be
+   mistaken for a complete release. The tag format and destinations come from
    that tagged release's declaration, so a later publisher change cannot rewrite its identity;
 1. analyze the applicable commit range, such as `v1.3.0..HEAD`, using Git history. For the first
    release there is no physical tag, so the range includes the root commit.
@@ -266,8 +269,10 @@ release and exits with failure. A revert which restores the previous tagged vers
 condition even though the reverted release commit remains in history. The previous design's
 successful exit is superseded.
 
-A tag alone does not prove that publication completed. If the tag exists but its GitHub Release
-is missing or still a draft, the release chain is also broken and a new release must not proceed.
+A tag alone does not prove that publication completed, unless the release declares no publishers.
+If the tag exists but a declared publisher is incomplete, such as a GitHub Release that is missing
+or still a draft, or an OCI version tag that is missing, the release chain is also broken and a new
+release must not proceed.
 Retrying the exact candidate can complete a partial publication. A revert or force-push of a
 branch does not remove an existing tag.
 

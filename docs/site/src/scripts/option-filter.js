@@ -1,7 +1,10 @@
 /**
  * Add a filter above every list of release options: on the options page and in the option lists of
- * the reference pages. Without JavaScript the lists show every option.
+ * the reference pages. Without JavaScript the lists show every option. A `filter` query parameter,
+ * as in links from code examples, fills in the filter.
  */
+const preset = new URLSearchParams(location.search).get('filter') ?? '';
+
 document.querySelectorAll('.pw-option-list').forEach((list, index) => {
   const sections = [...list.querySelectorAll(':scope > .pw-option')];
   const id = `pw-option-filter-${index}`;
@@ -32,6 +35,10 @@ document.querySelectorAll('.pw-option-list').forEach((list, index) => {
   }
 
   input.addEventListener('input', apply);
+  if (preset) {
+    input.value = preset;
+    apply();
+  }
   // Never hide the option a link points at.
   window.addEventListener('hashchange', () => {
     const target = document.getElementById(decodeURIComponent(location.hash.slice(1)));

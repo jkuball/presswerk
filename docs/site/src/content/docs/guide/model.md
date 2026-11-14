@@ -99,4 +99,4 @@ choose the version for it is planned. Which level a commit selects, and how leve
 described under [Version levels](/reference/analyzers/#version-levels).
 
 How publication proceeds step by step, and what it does with existing releases, is described in the
-[GitHub Release publisher](/reference/publishers/#behavior) reference.
+[GitHub Release publisher](/reference/publishers/github-release/#behavior) reference.

@@ -190,12 +190,14 @@ in
           reference/declaration-schema
           reference/options
           reference/publishers
+          reference/publishers/github-release
+          reference/publishers/oci
           reference/version-files
         "
         for page in $pages; do
           test -s "$site/$page.md" || { echo "missing Markdown page $page.md" >&2; exit 1; }
         done
-        for page in options declaration-schema cli publishers analyzers analyzers/gitmoji analyzers/conventional-commits; do
+        for page in options declaration-schema cli publishers publishers/github-release publishers/oci analyzers analyzers/gitmoji analyzers/conventional-commits; do
           test -s "$site/reference/$page/index.html" || { echo "missing reference page $page" >&2; exit 1; }
         done
         test -s "$site/llms.txt"
@@ -208,8 +210,9 @@ in
         grep -Fq 'rel="describedby" href="/llms.txt"' "$site/index.html"
         grep -Fq 'rel="alternate" type="text/markdown" href="/guide/walkthrough.md"' "$site/guide/walkthrough/index.html"
         grep -q 'id="tag.format"' "$site/reference/options/index.html"
-        # Release options in Nix examples link to their reference entries.
-        grep -q 'href="/reference/options/#versionFiles.cargo" class="pw-code-link"' "$site/index.html"
+        # Release options in Nix examples link to the options reference, filtered to the option.
+        grep -q 'href="/reference/options/?filter=versionFiles.cargo" class="pw-code-link"' "$site/index.html"
+        grep -q 'href="/reference/options/?filter=publishers.oci.%3Cname%3E.platforms" class="pw-code-link"' "$site/reference/publishers/oci/index.html"
         grep -q 'id="publishers.github-release.name.token.secret"' "$site/reference/options/index.html"
         grep -q '^# Reproducible releases for Nix flakes$' "$site/index.md"
         grep -q '^# Walkthrough: release automatically from GitHub Actions$' "$site/guide/walkthrough.md"

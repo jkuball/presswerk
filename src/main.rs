@@ -6,7 +6,9 @@ use presswerk::preparation::{
     build_head_release_plan, build_head_release_plan_with_trust, is_worktree_dirty,
     prepare_release, render_plan,
 };
-use presswerk::publication::{AssetStep, PublishOutcome, PublisherStep, TagStep, publish};
+use presswerk::publication::{
+    ArtifactKind, AssetStep, PublishOutcome, PublisherStep, TagStep, publish,
+};
 use presswerk::release_commit::TrustedPredecessor;
 
 fn main() {
@@ -100,22 +102,47 @@ fn run() -> Result<()> {
                 };
                 let mut rows = vec![["tag".into(), report.tag.clone(), tag_status.into()]];
                 for (name, step, artifacts) in &report.publisher_steps {
+                    let oci = name.starts_with("oci.");
                     let status = match step {
                         PublisherStep::Published => "published",
                         PublisherStep::DraftCompleted => "draft completed",
+                        PublisherStep::ArtifactsCompleted if oci => "tags completed",
                         PublisherStep::ArtifactsCompleted => "assets completed",
                         PublisherStep::AlreadyPublished => "already published",
                     };
-                    rows.push(["release".into(), name.clone(), status.into()]);
-                    rows.extend(artifacts.iter().map(|(asset, step)| {
-                        let status = match step {
-                            AssetStep::Uploaded => "uploaded",
-                            AssetStep::AlreadyUploaded => "already uploaded",
+                    let kind = if oci { "registry" } else { "release" };
+                    rows.push([kind.into(), name.clone(), status.into()]);
+                    rows.extend(artifacts.iter().map(|artifact| {
+                        let (kind, done, already) = match artifact.kind {
+                            ArtifactKind::Asset => ("asset", "uploaded", "already uploaded"),
+                            ArtifactKind::Image => ("image", "pushed", "already pushed"),
+                            ArtifactKind::Tag => ("tag", "pushed", "already pushed"),
+                            ArtifactKind::Alias => ("alias", "set", "already set"),
                         };
-                        ["asset".into(), asset.clone(), status.into()]
+                        let status = match &artifact.step {
+                            AssetStep::Uploaded => done.to_owned(),
+                            AssetStep::AlreadyUploaded => already.to_owned(),
+                            AssetStep::Kept(reason) => format!("kept ({reason})"),
+                            AssetStep::Warning(reason) => {
+                                format!("not moved: {reason}; rerun to repair")
+                            }
+                        };
+                        [kind.into(), artifact.name.clone(), status]
                     }));
                 }
                 print!("{}", render_steps(&rows));
+                let warnings = report.warnings();
+                if !warnings.is_empty() {
+                    eprintln!(
+                        "warning: {} could not be updated; {} is complete, publish it again to repair",
+                        warnings
+                            .iter()
+                            .map(|(name, _)| *name)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        report.tag
+                    );
+                }
                 if report.changed_nothing() {
                     println!(
                         "{} from {commit} was already released; nothing changed.",

@@ -2,8 +2,8 @@ use crate::analysis::{Analysis, Analyzer, CommitRange, GitCliffAnalyzer};
 use crate::changelog::read_version_section;
 use crate::classification::{CommitClassification, classify_commit};
 use crate::declaration::{
-    DeclarationError, GithubReleasePublisher as GithubReleaseDeclaration, ReleaseDeclaration,
-    UNSTABLE_SCHEMA_VERSION,
+    DeclarationError, GithubReleasePublisher as GithubReleaseDeclaration,
+    OciPublisher as OciDeclaration, ReleaseDeclaration, UNSTABLE_SCHEMA_VERSION,
 };
 use crate::evaluation::{EvaluationError, evaluate_release_declaration};
 use crate::release_commit::TrustedPredecessor;
@@ -100,18 +100,46 @@ pub enum PublisherState {
     /// Published, but some of its artifacts are missing and can be added.
     Incomplete,
     Published,
+    /// Published, but best-effort aliases such as an OCI `latest` tag still need to move. The
+    /// release counts as complete; a publish moves them, and a failure there is only a warning.
+    AliasesPending,
     Conflicting(String),
 }
 
-/// What happened to one artifact of a publisher, such as a GitHub Release asset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What happened to one artifact of a publisher, such as a GitHub Release asset or an OCI tag.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssetStep {
     Uploaded,
     AlreadyUploaded,
+    /// Deliberately left as it is, such as an alias that points to a higher version.
+    Kept(String),
+    /// A best-effort step that failed, such as an alias that could not be moved; a rerun repairs it.
+    Warning(String),
 }
 
-/// Each artifact of a publisher by name, with what happened to it.
-pub type ArtifactSteps = Vec<(String, AssetStep)>;
+/// The kind of artifact a publisher reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtifactKind {
+    /// A GitHub Release asset.
+    Asset,
+    /// An OCI image for one platform.
+    Image,
+    /// An OCI tag that names the version.
+    Tag,
+    /// An OCI tag that follows the highest stable version, such as `latest`.
+    Alias,
+}
+
+/// One artifact of a publisher, with what happened to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactStep {
+    pub kind: ArtifactKind,
+    pub name: String,
+    pub step: AssetStep,
+}
+
+/// Each artifact of a publisher, with what happened to it.
+pub type ArtifactSteps = Vec<ArtifactStep>;
 
 pub trait TagPublisher {
     fn state(&self, release: &Release) -> Result<RemoteState, PublicationError>;
@@ -122,9 +150,9 @@ pub trait Publisher {
     fn state(&self, release: &Release) -> Result<PublisherState, PublicationError>;
     /// Create every missing part and report each artifact.
     fn publish(&self, release: &Release) -> Result<ArtifactSteps, PublicationError>;
-    /// The names of the artifacts this publisher publishes.
-    fn artifact_names(&self) -> Vec<String> {
-        Vec::new()
+    /// Report the artifacts of a publisher whose state is already published, without writing.
+    fn complete_steps(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
+        Ok(Vec::new())
     }
 }
 
@@ -650,7 +678,11 @@ impl Publisher for GithubPublisher {
                     .upload_asset(&self.repository, release, &github_release, asset)?;
                 AssetStep::Uploaded
             };
-            steps.push((asset.name.clone(), step));
+            steps.push(ArtifactStep {
+                kind: ArtifactKind::Asset,
+                name: asset.name.clone(),
+                step,
+            });
         }
         if github_release.draft {
             self.client
@@ -666,8 +698,16 @@ impl Publisher for GithubPublisher {
         }
     }
 
-    fn artifact_names(&self) -> Vec<String> {
-        self.assets.iter().map(|asset| asset.name.clone()).collect()
+    fn complete_steps(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
+        Ok(self
+            .assets
+            .iter()
+            .map(|asset| ArtifactStep {
+                kind: ArtifactKind::Asset,
+                name: asset.name.clone(),
+                step: AssetStep::AlreadyUploaded,
+            })
+            .collect())
     }
 }
 
@@ -734,8 +774,9 @@ impl GitTagPublisher {
             })?;
         if !output.status.success() {
             return Err(PublicationError::new(format!(
-                "could not inspect Git tag {tag:?} on remote {:?} (git exited with {})",
-                self.remote, output.status
+                "could not inspect Git tag {tag:?} on remote {:?}: {}",
+                self.remote,
+                git_failure(&output)
             )));
         }
 
@@ -905,10 +946,34 @@ impl TagPublisher for GitTagPublisher {
             RemoteState::Matching => Ok(()),
             RemoteState::Conflicting(message) => Err(PublicationError::new(message)),
             RemoteState::Missing => Err(PublicationError::new(format!(
-                "could not push Git tag {:?} to remote {:?} (git exited with {})",
-                release.tag, self.remote, output.status
+                "could not push Git tag {:?} to remote {:?}: {}",
+                release.tag,
+                self.remote,
+                git_failure(&output)
             ))),
         }
+    }
+}
+
+/// Why a git command failed: its exit status, what it printed on stderr, and the refs a porcelain
+/// push reports as rejected, which carry the remote's reason.
+fn git_failure(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let details: Vec<_> = stderr
+        .lines()
+        .chain(stdout.lines().filter(|line| line.starts_with('!')))
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if details.is_empty() {
+        format!("git exited with {}", output.status)
+    } else {
+        format!(
+            "git exited with {}:\n  {}",
+            output.status,
+            details.join("\n  ")
+        )
     }
 }
 
@@ -933,6 +998,19 @@ pub struct PublishReport {
 }
 
 impl PublishReport {
+    /// The best-effort steps that failed, by artifact name, with their reason.
+    #[must_use]
+    pub fn warnings(&self) -> Vec<(&str, &str)> {
+        self.publisher_steps
+            .iter()
+            .flat_map(|(_, _, artifacts)| artifacts)
+            .filter_map(|artifact| match &artifact.step {
+                AssetStep::Warning(reason) => Some((artifact.name.as_str(), reason.as_str())),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Whether every step was already complete before this run.
     #[must_use]
     pub fn changed_nothing(&self) -> bool {
@@ -1023,17 +1101,29 @@ pub fn publish_to_remote(
     let tag_publisher = GitTagPublisher::new(repository_path, remote);
 
     // Every artifact must be obtainable without building before anything is written.
-    crate::artifacts::fetch(declaration.publishers.github_release.iter().flat_map(
-        |(name, publisher)| {
+    let assets = declaration
+        .publishers
+        .github_release
+        .iter()
+        .flat_map(|(name, publisher)| {
             publisher.assets.iter().map(move |(asset, path)| {
                 (
                     format!("github-release.{name} asset {asset}"),
                     path.as_str(),
                 )
             })
-        },
-    ))
-    .map_err(|error| PublicationError::new(error.to_string()))?;
+        });
+    let images = declaration
+        .publishers
+        .oci
+        .iter()
+        .flat_map(|(name, publisher)| {
+            publisher.platforms.iter().map(move |(platform, path)| {
+                (format!("oci.{name} image {platform}"), path.as_str())
+            })
+        });
+    crate::artifacts::fetch(images.chain(assets))
+        .map_err(|error| PublicationError::new(error.to_string()))?;
 
     match tag_publisher.state(&release)? {
         RemoteState::Missing => {
@@ -1054,24 +1144,26 @@ pub fn publish_to_remote(
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     }
 
-    let publishers = declaration
-        .publishers
-        .github_release
-        .values()
-        .map(GithubPublisher::from_declaration)
-        .map(|publisher| publisher.map(|publisher| Box::new(publisher) as Box<dyn Publisher>))
-        .collect::<Result<Vec<_>, _>>()?;
+    // The forge release comes last, so it never announces a release whose images are missing.
+    let mut publishers: Vec<Box<dyn Publisher>> = Vec::new();
+    let mut publisher_names = Vec::new();
+    for (name, publisher) in &declaration.publishers.oci {
+        publishers.push(Box::new(crate::oci::OciPublisher::from_declaration(
+            publisher,
+        )?));
+        publisher_names.push(format!("oci.{name}"));
+    }
+    for (name, publisher) in &declaration.publishers.github_release {
+        publishers.push(Box::new(GithubPublisher::from_declaration(publisher)?));
+        publisher_names.push(format!("github-release.{name}"));
+    }
     let (tag_step, steps) = publish_ordered(&tag_publisher, &release, &publishers)?;
-    let publisher_names = declaration
-        .publishers
-        .github_release
-        .keys()
-        .map(|name| format!("github-release.{name}"));
     Ok(PublishOutcome::Published(PublishReport {
         commit: release.commit,
         tag: release.tag,
         tag_step,
         publisher_steps: publisher_names
+            .into_iter()
             .zip(steps)
             .map(|(name, (step, artifacts))| (name, step, artifacts))
             .collect(),
@@ -1084,11 +1176,6 @@ pub fn publish_ordered(
     release: &Release,
     publishers: &[Box<dyn Publisher>],
 ) -> Result<(TagStep, Vec<(PublisherStep, ArtifactSteps)>), PublicationError> {
-    if publishers.is_empty() {
-        return Err(PublicationError::new(
-            "at least one GitHub Release publisher is required",
-        ));
-    }
     let tag_step = match tag_publisher.state(release)? {
         RemoteState::Missing => TagStep::Pushed,
         RemoteState::Matching => TagStep::AlreadyPushed,
@@ -1107,15 +1194,13 @@ pub fn publish_ordered(
             PublisherState::Published => PublisherStep::AlreadyPublished,
             PublisherState::Missing => PublisherStep::Published,
             PublisherState::Draft => PublisherStep::DraftCompleted,
-            PublisherState::Incomplete => PublisherStep::ArtifactsCompleted,
+            PublisherState::Incomplete | PublisherState::AliasesPending => {
+                PublisherStep::ArtifactsCompleted
+            }
             PublisherState::Conflicting(message) => return Err(PublicationError::new(message)),
         };
         let artifacts = if step == PublisherStep::AlreadyPublished {
-            publisher
-                .artifact_names()
-                .into_iter()
-                .map(|name| (name, AssetStep::AlreadyUploaded))
-                .collect()
+            publisher.complete_steps(release)?
         } else {
             publisher.publish(release)?
         };
@@ -1133,7 +1218,7 @@ pub fn publish_ordered(
     }
     for publisher in publishers {
         match publisher.state(release)? {
-            PublisherState::Published => {}
+            PublisherState::Published | PublisherState::AliasesPending => {}
             state => {
                 return Err(PublicationError::new(format!(
                     "publisher did not complete {:?}: {state:?}",
@@ -1368,11 +1453,30 @@ fn verify_predecessor_with_trust_mode(
             GithubClient::from_environment(&publisher.api_url, &publisher.token.secret)?
                 .release_state(&publisher.repository, tag)
         },
+        |publisher, tag| {
+            // A public repository is read anonymously, so its credentials are never needed.
+            let credentials = if publisher.public {
+                None
+            } else {
+                Some(crate::oci::Credentials::from_environment(
+                    &publisher.username,
+                    &publisher.password.secret,
+                )?)
+            };
+            Ok(
+                crate::oci::RegistryClient::new(&publisher.repository, credentials)?
+                    .manifest(tag)?
+                    .map(|(_, manifest)| manifest),
+            )
+        },
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn verify_predecessor_with<E, F>(
+///
+/// `release_state` reads a GitHub Release by tag; `oci_manifest` reads the manifest an OCI tag
+/// points to, or `None` if the registry has no such tag.
+pub fn verify_predecessor_with<E, F, O>(
     repository_path: &Path,
     candidate: Oid,
     previous_version: &Version,
@@ -1381,6 +1485,7 @@ pub fn verify_predecessor_with<E, F>(
     trusted_predecessor: Option<&TrustedPredecessor>,
     evaluate_declaration: E,
     release_state: F,
+    oci_manifest: O,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError>
 where
     E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
@@ -1389,6 +1494,7 @@ where
         &str,
         &Version,
     ) -> Result<GithubReleaseState, PublicationError>,
+    O: FnMut(&OciDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
 {
     verify_predecessor_with_mode(
         repository_path,
@@ -1400,11 +1506,12 @@ where
         true,
         evaluate_declaration,
         release_state,
+        oci_manifest,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_predecessor_with_mode<E, F>(
+fn verify_predecessor_with_mode<E, F, O>(
     repository_path: &Path,
     candidate: Oid,
     previous_version: &Version,
@@ -1414,6 +1521,7 @@ fn verify_predecessor_with_mode<E, F>(
     verify_completion: bool,
     mut evaluate_declaration: E,
     mut release_state: F,
+    mut oci_manifest: O,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError>
 where
     E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
@@ -1422,8 +1530,8 @@ where
         &str,
         &Version,
     ) -> Result<GithubReleaseState, PublicationError>,
+    O: FnMut(&OciDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
 {
-    require_github_publishers(current_declaration)?;
     let repository = Repository::open(repository_path).map_err(|error| {
         PublicationError::new(format!("could not open Git repository: {error}"))
     })?;
@@ -1494,7 +1602,6 @@ where
             .map(Some);
         }
     };
-    require_github_publishers(&previous_declaration)?;
     if previous_declaration.version != *previous_version {
         return Err(PublicationError::new(format!(
             "previous release tag {previous_tag:?} contains version {}, expected {previous_version}",
@@ -1538,6 +1645,29 @@ where
             }
         }
     }
+    // Only version tags count: aliases are best effort and may point to another release.
+    for (name, publisher) in &previous_declaration.publishers.oci {
+        let tags = crate::oci::render_tags(&publisher.tags, &publisher.aliases, previous_version)
+            .map_err(|error| PublicationError::new(format!("oci.{name}: {error}")))?;
+        for tag in tags {
+            let crate::oci::OciTag::Version(tag) = tag else {
+                continue;
+            };
+            let found = match oci_manifest(publisher, &tag)? {
+                None => "the tag is missing".to_owned(),
+                Some(manifest) => match crate::oci::annotated_version(&manifest) {
+                    Some(version) if version == *previous_version => continue,
+                    Some(version) => format!("the tag points to version {version}"),
+                    None => "the tag does not point to an image index with a version annotation"
+                        .to_owned(),
+                },
+            };
+            return Err(PublicationError::new(format!(
+                "previous OCI release {}:{tag} (oci.{name}) is incomplete: {found}, expected version {previous_version}",
+                publisher.repository
+            )));
+        }
+    }
     Ok(Some(verified))
 }
 
@@ -1564,15 +1694,6 @@ fn verified_remote_predecessor(
         ))),
         RemoteState::Conflicting(message) => Err(PublicationError::new(message)),
     }
-}
-
-fn require_github_publishers(declaration: &ReleaseDeclaration) -> Result<(), PublicationError> {
-    if declaration.publishers.github_release.is_empty() {
-        return Err(PublicationError::new(
-            "at least one GitHub Release publisher is required",
-        ));
-    }
-    Ok(())
 }
 
 fn stable_base(

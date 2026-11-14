@@ -65,12 +65,6 @@ impl ReleaseDeclaration {
         self.analyzer.validate()?;
         validate_relative_path(&self.changelog.path)?;
 
-        // M1 only supports GitHub Releases, so every release needs one.
-        if self.publishers.github_release.is_empty() {
-            return Err(DeclarationError::Invalid(
-                "at least one GitHub Release publisher is required".into(),
-            ));
-        }
         for (name, publisher) in &self.publishers.github_release {
             if name.is_empty() {
                 return Err(DeclarationError::Invalid(
@@ -78,6 +72,34 @@ impl ReleaseDeclaration {
                 ));
             }
             publisher.validate()?;
+        }
+        for (name, publisher) in &self.publishers.oci {
+            if name.is_empty() {
+                return Err(DeclarationError::Invalid(
+                    "OCI publisher names must not be empty".into(),
+                ));
+            }
+            publisher
+                .validate()
+                .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?;
+        }
+        // Publishers of one repository that share an image tag would each find the other's index
+        // under it and conflict.
+        let stand_in = Version::new(1, 2, 3);
+        let mut pushed = BTreeMap::new();
+        for (name, publisher) in &self.publishers.oci {
+            let tags = crate::oci::render_tags(&publisher.tags, &publisher.aliases, &stand_in)
+                .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?;
+            for tag in tags {
+                let key = (publisher.repository.as_str(), tag.name().to_owned());
+                if let Some(other) = pushed.insert(key, name) {
+                    return Err(DeclarationError::Invalid(format!(
+                        "oci.{other} and oci.{name} both push to {} and must not share a tag or alias; both render {} for version {stand_in}",
+                        publisher.repository,
+                        tag.name()
+                    )));
+                }
+            }
         }
 
         Ok(())
@@ -408,6 +430,91 @@ pub struct Changelog {
 pub struct Publishers {
     #[serde(rename = "github-release")]
     pub github_release: BTreeMap<String, GithubReleasePublisher>,
+    /// Missing in declarations written before the OCI publisher existed.
+    #[serde(default)]
+    pub oci: BTreeMap<String, OciPublisher>,
+}
+
+/// Container images pushed to an OCI registry under tags rendered from the version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OciPublisher {
+    /// Registry host and repository path, such as `ghcr.io/owner/project`.
+    pub repository: String,
+    /// The image for each platform, such as `linux/amd64`, each a path in the Nix store.
+    pub platforms: BTreeMap<String, String>,
+    /// Tag templates of the release; each contains `{version}`.
+    pub tags: Vec<String>,
+    /// Alias templates, such as `latest` or `{major}.{minor}`, that move to a higher version.
+    /// Missing in declarations written before the option existed.
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    /// Whether anyone may pull the images; the previous-release check then reads anonymously.
+    /// Missing in declarations written before the option existed.
+    #[serde(default)]
+    pub public: bool,
+    /// How layers are compressed for the registry.
+    /// Missing in declarations written before the option existed.
+    #[serde(default)]
+    pub compression: Compression,
+    pub username: Username,
+    pub password: Token,
+}
+
+/// The compression of pushed image layers, with its level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+pub enum Compression {
+    Gzip { level: u32 },
+    Zstd { level: i32 },
+}
+
+impl Default for Compression {
+    fn default() -> Self {
+        Self::Gzip { level: 6 }
+    }
+}
+
+/// The registry username: the name of an environment variable read at run time, or the username
+/// itself, which is no secret for registries such as Google Artifact Registry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Username {
+    Secret(String),
+    Value(String),
+}
+
+impl OciPublisher {
+    fn validate(&self) -> Result<(), String> {
+        crate::oci::RepositoryReference::parse(&self.repository)?;
+        if self.platforms.is_empty() {
+            return Err("an OCI publisher needs at least one image".into());
+        }
+        for (platform, path) in &self.platforms {
+            crate::oci::Platform::parse(platform)?;
+            if !path.starts_with('/') {
+                return Err(format!(
+                    "image {platform} must be an absolute store path, not {path:?}"
+                ));
+            }
+        }
+        crate::oci::validate_tag_templates(&self.tags, &self.aliases)?;
+        match self.compression {
+            Compression::Gzip { level } if !(1..=9).contains(&level) => {
+                return Err(format!("gzip level {level} must be between 1 and 9"));
+            }
+            Compression::Zstd { level } if !(1..=22).contains(&level) => {
+                return Err(format!("zstd level {level} must be between 1 and 22"));
+            }
+            _ => {}
+        }
+        if let Username::Secret(name) | Username::Value(name) = &self.username
+            && name.is_empty()
+        {
+            return Err("the registry username must not be empty".into());
+        }
+        self.password.validate().map_err(|error| error.to_string())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -759,14 +866,11 @@ mod tests {
     }
 
     #[test]
-    fn requires_a_github_release_publisher() {
+    fn accepts_a_release_without_publishers() {
         let empty = declaration(|value| value["publishers"]["github-release"] = json!({}));
-        assert!(
-            ReleaseDeclaration::from_json(&empty)
-                .unwrap_err()
-                .to_string()
-                .contains("at least one")
-        );
+        let declaration = ReleaseDeclaration::from_json(&empty).unwrap();
+        assert!(declaration.publishers.github_release.is_empty());
+        assert!(declaration.publishers.oci.is_empty());
     }
 
     #[test]
@@ -982,5 +1086,57 @@ mod tests {
             ReleaseDeclaration::from_json(&invalid).unwrap_err(),
             DeclarationError::IncompatibleUnstableSchema(_)
         ));
+    }
+
+    #[test]
+    fn oci_publishers_of_one_repository_share_no_image_tag() {
+        let oci = |repository: &str, tags: Value, aliases: Value| {
+            json!({
+                "repository": repository,
+                "platforms": { "linux/amd64": "/nix/store/00000000000000000000000000000000-image.tar.gz" },
+                "tags": tags,
+                "aliases": aliases,
+                "username": { "secret": "REGISTRY_USERNAME" },
+                "password": { "secret": "REGISTRY_TOKEN" }
+            })
+        };
+        let with = |debug: Value| {
+            let default = oci(
+                "ghcr.io/owner/project",
+                json!(["{version}"]),
+                json!(["latest"]),
+            );
+            declaration(|value| {
+                value["publishers"]["oci"] = json!({ "default": default, "debug": debug });
+            })
+        };
+        assert!(
+            ReleaseDeclaration::from_json(&with(oci(
+                "ghcr.io/owner/project",
+                json!(["{version}-debug"]),
+                json!(["debug"])
+            )))
+            .is_ok()
+        );
+        assert!(
+            ReleaseDeclaration::from_json(&with(oci(
+                "ghcr.io/owner/other",
+                json!(["{version}"]),
+                json!(["latest"])
+            )))
+            .is_ok()
+        );
+        let error = ReleaseDeclaration::from_json(&with(oci(
+            "ghcr.io/owner/project",
+            json!(["{version}-debug"]),
+            json!(["latest"]),
+        )))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("oci.debug and oci.default both push to ghcr.io/owner/project")
+                && error.contains("both render latest"),
+            "{error}"
+        );
     }
 }

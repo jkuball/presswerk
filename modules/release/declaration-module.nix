@@ -18,6 +18,19 @@
         (builtins.attrNames (lib.filterAttrs (_type: entry: entry != null) config.analyzer.conventional.catalog));
       catalogEmojis = map (entry: normalizedEmoji entry.emoji) catalogEntries;
       catalogShortcodes = map (entry: entry.shortcode) catalogEntries;
+      # OCI tag templates rendered with a stand-in version whose parts differ, as the CLI checks them.
+      renderOciTags = oci:
+        map (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "1.2.3" "1" "2" "3" ])
+          (oci.tags ++ oci.aliases);
+      # Image tags that two OCI publishers of one repository would both push.
+      sharedOciTags = lib.concatLists (lib.mapAttrsToList
+        (name: oci: lib.concatLists (lib.mapAttrsToList
+          (other: otherOci:
+            map (tag: { inherit name other tag; inherit (oci) repository; })
+              (lib.optionals (name < other && oci.repository == otherOci.repository)
+                (lib.intersectLists (renderOciTags oci) (renderOciTags otherOci))))
+          config.publishers.oci))
+        config.publishers.oci);
 
       relativePath = types.addCheck types.str (
         path:
@@ -246,6 +259,109 @@
           };
         };
       };
+
+      secretModule = what: example: {
+        options.secret = mkOption {
+          type = types.nonEmptyStr;
+          inherit example;
+          description = "Name of the environment variable that holds the ${what}.";
+        };
+      };
+
+      # Rendered with a stand-in version, a tag must be a valid OCI tag.
+      ociTag = types.addCheck types.nonEmptyStr
+        (
+          template: builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "0.0.0" "0" "0" "0" ] template) != null
+        ) // { description = "OCI tag, optionally containing {version}, {major}, {minor}, or {patch}"; };
+
+      ociModule = { config, ... }: {
+        options = {
+          repository = mkOption {
+            # A plain host and optional port: no credentials, query, or fragment in the declaration.
+            type = types.strMatching "(([A-Za-z0-9-]+[.])+[A-Za-z0-9-]+(:[0-9]+)?|[A-Za-z0-9.-]+:[0-9]+|localhost|\\[[0-9A-Fa-f:]+](:[0-9]+)?)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
+            example = "ghcr.io/owner/project";
+            description = "Registry host, with an optional port, and repository path the images are pushed to. Credentials never go here, only into `username` and `password`. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
+          };
+
+          platforms = mkOption {
+            type = types.attrsOf artifactFile;
+            example = lib.literalExpression ''
+              {
+                "linux/amd64" = self.packages.x86_64-linux.image;
+                "linux/arm64" = self.packages.aarch64-linux.image;
+              }
+            '';
+            description = "The image for each platform, keyed by `os/architecture[/variant]`, which must match the image's config. Each is a Docker image archive, gzip- or zstd-compressed or not, such as the output of `dockerTools.buildImage` or `buildLayeredImage`, or an executable that writes an uncompressed one to stdout, such as the output of `streamLayeredImage`. `publish` fetches them from the local store or a substituter without building. The images of all platforms form one image index.";
+          };
+
+          tags = mkOption {
+            type = types.listOf ociTag;
+            default = [ "{version}" ];
+            example = [ "{version}" "v{version}" ];
+            description = "Tags of the release. Each contains `{version}`, which is replaced by the version, and may also use `{major}`, `{minor}`, and `{patch}`. A tag is never moved once it exists.";
+          };
+
+          aliases = mkOption {
+            type = types.listOf ociTag;
+            default = [ ];
+            example = [ "latest" "{major}" "{major}.{minor}" ];
+            description = "Floating tags, also called rolling tags, that follow the release line, such as `latest`, `{major}`, or `{major}.{minor}`. An alias may use `{major}`, `{minor}`, and `{patch}`, but not `{version}`. It moves only to a higher stable version than the one it points to, so `{major}` stays within its major version.";
+          };
+
+          public = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Whether anyone may pull the images without credentials. `plan` and `prepare` then check the previous release's tags anonymously and never read `username` or `password`; otherwise they need the credentials for that check. `publish` always needs the credentials.";
+          };
+
+          compression = {
+            gzip = {
+              enable = mkOption {
+                type = types.bool;
+                default = !config.compression.zstd.enable;
+                defaultText = lib.literalExpression "!compression.zstd.enable";
+                description = "Compress layers with gzip, which every client can pull. This is the default.";
+              };
+              level = mkOption {
+                type = types.ints.between 1 9;
+                default = 6;
+                description = "The gzip level, from 1 (fastest) to 9 (smallest).";
+              };
+            };
+            zstd = {
+              enable = lib.mkEnableOption "zstd compression of layers, which is smaller and faster to unpack, but needs Docker 23, containerd 1.5, or a similarly recent client to pull";
+              level = mkOption {
+                type = types.ints.between 1 22;
+                default = 3;
+                description = "The zstd level, from 1 (fastest) to 22 (smallest).";
+              };
+            };
+          };
+
+          username = mkOption {
+            type = types.submodule {
+              options.secret = mkOption {
+                type = types.nullOr types.nonEmptyStr;
+                default = null;
+                example = "REGISTRY_USERNAME";
+                description = "Name of the environment variable that holds the registry username.";
+              };
+              options.value = mkOption {
+                type = types.nullOr types.nonEmptyStr;
+                default = null;
+                example = "oauth2accesstoken";
+                description = "The registry username itself, for registries where it is no secret, such as `oauth2accesstoken` for Google Artifact Registry. It is written into the release declaration.";
+              };
+            };
+            description = "Registry username: either `secret`, read from an environment variable at run time, or `value`.";
+          };
+
+          password = mkOption {
+            type = types.submodule (secretModule "registry password or token" "REGISTRY_TOKEN");
+            description = "Registry password or token, read from an environment variable at run time.";
+          };
+        };
+      };
     in
     {
       options = {
@@ -374,6 +490,25 @@
           description = "GitHub Release publishers.";
         };
 
+        publishers.oci = mkOption {
+          type = types.attrsOf (types.submodule ociModule);
+          default = { };
+          example = lib.literalExpression ''
+            {
+              default = {
+                repository = "ghcr.io/owner/project";
+                platforms."linux/amd64" = self.packages.x86_64-linux.image;
+                tags = [ "{version}" ];
+                aliases = [ "latest" "{major}" ];
+                public = true;
+                username.secret = "GITHUB_ACTOR";
+                password.secret = "GITHUB_TOKEN";
+              };
+            }
+          '';
+          description = "OCI image publishers.";
+        };
+
         assertions = mkOption {
           type = types.listOf (types.submodule {
             options = {
@@ -392,7 +527,41 @@
         analyzer.gitmoji.catalog = lib.mapAttrs (_shortcode: lib.mapAttrs (_field: lib.mkDefault)) gitmojiCatalog;
         analyzer.conventional.catalog = lib.mapAttrs (_type: lib.mapAttrs (_field: lib.mkDefault)) conventionalCatalog;
 
-        assertions = [
+        assertions = lib.concatLists
+          (lib.mapAttrsToList
+            (name: oci: [
+              {
+                assertion = oci.platforms != { };
+                message = "publishers.oci.${name}.platforms must contain at least one image";
+              }
+              {
+                assertion = oci.tags != [ ] && lib.all (lib.hasInfix "{version}") oci.tags;
+                message = "publishers.oci.${name}.tags must contain {version} in every tag, and at least one tag, so every release has a tag of its own; declare tags that follow other versions under aliases";
+              }
+              {
+                assertion = !lib.any (lib.hasInfix "{version}") oci.aliases;
+                message = "publishers.oci.${name}.aliases must not contain {version}, which names a single version; declare such tags under tags";
+              }
+              {
+                assertion = oci.compression.gzip.enable != oci.compression.zstd.enable;
+                message = "publishers.oci.${name}.compression needs exactly one of gzip and zstd enabled";
+              }
+              {
+                assertion = (oci.username.secret == null) != (oci.username.value == null);
+                message = "publishers.oci.${name}.username needs exactly one of secret and value";
+              }
+              {
+                assertion = lib.allUnique (renderOciTags oci);
+                message = "publishers.oci.${name}.tags and aliases must not render to the same tag";
+              }
+            ])
+            config.publishers.oci) ++ [
+          {
+            assertion = sharedOciTags == [ ];
+            message =
+              let shared = builtins.head sharedOciTags;
+              in "publishers.oci.${shared.name} and publishers.oci.${shared.other} both push to ${shared.repository} and must not share a tag or alias; both render ${shared.tag} for version 1.2.3";
+          }
           {
             assertion = builtins.length enabledAnalyzers == 1;
             message =

@@ -162,6 +162,13 @@ pub fn build_release_plan(
         .as_ref()
         .map(|version| declaration.tag.render(version))
         .transpose()?;
+    // Catch tags that the next version cannot fill before the release commit uses it up.
+    if let Some(version) = &next_version {
+        for (name, publisher) in &declaration.publishers.oci {
+            crate::oci::render_tags(&publisher.tags, &publisher.aliases, version)
+                .map_err(|error| anyhow::anyhow!("oci.{name}: {error}"))?;
+        }
+    }
     let release_subject = next_tag
         .as_deref()
         .map(|tag| release_subject(&declaration.analyzer, tag));
@@ -307,8 +314,27 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
         }
         None => output.push_str("next version       none (no release-worthy commits)\n"),
     }
-    if let Some(tag) = &plan.next_tag {
+    if let (Some(tag), Some(version)) = (&plan.next_tag, &plan.next_version) {
         output.push_str("\npublishers\n");
+        if plan.publishers.oci.is_empty() && plan.publishers.github_release.is_empty() {
+            output.push_str("  none\n");
+        }
+        for (name, publisher) in &plan.publishers.oci {
+            let _ = writeln!(output, "  oci.{name}  {}", publisher.repository);
+            // Store paths are left out: the release commit's images get their own paths.
+            for platform in publisher.platforms.keys() {
+                let _ = writeln!(output, "    image    {platform}");
+            }
+            for tag in crate::oci::render_tags(&publisher.tags, &publisher.aliases, version)
+                .unwrap_or_default()
+            {
+                let kind = match tag {
+                    crate::oci::OciTag::Version(_) => "tag",
+                    crate::oci::OciTag::Alias(_) => "alias",
+                };
+                let _ = writeln!(output, "    {kind:<8} {}", tag.name());
+            }
+        }
         for (name, publisher) in &plan.publishers.github_release {
             let _ = writeln!(output, "  github-release.{name}  {}", publisher.repository);
             let _ = writeln!(output, "    release  {tag}");

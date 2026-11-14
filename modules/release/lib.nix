@@ -87,5 +87,13 @@ in
         };
       changelog.path = releaseConfig.changelog.path;
       publishers.github-release = releaseConfig.publishers.github-release;
+      publishers.oci = lib.mapAttrs
+        (_name: oci: oci // {
+          compression =
+            if oci.compression.zstd.enable then { zstd.level = oci.compression.zstd.level; }
+            else { gzip.level = oci.compression.gzip.level; };
+          username = lib.filterAttrs (_source: value: value != null) oci.username;
+        })
+        releaseConfig.publishers.oci;
     };
 }
