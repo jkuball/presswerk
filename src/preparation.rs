@@ -168,6 +168,10 @@ pub fn build_release_plan(
             crate::oci::render_tags(&publisher.tags, &publisher.aliases, version)
                 .map_err(|error| anyhow::anyhow!("oci.{name}: {error}"))?;
         }
+        for name in declaration.publishers.helm.keys() {
+            crate::helm::validate_tag(version)
+                .map_err(|error| anyhow::anyhow!("helm.{name}: {error}"))?;
+        }
     }
     let release_subject = next_tag
         .as_deref()
@@ -316,7 +320,10 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
     }
     if let (Some(tag), Some(version)) = (&plan.next_tag, &plan.next_version) {
         output.push_str("\npublishers\n");
-        if plan.publishers.oci.is_empty() && plan.publishers.github_release.is_empty() {
+        if plan.publishers.oci.is_empty()
+            && plan.publishers.helm.is_empty()
+            && plan.publishers.github_release.is_empty()
+        {
             output.push_str("  none\n");
         }
         for (name, publisher) in &plan.publishers.oci {
@@ -334,6 +341,15 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
                 };
                 let _ = writeln!(output, "    {kind:<8} {}", tag.name());
             }
+        }
+        for (name, publisher) in &plan.publishers.helm {
+            let _ = writeln!(output, "  helm.{name}  {}", publisher.repository);
+            let _ = writeln!(
+                output,
+                "    tag      {}:{}",
+                publisher.repository,
+                crate::helm::tag(version)
+            );
         }
         for (name, publisher) in &plan.publishers.github_release {
             let _ = writeln!(output, "  github-release.{name}  {}", publisher.repository);

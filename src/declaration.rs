@@ -83,8 +83,18 @@ impl ReleaseDeclaration {
                 .validate()
                 .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?;
         }
-        // Publishers of one repository that share an image tag would each find the other's index
-        // under it and conflict.
+        for (name, publisher) in &self.publishers.helm {
+            if name.is_empty() {
+                return Err(DeclarationError::Invalid(
+                    "Helm publisher names must not be empty".into(),
+                ));
+            }
+            publisher
+                .validate()
+                .map_err(|error| DeclarationError::Invalid(format!("helm.{name}: {error}")))?;
+        }
+        // Registry publishers of one repository that share a tag would each find the other's
+        // manifest under it and conflict.
         let stand_in = Version::new(1, 2, 3);
         let mut pushed = BTreeMap::new();
         for (name, publisher) in &self.publishers.oci {
@@ -92,13 +102,23 @@ impl ReleaseDeclaration {
                 .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?;
             for tag in tags {
                 let key = (publisher.repository.as_str(), tag.name().to_owned());
-                if let Some(other) = pushed.insert(key, name) {
+                if let Some(other) = pushed.insert(key, format!("oci.{name}")) {
                     return Err(DeclarationError::Invalid(format!(
-                        "oci.{other} and oci.{name} both push to {} and must not share a tag or alias; both render {} for version {stand_in}",
+                        "{other} and oci.{name} both push to {} and must not share a tag or alias; both render {} for version {stand_in}",
                         publisher.repository,
                         tag.name()
                     )));
                 }
+            }
+        }
+        for (name, publisher) in &self.publishers.helm {
+            let rendered = crate::helm::tag(&stand_in);
+            let key = (publisher.repository.as_str(), rendered.clone());
+            if let Some(other) = pushed.insert(key, format!("helm.{name}")) {
+                return Err(DeclarationError::Invalid(format!(
+                    "{other} and helm.{name} both push to {} and must not share a tag; both render {rendered} for version {stand_in}",
+                    publisher.repository
+                )));
             }
         }
 
@@ -433,6 +453,37 @@ pub struct Publishers {
     /// Missing in declarations written before the OCI publisher existed.
     #[serde(default)]
     pub oci: BTreeMap<String, OciPublisher>,
+    /// Missing in declarations written before the Helm publisher existed.
+    #[serde(default)]
+    pub helm: BTreeMap<String, HelmPublisher>,
+}
+
+/// A packaged Helm chart pushed to an OCI registry under its release version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HelmPublisher {
+    /// Full registry repository path, ending in the chart name.
+    pub repository: String,
+    /// Chart archive written by `helm package`, as a path in the Nix store.
+    pub chart: String,
+    /// Whether anyone may pull the chart; the previous-release check then reads anonymously.
+    #[serde(default)]
+    pub public: bool,
+    pub username: Username,
+    pub password: Token,
+}
+
+impl HelmPublisher {
+    fn validate(&self) -> Result<(), String> {
+        crate::oci::RepositoryReference::parse(&self.repository)?;
+        if !self.chart.starts_with('/') {
+            return Err(format!(
+                "chart must be an absolute store path, not {:?}",
+                self.chart
+            ));
+        }
+        validate_registry_credentials(&self.username, &self.password)
+    }
 }
 
 /// Container images pushed to an OCI registry under tags rendered from the version.
@@ -508,13 +559,17 @@ impl OciPublisher {
             }
             _ => {}
         }
-        if let Username::Secret(name) | Username::Value(name) = &self.username
-            && name.is_empty()
-        {
-            return Err("the registry username must not be empty".into());
-        }
-        self.password.validate().map_err(|error| error.to_string())
+        validate_registry_credentials(&self.username, &self.password)
     }
+}
+
+fn validate_registry_credentials(username: &Username, password: &Token) -> Result<(), String> {
+    if let Username::Secret(name) | Username::Value(name) = username
+        && name.is_empty()
+    {
+        return Err("the registry username must not be empty".into());
+    }
+    password.validate().map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -871,6 +926,7 @@ mod tests {
         let declaration = ReleaseDeclaration::from_json(&empty).unwrap();
         assert!(declaration.publishers.github_release.is_empty());
         assert!(declaration.publishers.oci.is_empty());
+        assert!(declaration.publishers.helm.is_empty());
     }
 
     #[test]
@@ -1086,6 +1142,79 @@ mod tests {
             ReleaseDeclaration::from_json(&invalid).unwrap_err(),
             DeclarationError::IncompatibleUnstableSchema(_)
         ));
+    }
+
+    #[test]
+    fn decodes_and_validates_helm_publishers() {
+        let with = |repository: &str, chart: &str| {
+            declaration(|value| {
+                value["publishers"]["helm"] = json!({
+                    "default": {
+                        "repository": repository,
+                        "chart": chart,
+                        "public": true,
+                        "username": { "value": "oauth2accesstoken" },
+                        "password": { "secret": "REGISTRY_TOKEN" }
+                    }
+                });
+            })
+        };
+        let decoded = ReleaseDeclaration::from_json(&with(
+            "ghcr.io/owner/charts/project",
+            "/nix/store/abc-project-1.2.3.tgz",
+        ))
+        .unwrap();
+        let publisher = &decoded.publishers.helm["default"];
+        assert!(publisher.public);
+        assert_eq!(publisher.chart, "/nix/store/abc-project-1.2.3.tgz");
+
+        for (repository, chart, expected) in [
+            (
+                "owner/charts/project",
+                "/nix/store/abc-project.tgz",
+                "must start with a registry host",
+            ),
+            (
+                "ghcr.io/owner/charts/project",
+                "result/project.tgz",
+                "absolute store path",
+            ),
+        ] {
+            let error = ReleaseDeclaration::from_json(&with(repository, chart))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn helm_and_oci_publishers_do_not_share_the_release_tag() {
+        let json = declaration(|value| {
+            value["publishers"]["helm"] = json!({
+                "default": {
+                    "repository": "ghcr.io/owner/charts/project",
+                    "chart": "/nix/store/abc-project.tgz",
+                    "username": { "secret": "REGISTRY_USERNAME" },
+                    "password": { "secret": "REGISTRY_TOKEN" }
+                }
+            });
+            value["publishers"]["oci"] = json!({
+                "default": {
+                    "repository": "ghcr.io/owner/charts/project",
+                    "platforms": { "linux/amd64": "/nix/store/abc-image.tar.gz" },
+                    "tags": ["{version}"],
+                    "aliases": [],
+                    "username": { "secret": "REGISTRY_USERNAME" },
+                    "password": { "secret": "REGISTRY_TOKEN" }
+                }
+            });
+        });
+
+        let error = ReleaseDeclaration::from_json(&json)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("oci.default and helm.default"), "{error}");
+        assert!(error.contains("both render 1.2.3"), "{error}");
     }
 
     #[test]

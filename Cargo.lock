@@ -1749,6 +1749,7 @@ dependencies = [
  "toml_edit",
  "ureq",
  "url",
+ "yaml-rust2",
  "zstd",
 ]
 
