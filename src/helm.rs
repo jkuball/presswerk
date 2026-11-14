@@ -82,7 +82,7 @@ impl ChartPackage {
         let chart_digest = digest_reader(File::open(&path_buf).map_err(|error| {
             PublicationError::new(format!("could not open Helm chart {path:?}: {error}"))
         })?)?;
-        let metadata = read_chart_metadata(&path_buf)?;
+        let (root, metadata) = read_chart_metadata(&path_buf)?;
         let documents = YamlLoader::load_from_str(&metadata).map_err(|error| {
             PublicationError::new(format!("could not parse Chart.yaml in {path:?}: {error}"))
         })?;
@@ -106,6 +106,11 @@ impl ChartPackage {
                 })
         };
         let name = field("name")?.to_owned();
+        if root != name {
+            return Err(PublicationError::new(format!(
+                "Helm chart {path:?} has root directory {root:?}, expected chart name {name:?}"
+            )));
+        }
         let version_text = field("version")?;
         let version = Version::parse(version_text).map_err(|error| {
             PublicationError::new(format!(
@@ -166,7 +171,7 @@ impl ChartPackage {
     }
 }
 
-fn read_chart_metadata(path: &Path) -> Result<String, PublicationError> {
+fn read_chart_metadata(path: &Path) -> Result<(String, String), PublicationError> {
     let file = File::open(path).map_err(|error| {
         PublicationError::new(format!(
             "could not open Helm chart {:?}: {error}",
@@ -195,12 +200,21 @@ fn read_chart_metadata(path: &Path) -> Result<String, PublicationError> {
             ))
         })?;
         let components: Vec<_> = entry_path.components().collect();
-        if !matches!(
-            components.as_slice(),
-            [Component::Normal(_), Component::Normal(name)] if *name == "Chart.yaml"
-        ) {
+        let [Component::Normal(root), Component::Normal(name)] = components.as_slice() else {
+            continue;
+        };
+        if *name != "Chart.yaml" {
             continue;
         }
+        let root = root
+            .to_str()
+            .ok_or_else(|| {
+                PublicationError::new(format!(
+                    "Helm chart {:?} has a non-UTF-8 root directory",
+                    path.display()
+                ))
+            })?
+            .to_owned();
         if found.is_some() {
             return Err(PublicationError::new(format!(
                 "Helm chart {:?} contains more than one top-level Chart.yaml",
@@ -224,12 +238,15 @@ fn read_chart_metadata(path: &Path) -> Result<String, PublicationError> {
                 path.display()
             )));
         }
-        found = Some(String::from_utf8(bytes).map_err(|error| {
-            PublicationError::new(format!(
-                "Chart.yaml in {:?} is not UTF-8: {error}",
-                path.display()
-            ))
-        })?);
+        found = Some((
+            root,
+            String::from_utf8(bytes).map_err(|error| {
+                PublicationError::new(format!(
+                    "Chart.yaml in {:?} is not UTF-8: {error}",
+                    path.display()
+                ))
+            })?,
+        ));
     }
     found.ok_or_else(|| {
         PublicationError::new(format!(
@@ -580,6 +597,10 @@ mod tests {
     use std::rc::Rc;
 
     fn chart(directory: &Path, name: &str, version: &str) -> PathBuf {
+        chart_with_root(directory, name, name, version)
+    }
+
+    fn chart_with_root(directory: &Path, root: &str, name: &str, version: &str) -> PathBuf {
         let path = directory.join(format!("{name}-{version}.tgz"));
         let encoder = GzEncoder::new(File::create(&path).unwrap(), Compression::default());
         let mut archive = tar::Builder::new(encoder);
@@ -587,9 +608,9 @@ mod tests {
             "apiVersion: v2\nname: {name}\ndescription: Test chart\ntype: application\nversion: {version}\nappVersion: {version}\nannotations:\n  example: value\n"
         );
         for (entry, contents) in [
-            (format!("{name}/Chart.yaml"), metadata.as_bytes()),
+            (format!("{root}/Chart.yaml"), metadata.as_bytes()),
             (
-                format!("{name}/templates/deployment.yaml"),
+                format!("{root}/templates/deployment.yaml"),
                 b"kind: Deployment\n".as_slice(),
             ),
         ] {
@@ -869,6 +890,15 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(wrong_name.contains("must end in chart name \"project\""));
+
+        let wrong_root = chart_with_root(directory.path(), "other", "project", "1.2.3");
+        let wrong_root = ChartPackage::open(&wrong_root.to_string_lossy())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            wrong_root.contains("root directory \"other\""),
+            "{wrong_root}"
+        );
     }
 
     #[test]
