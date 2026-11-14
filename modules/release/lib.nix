@@ -85,7 +85,7 @@ in
             )
             (lib.filterAttrs (_identifier: entry: entry != null) releaseConfig.analyzer.gitmoji.catalog);
         };
-      changelog.path = releaseConfig.changelog.path;
+      changelog = releaseConfig.changelog;
       publishers.github-release = releaseConfig.publishers.github-release;
       publishers.oci = lib.mapAttrs
         (_name: oci: oci // {

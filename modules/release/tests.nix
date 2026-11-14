@@ -33,6 +33,7 @@ let
   presswerkVersion = (builtins.fromTOML (builtins.readFile (self.outPath + "/Cargo.toml"))).package.version;
   vendoredCatalog = builtins.fromJSON (builtins.readFile ./gitmoji/catalog.json);
   conventionalCatalog = builtins.fromJSON (builtins.readFile ./conventional/catalog.json);
+  defaultChangelogTemplate = builtins.readFile ../../src/release-notes.md.j2;
   # The message of the first failed assertion for a release module with these settings.
   failedAssertion = settings: (lib.findFirst (assertion: !assertion.assertion) null
     (lib.evalModules {
@@ -97,10 +98,14 @@ in
           convention = "gitmoji";
           gitmoji.catalog = vendoredCatalog;
         };
-        changelog.path = "CHANGELOG.md";
+        changelog = {
+          path = "CHANGELOG.md";
+          template = defaultChangelogTemplate;
+        };
         publishers.github-release.default = {
           apiUrl = "https://api.github.com";
           repository = "owner/project";
+          body = "{{ notes }}";
           token.secret = "GITHUB_TOKEN";
           assets = { };
         };
@@ -129,7 +134,10 @@ in
             cargoLock = "actual-crate";
           }
         ];
-        changelog.path = "docs/NEWS.md";
+        changelog = {
+          path = "docs/NEWS.md";
+          template = defaultChangelogTemplate;
+        };
       };
     };
 

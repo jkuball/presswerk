@@ -60,6 +60,7 @@ export default defineConfig({
             { label: 'Release options', link: '/reference/options/' },
             { slug: 'reference/cli' },
             { slug: 'reference/version-files' },
+            { slug: 'reference/changelog' },
             {
               label: 'Commit analyzers',
               items: [

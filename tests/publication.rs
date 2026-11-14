@@ -1388,7 +1388,7 @@ fn github_creates_a_draft_then_publishes_and_verifies_it() {
             path: "/repos/owner/project/releases",
             status: 201,
             response: r#"{"id":7,"draft":true,"prerelease":false}"#,
-            body_contains: Some(r#""draft":true"#),
+            body_contains: Some(r#""body":"Frozen notes.\n\nInstall 0.1.0 from v0.1.0""#),
         },
         ExpectedRequest {
             method: "PATCH",
@@ -1413,13 +1413,29 @@ fn github_creates_a_draft_then_publishes_and_verifies_it() {
         },
     ]);
     let client = GithubClient::new(&url, "test-token").unwrap();
-    let publisher = GithubPublisher::new(client, "owner/project");
+    let publisher = GithubPublisher::new(client, "owner/project")
+        .with_body("{{ notes }}\nInstall {{ version }} from {{ tag }}");
 
     publisher
         .publish(&release("0123456789012345678901234567890123456789".into()))
         .unwrap();
 
     server.join().unwrap();
+}
+
+#[test]
+fn github_body_template_errors_before_reading_remote_state() {
+    let publisher = GithubPublisher::new(
+        GithubClient::new("https://api.github.com", "test-token").unwrap(),
+        "owner/project",
+    )
+    .with_body("{{ unknown }}");
+
+    let error = publisher
+        .state(&release("0123456789012345678901234567890123456789".into()))
+        .unwrap_err();
+
+    assert!(error.to_string().contains("body template"), "{error}");
 }
 
 fn leak(text: String) -> &'static str {
@@ -1480,7 +1496,7 @@ fn github_uploads_assets_into_the_draft_before_publishing_it() {
                 path: "/repos/owner/project/releases",
                 status: 201,
                 response: draft,
-                body_contains: Some(r#""draft":true"#),
+                body_contains: Some(r#""body":"Frozen notes.\n""#),
             },
             ExpectedRequest {
                 method: "POST",

@@ -125,7 +125,11 @@ pub fn build_release_plan(
     )?;
     let analysis = analyzer.analyze(&range, &declaration.analyzer, &declaration.tag)?;
     let next_version = analysis.next_version(Some(&declaration.version))?;
-    let notes = render_release_notes(&analysis)?;
+    let notes = render_release_notes(
+        &analysis,
+        next_version.as_ref().unwrap_or(&declaration.version),
+        &declaration.changelog.template,
+    )?;
     let mut version_files = Vec::new();
     let mut release_files = Vec::new();
 

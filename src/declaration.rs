@@ -1,4 +1,5 @@
 use crate::analysis::Bump;
+use minijinja::{Environment, UndefinedBehavior, value::Serde};
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -13,6 +14,8 @@ use url::Url;
 pub const UNSTABLE_SCHEMA_VERSION: i64 = 0;
 
 pub const SCHEMA_VERSION: i64 = UNSTABLE_SCHEMA_VERSION;
+pub const DEFAULT_CHANGELOG_TEMPLATE: &str = include_str!("release-notes.md.j2");
+pub const DEFAULT_GITHUB_RELEASE_BODY: &str = "{{ notes }}";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -64,6 +67,23 @@ impl ReleaseDeclaration {
         self.tag.validate()?;
         self.analyzer.validate()?;
         validate_relative_path(&self.changelog.path)?;
+        validate_template(
+            &self.changelog.template,
+            "changelog.template",
+            serde_json::json!({
+                "version": "1.2.3",
+                "groups": [{
+                    "title": "Features",
+                    "commits": [{
+                        "text": "Add search",
+                        "message": "Add search",
+                        "scope": "cli",
+                        "breaking": false,
+                        "id": "0123456789abcdef"
+                    }]
+                }]
+            }),
+        )?;
 
         for (name, publisher) in &self.publishers.github_release {
             if name.is_empty() {
@@ -423,6 +443,12 @@ where
 #[serde(deny_unknown_fields)]
 pub struct Changelog {
     pub path: String,
+    #[serde(default = "default_changelog_template")]
+    pub template: String,
+}
+
+fn default_changelog_template() -> String {
+    DEFAULT_CHANGELOG_TEMPLATE.into()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -523,9 +549,15 @@ pub struct GithubReleasePublisher {
     pub api_url: String,
     pub repository: String,
     pub token: Token,
+    #[serde(default = "default_github_release_body")]
+    pub body: String,
     /// Files attached to the release, by asset name. Each is a path in the Nix store.
     #[serde(default)]
     pub assets: BTreeMap<String, String>,
+}
+
+fn default_github_release_body() -> String {
+    DEFAULT_GITHUB_RELEASE_BODY.into()
 }
 
 impl GithubReleasePublisher {
@@ -556,6 +588,15 @@ impl GithubReleasePublisher {
                 self.api_url
             )));
         }
+        validate_template(
+            &self.body,
+            "publishers.github-release.<name>.body",
+            serde_json::json!({
+                "notes": "### Features\n\n- Add search\n",
+                "version": "1.2.3",
+                "tag": "v1.2.3"
+            }),
+        )?;
         for (name, path) in &self.assets {
             if name.is_empty() || name.contains('/') {
                 return Err(DeclarationError::Invalid(format!(
@@ -640,6 +681,17 @@ pub(crate) fn strip_variation_selectors(value: &str) -> String {
         .collect()
 }
 
+fn validate_template(template: &str, option: &str, context: Value) -> Result<(), DeclarationError> {
+    let mut environment = Environment::new();
+    environment.set_undefined_behavior(UndefinedBehavior::Strict);
+    environment
+        .render_str(template, Serde(&context))
+        .map(|_| ())
+        .map_err(|error| {
+            DeclarationError::Invalid(format!("invalid MiniJinja template in {option}: {error}"))
+        })
+}
+
 fn validate_relative_path(path: &str) -> Result<(), DeclarationError> {
     if path.is_empty()
         || path.starts_with('/')
@@ -704,12 +756,17 @@ mod tests {
         assert_eq!(
             declaration.changelog,
             Changelog {
-                path: "CHANGELOG.md".into()
+                path: "CHANGELOG.md".into(),
+                template: DEFAULT_CHANGELOG_TEMPLATE.into(),
             }
         );
         assert_eq!(
             declaration.publishers.github_release["default"].api_url,
             "https://api.github.com"
+        );
+        assert_eq!(
+            declaration.publishers.github_release["default"].body,
+            DEFAULT_GITHUB_RELEASE_BODY
         );
         let Analyzer::Gitmoji { gitmoji } = &declaration.analyzer else {
             panic!("expected the Gitmoji analyzer");
@@ -978,6 +1035,39 @@ mod tests {
                     .to_string()
                     .contains(message)
             );
+        }
+    }
+
+    #[test]
+    fn validates_templates_with_their_documented_context() {
+        let valid = declaration(|value| {
+            value["changelog"]["template"] = json!(
+                "{{ version }}{% for group in groups %}{{ group.title }}{% for commit in group.commits %}{{ commit.text }}{{ commit.message }}{{ commit.scope }}{{ commit.breaking }}{{ commit.id }}{% endfor %}{% endfor %}"
+            );
+            value["publishers"]["github-release"]["default"]["body"] =
+                json!("{{ notes }} {{ version }} {{ tag }}");
+        });
+        ReleaseDeclaration::from_json(&valid).unwrap();
+
+        for (path, template) in [
+            (
+                &["changelog", "template"][..],
+                "{{ groups[0].commits[0].unknown }}",
+            ),
+            (
+                &["publishers", "github-release", "default", "body"][..],
+                "{{ unknown }}",
+            ),
+        ] {
+            let invalid = declaration(|value| {
+                let mut field = value;
+                for part in &path[..path.len() - 1] {
+                    field = &mut field[*part];
+                }
+                field[path[path.len() - 1]] = json!(template);
+            });
+            let error = ReleaseDeclaration::from_json(&invalid).unwrap_err();
+            assert!(error.to_string().contains("MiniJinja template"), "{error}");
         }
     }
 

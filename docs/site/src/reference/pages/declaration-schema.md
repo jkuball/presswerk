@@ -29,7 +29,9 @@ Every field is required, and unknown fields are rejected.
 - `schemaVersion`: the integer `0`.
 - `version`: the effective release version, such as `"1.4.0"` or `"2.0.0-rc.1"`.
 - `tag.format`: the release tag format, containing `{version}` exactly once.
-- `changelog.path`: the repository-relative path of the changelog.
+- `changelog.path`: the repository-relative path of the changelog. `changelog.template` is the
+  MiniJinja template that renders a version section from the analyzed commit groups; it may be
+  missing in older declarations and then means the built-in template.
 - `versionFiles`: the files whose version `prepare` updates. Each entry has a repository-relative
   `path` and either `toml` or `json`, a dotted key selector such as `"package.version"`, `plain`,
   an empty object for a file that contains only the version, `regex`, a pattern with a `version`
@@ -44,8 +46,9 @@ Every field is required, and unknown fields are rejected.
   level.
 - `publishers`: keyed by publisher type, `github-release` or `oci`, and then by name. Both may be
   empty. Each GitHub Release publisher has an `apiUrl`, a `repository` in `owner/name` form, a
-  `token.secret` naming the environment variable that holds the token, and `assets`, which maps
-  asset names to absolute store paths of files and may be missing in older declarations.
+  `token.secret` naming the environment variable that holds the token, a MiniJinja `body` template,
+  and `assets`, which maps asset names to absolute store paths of files and may be missing in older
+  declarations. `body` may be missing in older declarations and then means `{{ notes }}`.
   `oci` may be missing in older declarations. Each OCI publisher has a `repository` starting with
   the registry host and `platforms`, which maps platforms such as `linux/amd64` to absolute store
   paths of image archives or executables that write an uncompressed one to stdout. `tags` and

@@ -239,6 +239,15 @@
             description = "GitHub repository in owner/name form.";
           };
 
+          body = mkOption {
+            type = types.str;
+            default = "{{ notes }}";
+            example = lib.literalExpression ''
+              builtins.readFile ./github-release.md.j2
+            '';
+            description = "MiniJinja template for the GitHub Release body. The context contains `notes`, the committed changelog section; `version`, the release version; and `tag`, the release tag.";
+          };
+
           token.secret = mkOption {
             type = types.nonEmptyStr;
             default = "GITHUB_TOKEN";
@@ -472,11 +481,23 @@
           conventional = conventionalAnalyzerOptions;
         };
 
-        changelog.path = mkOption {
-          type = relativePath;
-          default = "CHANGELOG.md";
-          example = "docs/NEWS.md";
-          description = "Repository-relative changelog path.";
+        changelog = {
+          path = mkOption {
+            type = relativePath;
+            default = "CHANGELOG.md";
+            example = "docs/NEWS.md";
+            description = "Repository-relative changelog path.";
+          };
+
+          template = mkOption {
+            type = types.str;
+            default = builtins.readFile ../../src/release-notes.md.j2;
+            defaultText = lib.literalMD "the [built-in changelog template](https://github.com/jkuball/presswerk/blob/main/src/release-notes.md.j2)";
+            example = lib.literalExpression ''
+              builtins.readFile ./release-notes.md.j2
+            '';
+            description = "MiniJinja template for the changelog section that `prepare` writes. The context contains `version` and `groups`, each with `title` and `commits`; every commit has `text`, `message`, `scope`, `breaking`, and `id`.";
+          };
         };
 
         publishers.github-release = mkOption {
