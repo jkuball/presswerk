@@ -1,6 +1,4 @@
-use crate::evaluation::NIX_EVALUATION;
 use anyhow::Context as _;
-use nix_bindings_store::store::Store;
 use std::error::Error;
 use std::fmt;
 use std::process::Command;
@@ -15,33 +13,13 @@ pub fn fetch<'a>(paths: impl IntoIterator<Item = (String, &'a str)>) -> Result<(
     if paths.is_empty() {
         return Ok(());
     }
-    let _nix = NIX_EVALUATION
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    nix_bindings_expr::eval_state::init()
-        .context("initialize Nix")
-        .map_err(ArtifactError::Nix)?;
-    let mut store = Store::open(None, [])
-        .context("open the Nix store")
-        .map_err(ArtifactError::Nix)?;
-    let store_dir = store
-        .get_storedir()
-        .context("read the Nix store directory")
-        .map_err(ArtifactError::Nix)?;
+    let store_dir = store_dir().map_err(ArtifactError::Nix)?;
 
     for (label, path) in paths {
         let root = store_path_root(&store_dir, path).ok_or_else(|| ArtifactError::NotInStore {
             label: label.clone(),
             path: path.into(),
         })?;
-        store
-            .parse_store_path(&root)
-            .context("parse the store path")
-            .map_err(|source| ArtifactError::Unavailable {
-                label: label.clone(),
-                path: path.into(),
-                source,
-            })?;
         substitute(&root).map_err(|source| ArtifactError::Unavailable {
             label,
             path: path.into(),
@@ -49,6 +27,25 @@ pub fn fetch<'a>(paths: impl IntoIterator<Item = (String, &'a str)>) -> Result<(
         })?;
     }
     Ok(())
+}
+
+fn store_dir() -> anyhow::Result<String> {
+    let output = Command::new("nix")
+        .args([
+            "eval",
+            "--extra-experimental-features",
+            "nix-command flakes",
+            "--raw",
+            "--expr",
+            "builtins.storeDir",
+        ])
+        .output()
+        .context("run nix eval to read the store directory")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("{}", stderr.trim_end());
+    }
+    String::from_utf8(output.stdout).context("Nix store directory is not UTF-8")
 }
 
 /// Make an output path valid by substituting it; Nix cannot build a path without its derivation.

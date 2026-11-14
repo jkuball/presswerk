@@ -47,10 +47,10 @@ Following the reference workflow, CI runs for pull requests and pushes to `main`
 restricted to trusted `main` release candidates.
 
 An early Nix integration spike confirmed that the CLI can read an exact-commit flake
-declaration in-process with [nix-bindings-rust](https://github.com/nixops4/nix-bindings-rust),
-so the CLI embeds Nix instead of invoking Nix tools. Artifact context extraction,
-substitution-only artifact realization, private inputs, and import-from-derivation edge cases are
-not gates for this asset-free milestone.
+declaration. The implementation now invokes the user's `nix` CLI so evaluation matches the Nix
+installation used by the project. Artifact context extraction, substitution-only artifact
+realization, private inputs, and import-from-derivation edge cases are not gates for this
+asset-free milestone.
 
 The intended work breakdown is currently:
 
