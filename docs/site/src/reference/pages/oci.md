@@ -23,8 +23,8 @@ image for each platform:
 such as `user:token@`, a query, or a fragment. Loopback registries such as `localhost:5000/project`
 are reached over plain HTTP, every other registry over HTTPS.
 
-Container images are the only content the OCI publisher supports so far; publishing Helm charts,
-which registries store as OCI artifacts as well, is planned.
+Helm charts use the separate [Helm publisher](/reference/publishers/helm/), which shares this
+publisher's registry authentication but has chart-specific version and repository checks.
 
 `presswerk plan` lists the publisher with its platforms and the tags it will push:
 

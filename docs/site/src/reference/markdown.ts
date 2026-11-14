@@ -1,6 +1,7 @@
 import cliPage from './pages/cli.md?raw';
 import declarationSchemaPage from './pages/declaration-schema.md?raw';
 import githubReleasePage from './pages/github-release.md?raw';
+import helmPage from './pages/helm.md?raw';
 import analyzersPage from './pages/analyzers.md?raw';
 import conventionalCommitsPage from './pages/conventional-commits.md?raw';
 import gitmojiPage from './pages/gitmoji.md?raw';
@@ -164,6 +165,15 @@ export const referencePages: ReferencePage[] = [
     markdown: ({ options }, base, target) =>
       fill(githubReleasePage, base, {
         options: optionList(options, 'publishers.github-release.', 3, target),
+      }),
+  },
+  {
+    slug: 'reference/publishers/helm',
+    title: 'Helm publisher',
+    description: 'The Helm publisher: packaged charts, OCI artifact format, retry behavior, credentials, and options.',
+    markdown: ({ options }, base, target) =>
+      fill(helmPage, base, {
+        options: optionList(options, 'publishers.helm.', 3, target),
       }),
   },
   {

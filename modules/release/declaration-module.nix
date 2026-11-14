@@ -31,6 +31,30 @@
                 (lib.intersectLists (renderOciTags oci) (renderOciTags otherOci))))
           config.publishers.oci))
         config.publishers.oci);
+      # Helm always pushes the release version, so two Helm publishers, or Helm and OCI, must not
+      # share that tag in one repository.
+      sharedHelmTags =
+        lib.concatLists
+          (lib.mapAttrsToList
+            (name: helm: lib.mapAttrsToList
+              (other: _otherHelm: {
+                name = "publishers.helm.${name}";
+                other = "publishers.helm.${other}";
+                inherit (helm) repository;
+                tag = "1.2.3";
+              })
+              (lib.filterAttrs (other: otherHelm: name < other && helm.repository == otherHelm.repository) config.publishers.helm))
+            config.publishers.helm)
+        ++ lib.concatLists (lib.mapAttrsToList
+          (name: helm: lib.mapAttrsToList
+            (other: _oci: {
+              name = "publishers.helm.${name}";
+              other = "publishers.oci.${other}";
+              inherit (helm) repository;
+              tag = "1.2.3";
+            })
+            (lib.filterAttrs (_other: oci: helm.repository == oci.repository && builtins.elem "1.2.3" (renderOciTags oci)) config.publishers.oci))
+          config.publishers.helm);
 
       relativePath = types.addCheck types.str (
         path:
@@ -268,6 +292,44 @@
         };
       };
 
+      registryPublisherOptions = what: {
+        repository = mkOption {
+          # A plain host and optional port: no credentials, query, or fragment in the declaration.
+          type = types.strMatching "(([A-Za-z0-9-]+[.])+[A-Za-z0-9-]+(:[0-9]+)?|[A-Za-z0-9.-]+:[0-9]+|localhost|\\[[0-9A-Fa-f:]+](:[0-9]+)?)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
+          example = "ghcr.io/owner/project";
+          description = "Registry host, with an optional port, and repository path the ${what} are pushed to. Credentials never go here, only into `username` and `password`. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
+        };
+
+        public = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Whether anyone may pull the ${what} without credentials. `plan` and `prepare` then check the previous release anonymously and never read `username` or `password`; otherwise they need the credentials for that check. `publish` always needs the credentials.";
+        };
+
+        username = mkOption {
+          type = types.submodule {
+            options.secret = mkOption {
+              type = types.nullOr types.nonEmptyStr;
+              default = null;
+              example = "REGISTRY_USERNAME";
+              description = "Name of the environment variable that holds the registry username.";
+            };
+            options.value = mkOption {
+              type = types.nullOr types.nonEmptyStr;
+              default = null;
+              example = "oauth2accesstoken";
+              description = "The registry username itself, for registries where it is no secret, such as `oauth2accesstoken` for Google Artifact Registry. It is written into the release declaration.";
+            };
+          };
+          description = "Registry username: either `secret`, read from an environment variable at run time, or `value`.";
+        };
+
+        password = mkOption {
+          type = types.submodule (secretModule "registry password or token" "REGISTRY_TOKEN");
+          description = "Registry password or token, read from an environment variable at run time.";
+        };
+      };
+
       # Rendered with a stand-in version, a tag must be a valid OCI tag.
       ociTag = types.addCheck types.nonEmptyStr
         (
@@ -275,14 +337,7 @@
         ) // { description = "OCI tag, optionally containing {version}, {major}, {minor}, or {patch}"; };
 
       ociModule = { config, ... }: {
-        options = {
-          repository = mkOption {
-            # A plain host and optional port: no credentials, query, or fragment in the declaration.
-            type = types.strMatching "(([A-Za-z0-9-]+[.])+[A-Za-z0-9-]+(:[0-9]+)?|[A-Za-z0-9.-]+:[0-9]+|localhost|\\[[0-9A-Fa-f:]+](:[0-9]+)?)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
-            example = "ghcr.io/owner/project";
-            description = "Registry host, with an optional port, and repository path the images are pushed to. Credentials never go here, only into `username` and `password`. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
-          };
-
+        options = registryPublisherOptions "images" // {
           platforms = mkOption {
             type = types.attrsOf artifactFile;
             example = lib.literalExpression ''
@@ -306,12 +361,6 @@
             default = [ ];
             example = [ "latest" "{major}" "{major}.{minor}" ];
             description = "Floating tags, also called rolling tags, that follow the release line, such as `latest`, `{major}`, or `{major}.{minor}`. An alias may use `{major}`, `{minor}`, and `{patch}`, but not `{version}`. It moves only to a higher stable version than the one it points to, so `{major}` stays within its major version.";
-          };
-
-          public = mkOption {
-            type = types.bool;
-            default = false;
-            description = "Whether anyone may pull the images without credentials. `plan` and `prepare` then check the previous release's tags anonymously and never read `username` or `password`; otherwise they need the credentials for that check. `publish` always needs the credentials.";
           };
 
           compression = {
@@ -338,27 +387,15 @@
             };
           };
 
-          username = mkOption {
-            type = types.submodule {
-              options.secret = mkOption {
-                type = types.nullOr types.nonEmptyStr;
-                default = null;
-                example = "REGISTRY_USERNAME";
-                description = "Name of the environment variable that holds the registry username.";
-              };
-              options.value = mkOption {
-                type = types.nullOr types.nonEmptyStr;
-                default = null;
-                example = "oauth2accesstoken";
-                description = "The registry username itself, for registries where it is no secret, such as `oauth2accesstoken` for Google Artifact Registry. It is written into the release declaration.";
-              };
-            };
-            description = "Registry username: either `secret`, read from an environment variable at run time, or `value`.";
-          };
+        };
+      };
 
-          password = mkOption {
-            type = types.submodule (secretModule "registry password or token" "REGISTRY_TOKEN");
-            description = "Registry password or token, read from an environment variable at run time.";
+      helmModule = {
+        options = registryPublisherOptions "chart" // {
+          chart = mkOption {
+            type = artifactFile;
+            example = lib.literalExpression "self.packages.x86_64-linux.chart";
+            description = "Chart archive written by `helm package`. `publish` fetches it from the local store or a substituter without building.";
           };
         };
       };
@@ -509,6 +546,23 @@
           description = "OCI image publishers.";
         };
 
+        publishers.helm = mkOption {
+          type = types.attrsOf (types.submodule helmModule);
+          default = { };
+          example = lib.literalExpression ''
+            {
+              default = {
+                repository = "ghcr.io/owner/charts/project";
+                chart = self.packages.x86_64-linux.chart;
+                public = true;
+                username.secret = "GITHUB_ACTOR";
+                password.secret = "GITHUB_TOKEN";
+              };
+            }
+          '';
+          description = "Helm chart publishers.";
+        };
+
         assertions = mkOption {
           type = types.listOf (types.submodule {
             options = {
@@ -555,12 +609,27 @@
                 message = "publishers.oci.${name}.tags and aliases must not render to the same tag";
               }
             ])
-            config.publishers.oci) ++ [
+            config.publishers.oci)
+        ++ lib.concatLists (lib.mapAttrsToList
+          (name: helm: [
+            {
+              assertion = (helm.username.secret == null) != (helm.username.value == null);
+              message = "publishers.helm.${name}.username needs exactly one of secret and value";
+            }
+          ])
+          config.publishers.helm)
+        ++ [
           {
             assertion = sharedOciTags == [ ];
             message =
               let shared = builtins.head sharedOciTags;
               in "publishers.oci.${shared.name} and publishers.oci.${shared.other} both push to ${shared.repository} and must not share a tag or alias; both render ${shared.tag} for version 1.2.3";
+          }
+          {
+            assertion = sharedHelmTags == [ ];
+            message =
+              let shared = builtins.head sharedHelmTags;
+              in "${shared.name} and ${shared.other} both push to ${shared.repository} and must not share tag ${shared.tag} for version 1.2.3";
           }
           {
             assertion = builtins.length enabledAnalyzers == 1;

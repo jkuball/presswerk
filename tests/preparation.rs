@@ -5,8 +5,8 @@ use git2::Oid;
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::declaration::{
     Analyzer, BadgeOptions, BadgeVersionFile, Changelog, Compression, ConventionalAnalyzer,
-    GithubReleasePublisher, GitmojiAnalyzer, OciPublisher, Publishers, ReleaseDeclaration, Tag,
-    Token, TomlVersionFile, Username, VersionFile,
+    GithubReleasePublisher, GitmojiAnalyzer, HelmPublisher, OciPublisher, Publishers,
+    ReleaseDeclaration, Tag, Token, TomlVersionFile, Username, VersionFile,
 };
 use presswerk::evaluation::EvaluatedReleaseDeclaration;
 use presswerk::preparation::{build_release_plan, is_worktree_dirty, prepare_release, render_plan};
@@ -51,6 +51,7 @@ fn declaration(version: &str) -> ReleaseDeclaration {
                 },
             )]),
             oci: BTreeMap::new(),
+            helm: BTreeMap::new(),
         },
     }
 }
@@ -644,6 +645,79 @@ fn the_plan_lists_oci_images_and_rendered_tags_before_the_release() {
         "  github-release.default  owner/project\n",
         "    release  v0.1.0\n",
     )));
+}
+
+#[test]
+fn the_plan_lists_a_helm_chart_under_its_release_tag() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated.declaration.publishers.helm.insert(
+        "default".into(),
+        HelmPublisher {
+            repository: "ghcr.io/owner/charts/project".into(),
+            chart: "/nix/store/abc-project-0.1.0.tgz".into(),
+            public: true,
+            username: Username::Secret("REGISTRY_USERNAME".into()),
+            password: Token {
+                secret: "REGISTRY_TOKEN".into(),
+            },
+        },
+    );
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+
+    assert!(render_plan(&plan).contains(concat!(
+        "  helm.default  ghcr.io/owner/charts/project\n",
+        "    tag      ghcr.io/owner/charts/project:0.1.0\n",
+        "  github-release.default  owner/project\n",
+    )));
+}
+
+#[test]
+fn the_plan_rejects_a_helm_tag_shared_with_an_oci_publisher() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated
+        .declaration
+        .publishers
+        .oci
+        .insert("image".into(), oci_publisher(&["0.1.0"], &[]));
+    evaluated.declaration.publishers.helm.insert(
+        "chart".into(),
+        HelmPublisher {
+            repository: "ghcr.io/owner/project".into(),
+            chart: "/nix/store/abc-project-0.1.0.tgz".into(),
+            public: true,
+            username: Username::Secret("REGISTRY_USERNAME".into()),
+            password: Token {
+                secret: "REGISTRY_TOKEN".into(),
+            },
+        },
+    );
+
+    let error = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("oci.image and helm.chart"), "{error}");
+    assert!(error.contains("both render 0.1.0"), "{error}");
 }
 
 #[test]

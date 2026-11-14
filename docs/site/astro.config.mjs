@@ -73,6 +73,7 @@ export default defineConfig({
               items: [
                 { label: 'Overview', slug: 'reference/publishers' },
                 { label: 'GitHub Release', slug: 'reference/publishers/github-release' },
+                { label: 'Helm', slug: 'reference/publishers/helm' },
                 { label: 'OCI', slug: 'reference/publishers/oci' },
               ],
             },

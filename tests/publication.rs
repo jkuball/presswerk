@@ -1,12 +1,15 @@
 mod support;
 
 use presswerk::analysis::{Analysis, Bump};
-use presswerk::declaration::{Compression, OciPublisher, ReleaseDeclaration, Token, Username};
+use presswerk::declaration::{
+    Compression, HelmPublisher, OciPublisher, ReleaseDeclaration, Token, Username,
+};
 use presswerk::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GitTagPublisher, GithubClient,
     GithubPublisher, GithubReleaseReader, GithubReleaseState, LocalAsset, PublicationError,
     Publisher, PublisherState, PublisherStep, Release, RemoteState, TagPublisher, TagStep,
     is_valid_successor, publish_ordered, validate_new_release, verify_predecessor_with,
+    verify_predecessor_with_helm,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
@@ -798,6 +801,84 @@ fn an_incomplete_oci_predecessor_blocks_the_next_release() {
         assert!(error.contains("previous OCI release"), "{error}");
         assert!(error.contains(expected), "{error}");
     }
+}
+
+fn helm_manifest(version: &str, origin: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": { "mediaType": "application/vnd.cncf.helm.config.v1+json" },
+        "layers": [{ "mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip" }],
+        "annotations": {
+            "org.opencontainers.image.version": version,
+            "dev.presswerk.origin": origin,
+        }
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_helm_predecessor_needs_its_version_tag_and_store_path() {
+    let repository = GitRepo::new();
+    repository.commit_version("0.1.0", "🔖 Prepare predecessor");
+    repository.annotated_tag("v0.1.0");
+    repository.write("feature", "implemented\n");
+    let candidate = repository.commit("✨ Add a feature");
+    let current_declaration = declaration("0.1.0", "new/project");
+    let mut previous_declaration = declaration("0.1.0", "old/project");
+    previous_declaration.publishers.github_release.clear();
+    previous_declaration.publishers.helm.insert(
+        "default".into(),
+        HelmPublisher {
+            repository: "ghcr.io/owner/charts/project".into(),
+            chart: "/nix/store/abc-project-0.1.0.tgz".into(),
+            public: true,
+            username: Username::Secret("REGISTRY_USERNAME".into()),
+            password: Token {
+                secret: "REGISTRY_TOKEN".into(),
+            },
+        },
+    );
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        writes: Rc::new(RefCell::new(Vec::new())),
+    };
+    let verify = |manifest: Option<Vec<u8>>| {
+        verify_predecessor_with_helm(
+            repository.path(),
+            candidate.parse().unwrap(),
+            &Version::new(0, 1, 0),
+            &current_declaration,
+            &tag,
+            None,
+            |_commit| Ok(previous_declaration.clone()),
+            |_, _, _| unreachable!("no GitHub Release publishers are declared"),
+            |_, _| unreachable!("no OCI publishers are declared"),
+            |publisher, read_tag| {
+                assert_eq!(publisher.repository, "ghcr.io/owner/charts/project");
+                assert_eq!(read_tag, "0.1.0");
+                Ok(manifest.clone())
+            },
+        )
+    };
+
+    verify(Some(helm_manifest(
+        "0.1.0",
+        "/nix/store/abc-project-0.1.0.tgz",
+    )))
+    .unwrap();
+    let missing = verify(None).unwrap_err().to_string();
+    assert!(missing.contains("the tag is missing"), "{missing}");
+    let conflict = verify(Some(helm_manifest(
+        "0.1.0",
+        "/nix/store/other-project-0.1.0.tgz",
+    )))
+    .unwrap_err()
+    .to_string();
+    assert!(
+        conflict.contains("does not point to this release's Helm chart"),
+        "{conflict}"
+    );
 }
 
 #[derive(Clone)]

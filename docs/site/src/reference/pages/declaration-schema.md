@@ -42,18 +42,16 @@ Every field is required, and unknown fields are rejected.
   `emoji`, a `description`, and a `semver` level of `"major"`, `"minor"`, `"patch"`, or `null`.
   `conventional.catalog` is keyed by lowercase type, and each entry has a `title` and a `semver`
   level.
-- `publishers`: keyed by publisher type, `github-release` or `oci`, and then by name. Both may be
-  empty. Each GitHub Release publisher has an `apiUrl`, a `repository` in `owner/name` form, a
+- `publishers`: keyed by publisher type, `github-release`, `helm`, or `oci`, and then by name. All
+  may be empty. Each GitHub Release publisher has an `apiUrl`, a `repository` in `owner/name` form, a
   `token.secret` naming the environment variable that holds the token, and `assets`, which maps
-  asset names to absolute store paths of files and may be missing in older declarations.
-  `oci` may be missing in older declarations. Each OCI publisher has a `repository` starting with
-  the registry host and `platforms`, which maps platforms such as `linux/amd64` to absolute store
-  paths of image archives or executables that write an uncompressed one to stdout. `tags` and
-  `aliases` are lists of templates that may use `{major}`, `{minor}`, and `{patch}`; every tag
-  contains `{version}`, no alias does, and `aliases` may be missing in older declarations.
-  `public` says whether the images may be pulled anonymously; it may be missing in older
-  declarations and then means `false`. `compression` has either `gzip` or `zstd`, each with its
-  `level`; it may be missing in older declarations and then means gzip at level 6. `username` has
-  either `secret`, naming the environment variable that holds the username, or `value`, the
-  username itself. `password.secret` names the environment variable that holds the password or
-  token.
+  asset names to absolute store paths of files and may be missing in older declarations. `helm` and
+  `oci` may be missing in older declarations. Both registry publishers have a `repository`, a
+  `username` with either `secret` or `value`, a `password.secret`, and `public`, which may be
+  missing and then means `false`. A Helm publisher has the absolute store path of its packaged
+  `chart`. An OCI publisher has `platforms`, which maps platforms such as `linux/amd64` to absolute
+  store paths of image archives or executables that write an uncompressed one to stdout. Its
+  `tags` and `aliases` are lists of templates that may use `{major}`, `{minor}`, and `{patch}`;
+  every tag contains `{version}`, no alias does, and `aliases` may be missing in older declarations.
+  `compression` has either `gzip` or `zstd`, each with its `level`; it may be missing in older
+  declarations and then means gzip at level 6.

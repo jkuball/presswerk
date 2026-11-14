@@ -3,7 +3,8 @@ use crate::changelog::read_version_section;
 use crate::classification::{CommitClassification, classify_commit};
 use crate::declaration::{
     DeclarationError, GithubReleasePublisher as GithubReleaseDeclaration,
-    OciPublisher as OciDeclaration, ReleaseDeclaration, UNSTABLE_SCHEMA_VERSION,
+    HelmPublisher as HelmDeclaration, OciPublisher as OciDeclaration, ReleaseDeclaration,
+    UNSTABLE_SCHEMA_VERSION,
 };
 use crate::evaluation::{EvaluationError, evaluate_release_declaration};
 use crate::release_commit::TrustedPredecessor;
@@ -124,7 +125,7 @@ pub enum ArtifactKind {
     Asset,
     /// An OCI image for one platform.
     Image,
-    /// An OCI tag that names the version.
+    /// An OCI image or Helm chart tag that names the version.
     Tag,
     /// An OCI tag that follows the highest stable version, such as `latest`.
     Alias,
@@ -1084,6 +1085,8 @@ pub fn publish_to_remote(
         }
     }
 
+    validate_release_publisher_tags(&declaration)?;
+
     let tag = declaration
         .tag
         .render(&declaration.version)
@@ -1122,7 +1125,12 @@ pub fn publish_to_remote(
                 (format!("oci.{name} image {platform}"), path.as_str())
             })
         });
-    crate::artifacts::fetch(images.chain(assets))
+    let charts = declaration
+        .publishers
+        .helm
+        .iter()
+        .map(|(name, publisher)| (format!("helm.{name} chart"), publisher.chart.as_str()));
+    crate::artifacts::fetch(images.chain(charts).chain(assets))
         .map_err(|error| PublicationError::new(error.to_string()))?;
 
     match tag_publisher.state(&release)? {
@@ -1152,6 +1160,13 @@ pub fn publish_to_remote(
             publisher,
         )?));
         publisher_names.push(format!("oci.{name}"));
+    }
+    for (name, publisher) in &declaration.publishers.helm {
+        publishers.push(Box::new(crate::helm::HelmPublisher::from_declaration(
+            publisher,
+            &release.version,
+        )?));
+        publisher_names.push(format!("helm.{name}"));
     }
     for (name, publisher) in &declaration.publishers.github_release {
         publishers.push(Box::new(GithubPublisher::from_declaration(publisher)?));
@@ -1454,22 +1469,45 @@ fn verify_predecessor_with_trust_mode(
                 .release_state(&publisher.repository, tag)
         },
         |publisher, tag| {
-            // A public repository is read anonymously, so its credentials are never needed.
-            let credentials = if publisher.public {
-                None
-            } else {
-                Some(crate::oci::Credentials::from_environment(
-                    &publisher.username,
-                    &publisher.password.secret,
-                )?)
-            };
-            Ok(
-                crate::oci::RegistryClient::new(&publisher.repository, credentials)?
-                    .manifest(tag)?
-                    .map(|(_, manifest)| manifest),
+            registry_manifest(
+                &publisher.repository,
+                publisher.public,
+                &publisher.username,
+                &publisher.password,
+                tag,
+            )
+        },
+        |publisher, tag| {
+            registry_manifest(
+                &publisher.repository,
+                publisher.public,
+                &publisher.username,
+                &publisher.password,
+                tag,
             )
         },
     )
+}
+
+fn registry_manifest(
+    repository: &str,
+    public: bool,
+    username: &crate::declaration::Username,
+    password: &crate::declaration::Token,
+    tag: &str,
+) -> Result<Option<Vec<u8>>, PublicationError> {
+    // A public repository is read anonymously, so its credentials are never needed.
+    let credentials = if public {
+        None
+    } else {
+        Some(crate::oci::Credentials::from_environment(
+            username,
+            &password.secret,
+        )?)
+    };
+    Ok(crate::oci::RegistryClient::new(repository, credentials)?
+        .manifest(tag)?
+        .map(|(_, manifest)| manifest))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1507,11 +1545,56 @@ where
         evaluate_declaration,
         release_state,
         oci_manifest,
+        |publisher, _| {
+            Err(PublicationError::new(format!(
+                "no Helm manifest reader was provided for {}",
+                publisher.repository
+            )))
+        },
+    )
+}
+
+/// Verify a predecessor while supplying readers for every built-in publisher.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_predecessor_with_helm<E, F, O, H>(
+    repository_path: &Path,
+    candidate: Oid,
+    previous_version: &Version,
+    current_declaration: &ReleaseDeclaration,
+    tag_publisher: &dyn TagPublisher,
+    trusted_predecessor: Option<&TrustedPredecessor>,
+    evaluate_declaration: E,
+    release_state: F,
+    oci_manifest: O,
+    helm_manifest: H,
+) -> Result<Option<VerifiedPredecessor>, PublicationError>
+where
+    E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
+    F: FnMut(
+        &GithubReleaseDeclaration,
+        &str,
+        &Version,
+    ) -> Result<GithubReleaseState, PublicationError>,
+    O: FnMut(&OciDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
+    H: FnMut(&HelmDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
+{
+    verify_predecessor_with_mode(
+        repository_path,
+        candidate,
+        previous_version,
+        current_declaration,
+        tag_publisher,
+        trusted_predecessor,
+        true,
+        evaluate_declaration,
+        release_state,
+        oci_manifest,
+        helm_manifest,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_predecessor_with_mode<E, F, O>(
+fn verify_predecessor_with_mode<E, F, O, H>(
     repository_path: &Path,
     candidate: Oid,
     previous_version: &Version,
@@ -1522,6 +1605,7 @@ fn verify_predecessor_with_mode<E, F, O>(
     mut evaluate_declaration: E,
     mut release_state: F,
     mut oci_manifest: O,
+    mut helm_manifest: H,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError>
 where
     E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
@@ -1531,6 +1615,7 @@ where
         &Version,
     ) -> Result<GithubReleaseState, PublicationError>,
     O: FnMut(&OciDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
+    H: FnMut(&HelmDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
 {
     let repository = Repository::open(repository_path).map_err(|error| {
         PublicationError::new(format!("could not open Git repository: {error}"))
@@ -1668,6 +1753,26 @@ where
             )));
         }
     }
+    for (name, publisher) in &previous_declaration.publishers.helm {
+        let tag = crate::helm::tag(previous_version);
+        let found = match helm_manifest(publisher, &tag)? {
+            None => "the tag is missing".to_owned(),
+            Some(manifest)
+                if crate::helm::is_release_manifest(
+                    &manifest,
+                    previous_version,
+                    &publisher.chart,
+                ) =>
+            {
+                continue;
+            }
+            Some(_) => "the tag does not point to this release's Helm chart".to_owned(),
+        };
+        return Err(PublicationError::new(format!(
+            "previous Helm release {}:{tag} (helm.{name}) is incomplete: {found}, expected version {previous_version} from {}",
+            publisher.repository, publisher.chart
+        )));
+    }
     Ok(Some(verified))
 }
 
@@ -1790,6 +1895,14 @@ fn has_release_tags(
     Ok(false)
 }
 
+fn validate_release_publisher_tags(
+    declaration: &ReleaseDeclaration,
+) -> Result<(), PublicationError> {
+    declaration
+        .validate_publisher_tags(&declaration.version)
+        .map_err(|error| PublicationError::new(error.to_string()))
+}
+
 fn read_text_at(
     repository_path: &Path,
     commit: Oid,
@@ -1831,4 +1944,58 @@ fn read_text_at(
 
 fn version_core(version: &Version) -> [u64; 3] {
     [version.major, version.minor, version.patch]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_release_publisher_tags;
+    use crate::declaration::ReleaseDeclaration;
+
+    #[test]
+    fn publication_rejects_actual_version_registry_tag_collisions() {
+        let declaration = ReleaseDeclaration::from_json(
+            r#"{
+              "schemaVersion": 0,
+              "version": "0.1.0",
+              "versionFiles": [],
+              "tag": { "format": "v{version}" },
+              "analyzer": {
+                "convention": "gitmoji",
+                "gitmoji": { "catalog": {} }
+              },
+              "changelog": { "path": "CHANGELOG.md" },
+              "publishers": {
+                "github-release": {},
+                "oci": {
+                  "image": {
+                    "repository": "ghcr.io/owner/project",
+                    "platforms": {
+                      "linux/amd64": "/nix/store/00000000000000000000000000000000-image.tar.gz"
+                    },
+                    "tags": ["v{version}"],
+                    "aliases": ["0.1.0"],
+                    "username": { "secret": "REGISTRY_USERNAME" },
+                    "password": { "secret": "REGISTRY_TOKEN" }
+                  }
+                },
+                "helm": {
+                  "chart": {
+                    "repository": "ghcr.io/owner/project",
+                    "chart": "/nix/store/00000000000000000000000000000000-chart.tgz",
+                    "username": { "secret": "REGISTRY_USERNAME" },
+                    "password": { "secret": "REGISTRY_TOKEN" }
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let error = validate_release_publisher_tags(&declaration)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("oci.image and helm.chart"), "{error}");
+        assert!(error.contains("both render 0.1.0"), "{error}");
+    }
 }
