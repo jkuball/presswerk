@@ -1,5 +1,97 @@
 # Changelog
 
+## [0.8.0] - 2026-11-14
+
+### 📝 Add or update documentation
+
+- (oci): Explain public reads in one paragraph
+- (oci): Introduce the registry examples and move the repository format up
+- (oci): Drop the races paragraph and shorten what aliases count for
+- (oci): Shorten the failed alias paragraph
+- (oci): Introduce the image tag states
+- (oci): Drop the compression retry example
+- (oci): Name Presswerk at the start of the races paragraph
+- (oci): Describe matching from the image tag and set races apart
+- (oci): Say image tag where tag alone is ambiguous
+- (oci): Name tags and the Git tag as the page defines them
+- (oci): Show tag templates next to the tags they render
+- (oci): Introduce tags and aliases in prose
+- (oci): Say plainly what a wrong platform key leaves behind
+- (oci): Tighten the image paragraphs and say why store paths are recorded
+- (publishers): Drop the publisher order and name the local store as a source
+- (publishers): Describe fetching once on the overview
+- (oci): Say why streamed images are buffered and what an image index is
+- (oci): Name both compressions in the module docs
+- (oci): Show tags and a minor alias in the publisher example
+- (oci): Say what streamed images save and what they do not
+- (oci): Say that image executables write an uncompressed archive
+- (docs): Describe publishing on the publishers overview and link code options to a filtered reference
+- (docs): Describe release completion without a required publisher and public OCI reads
+- (docs): Split the release publishers into an overview and one page per publisher
+
+### 🐛 Fix a bug
+
+- (oci): Tell IPv6 groups from ports and push every Docker Hub spelling to one target
+- (oci): Accept one spelling per registry and derive its identity alike in Nix and the CLI
+- (oci): Compare repositories by identity, not spelling
+- (oci): Bound the archive's JSON files in all and name the supported layout
+- (oci): Leave hard links to symbolic links unresolved
+- (oci): Resolve hard links when written and let any entry replace an earlier one
+- (oci): Compress layers apart from the archive, reject duplicate platforms, and render tags before checking duplicates
+- (oci): Require schema version 2 of a version-annotated image index
+- (oci): Accept only an image index as a completed or version-annotated tag
+- (oci): Report a tag restored by this run as pushed
+
+### ✨ Introduce new features
+
+- (oci): Choose gzip or zstd layer compression and its level
+- (oci): Push gzipped layers and recognize a release by the store paths of its images
+- (oci): Accept a username that is no secret as username.value
+- (oci): Declare floating tags under aliases, with {major}, {minor}, and {patch}
+- Check every publisher of the previous release and require none
+- (oci): Read public repositories anonymously with pull access only
+- Add an OCI publisher
+
+### 🎨 Improve structure / format of the code
+
+- (docs): End the publishers page with a newline
+- (docs): Wrap the publisher run order paragraph
+
+### 💄 Add or update the UI and style files
+
+- (docs): Wash sidebar entries on hover and trim the OCI images section
+- Say so when a release plan has no publishers
+
+### ♻️ Refactor code
+
+- (oci): Read images only while pushing them, one layer at a time
+- (oci): Declare images under platforms and run an image only if it is executable
+
+### ⚡️ Improve performance
+
+- (oci): Keep small compressed layers in memory and spool large ones to an unnamed file
+- (oci): Compress layers while the archive streams instead of unpacking it
+
+### 🥅 Catch errors
+
+- (publish): Show why git failed to inspect or push a tag
+
+### 🏷️ Add or update types
+
+- (oci): Name the store path annotation dev.presswerk.origin
+
+### 🔒️ Fix security or privacy issues
+
+- (oci): Keep credentials out of repositories and make aliases best effort
+
+### ⏪️ Revert changes
+
+- (oci): Compare repositories as declared again and keep only the Docker Hub target fix
+
+### 🦺 Add or update code related to validation
+
+- (oci): Reject publishers of one repository that share an image tag
+
 ## [0.7.0] - 2026-11-12
 
 ### 💄 Add or update the UI and style files
