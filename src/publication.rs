@@ -625,10 +625,16 @@ impl GithubPublisher {
     }
 
     fn checked_state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
-        self.render_body(release)?;
+        let body = self.render_body(release)?;
         let Some(github_release) = self.client.release(&self.repository, &release.tag)? else {
             return Ok(PublisherState::Missing);
         };
+        if github_release.body.as_deref() != Some(body.as_str()) {
+            return Ok(PublisherState::Conflicting(format!(
+                "GitHub Release {:?} in {} has a body that does not match the declared template",
+                release.tag, self.repository
+            )));
+        }
         let expected_prerelease = !release.version.pre.is_empty();
         if github_release.prerelease != expected_prerelease {
             return Ok(PublisherState::Conflicting(format!(
@@ -690,6 +696,12 @@ impl Publisher for GithubPublisher {
             None => self.client.create_draft(&self.repository, release, &body)?,
             Some(existing) => existing,
         };
+        if github_release.body.as_deref() != Some(body.as_str()) {
+            return Err(PublicationError::new(format!(
+                "GitHub Release {:?} in {} has a body that does not match the declared template",
+                release.tag, self.repository
+            )));
+        }
         let expected_prerelease = !release.version.pre.is_empty();
         if github_release.prerelease != expected_prerelease {
             return Err(PublicationError::new(format!(
@@ -748,6 +760,7 @@ struct GithubRelease {
     id: u64,
     draft: bool,
     prerelease: bool,
+    body: Option<String>,
     #[serde(default)]
     upload_url: Option<String>,
     #[serde(default)]
