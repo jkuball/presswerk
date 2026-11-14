@@ -123,7 +123,8 @@ fn rejects_output_that_cannot_be_converted_to_json() {
     assert!(
         error
             .to_string()
-            .contains("convert presswerk.default to JSON")
+            .contains("cannot convert a function to JSON"),
+        "{error}"
     );
 }
 

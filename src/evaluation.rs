@@ -1,20 +1,12 @@
 use crate::declaration::{DeclarationError, ReleaseDeclaration};
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use git2::{ErrorCode, ObjectType, Oid, Repository};
-use nix_bindings_expr::eval_state::{EvalStateBuilder, gc_register_my_thread};
-use nix_bindings_fetchers::FetchersSettings;
-use nix_bindings_flake::{
-    EvalStateBuilderExt, FlakeLockFlags, FlakeReference, FlakeReferenceParseFlags, FlakeSettings,
-    LockedFlake,
-};
-use nix_bindings_store::store::Store;
+use serde::Deserialize;
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::process::Command;
 use url::Url;
-
-pub(crate) static NIX_EVALUATION: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct EvaluatedReleaseDeclaration {
@@ -78,9 +70,6 @@ impl ReleaseDeclarationEvaluator {
             .append_pair("rev", &commit_id.to_string());
         let flake_reference = format!("git+{url}");
 
-        let _evaluation = NIX_EVALUATION
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         evaluate_pinned_flake(&flake_reference, commit_id, self.store_url.as_deref()).map(
             |declaration| EvaluatedReleaseDeclaration {
                 commit: commit_id,
@@ -90,97 +79,56 @@ impl ReleaseDeclarationEvaluator {
     }
 }
 
+#[derive(Deserialize)]
+struct NixEvaluation {
+    declaration: serde_json::Value,
+    revision: Option<String>,
+}
+
 fn evaluate_pinned_flake(
     reference: &str,
     expected_commit: Oid,
     store_url: Option<&str>,
 ) -> Result<ReleaseDeclaration, EvaluationError> {
-    nix_bindings_expr::eval_state::init()
-        .context("initialize the Nix expression evaluator")
+    let reference = serde_json::to_string(reference).expect("flake reference is a JSON string");
+    // A virtual lock update omits sourceInfo.rev, so return it beside the declaration.
+    let expression = format!(
+        "let flake = builtins.getFlake {reference}; in {{ declaration = flake.presswerk.default; revision = flake.sourceInfo.rev or null; }}"
+    );
+    let mut command = Command::new("nix");
+    command.args([
+        "eval",
+        "--extra-experimental-features",
+        "nix-command flakes",
+        "--json",
+        "--no-update-lock-file",
+        "--no-write-lock-file",
+    ]);
+    if let Some(store_url) = store_url {
+        command.args(["--store", store_url]);
+    }
+    let output = command
+        .args(["--expr", &expression])
+        .output()
+        .context("run nix eval")
         .map_err(EvaluationError::Nix)?;
-    let experimental_features = nix_bindings_util::settings::get("experimental-features")
-        .context("read Nix experimental features")
-        .map_err(EvaluationError::Nix)?;
-    if !experimental_features
-        .split_whitespace()
-        .any(|feature| feature == "flakes")
-    {
-        nix_bindings_util::settings::set(
-            "experimental-features",
-            &format!("{experimental_features} flakes"),
-        )
-        .context("enable Nix flakes")
-        .map_err(EvaluationError::Nix)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim_end();
+        let message = if stderr.is_empty() {
+            format!("nix eval failed with {}", output.status)
+        } else {
+            format!("nix eval failed with {}:\n{stderr}", output.status)
+        };
+        return Err(EvaluationError::Nix(anyhow!(message)));
     }
 
-    let _gc_registration = gc_register_my_thread()
-        .context("register the evaluation thread with the Nix garbage collector")
+    let evaluated: NixEvaluation = serde_json::from_slice(&output.stdout)
+        .context("decode nix eval output")
         .map_err(EvaluationError::Nix)?;
-    let store = Store::open(store_url, [])
-        .context("open the Nix store")
-        .map_err(EvaluationError::Nix)?;
-    let fetchers_settings = FetchersSettings::new()
-        .context("create Nix fetcher settings")
-        .map_err(EvaluationError::Nix)?;
-    let flake_settings = FlakeSettings::new()
-        .context("create Nix flake settings")
-        .map_err(EvaluationError::Nix)?;
-    let mut eval_state = EvalStateBuilder::new(store)
-        .and_then(|builder| builder.flakes(&flake_settings))
-        .and_then(|builder| builder.build())
-        .context("create the Nix evaluation state")
-        .map_err(EvaluationError::Nix)?;
-
-    let parse_flags = FlakeReferenceParseFlags::new(&flake_settings)
-        .context("create flake reference parse flags")
-        .map_err(EvaluationError::Nix)?;
-    let (flake_reference, fragment) = FlakeReference::parse_with_fragment(
-        &fetchers_settings,
-        &flake_settings,
-        &parse_flags,
-        reference,
-    )
-    .context("parse the pinned flake reference")
-    .map_err(EvaluationError::Nix)?;
-    if !fragment.is_empty() {
-        return Err(EvaluationError::UnexpectedFragment(fragment));
-    }
-
-    let mut lock_flags = FlakeLockFlags::new(&flake_settings)
-        .context("create flake lock flags")
-        .map_err(EvaluationError::Nix)?;
-    lock_flags
-        .set_mode_check()
-        .context("configure check-only flake locking")
-        .map_err(EvaluationError::Nix)?;
-    let locked_flake = LockedFlake::lock(
-        &fetchers_settings,
-        &flake_settings,
-        &eval_state,
-        &lock_flags,
-        &flake_reference,
-    )
-    .context("check the committed flake lock")
-    .map_err(EvaluationError::Nix)?;
-
-    let outputs = locked_flake
-        .outputs(&flake_settings, &mut eval_state)
-        .context("evaluate flake outputs")
-        .map_err(EvaluationError::Nix)?;
-    // Nix marks a virtually updated lock dirty by omitting the pinned root revision.
-    let source_info = eval_state
-        .require_attrs_select(&outputs, "sourceInfo")
-        .context("read locked flake source information")
-        .map_err(EvaluationError::Nix)?;
-    let locked_revision = eval_state
-        .require_attrs_select_opt(&source_info, "rev")
-        .context("read locked flake revision")
-        .map_err(EvaluationError::Nix)?
-        .ok_or(EvaluationError::LockFileRequiresChanges(expected_commit))?;
-    let locked_revision = eval_state
-        .require_string(&locked_revision)
-        .context("read locked flake revision as a string")
-        .map_err(EvaluationError::Nix)?;
+    let Some(locked_revision) = evaluated.revision else {
+        return Err(EvaluationError::LockFileRequiresChanges(expected_commit));
+    };
     if locked_revision != expected_commit.to_string() {
         return Err(EvaluationError::UnexpectedLockedRevision {
             expected: expected_commit,
@@ -188,24 +136,9 @@ fn evaluate_pinned_flake(
         });
     }
 
-    let presswerk = eval_state
-        .require_attrs_select(&outputs, "presswerk")
-        .context("select flake output presswerk")
+    let json = serde_json::to_string(&evaluated.declaration)
+        .context("encode evaluated release declaration")
         .map_err(EvaluationError::Nix)?;
-    let declaration = eval_state
-        .require_attrs_select(&presswerk, "default")
-        .context("select flake output presswerk.default")
-        .map_err(EvaluationError::Nix)?;
-    let to_json = eval_state
-        .eval_from_string("builtins.toJSON", "<presswerk>")
-        .context("load builtins.toJSON")
-        .map_err(EvaluationError::Nix)?;
-    let json = eval_state
-        .call(to_json, declaration)
-        .and_then(|value| eval_state.require_string(&value))
-        .context("convert presswerk.default to JSON")
-        .map_err(EvaluationError::Nix)?;
-
     ReleaseDeclaration::from_json(&json).map_err(EvaluationError::Declaration)
 }
 
@@ -218,7 +151,6 @@ pub enum EvaluationError {
     MissingLockFile(Oid),
     LockFileRequiresChanges(Oid),
     UnexpectedLockedRevision { expected: Oid, actual: String },
-    UnexpectedFragment(String),
     Nix(anyhow::Error),
     Declaration(DeclarationError),
 }
@@ -245,12 +177,6 @@ impl fmt::Display for EvaluationError {
                 formatter,
                 "pinned flake resolved to revision {actual} instead of {expected}"
             ),
-            Self::UnexpectedFragment(fragment) => {
-                write!(
-                    formatter,
-                    "pinned flake reference unexpectedly contains fragment {fragment:?}"
-                )
-            }
             Self::Nix(error) => write!(formatter, "evaluate release declaration: {error:#}"),
             Self::Declaration(error) => error.fmt(formatter),
         }
