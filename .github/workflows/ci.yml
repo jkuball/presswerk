@@ -109,6 +109,15 @@ jobs:
           git config user.email 355333992+presswerk-releases[bot]@users.noreply.github.com
           nix run .#presswerk -- publish HEAD
 
+      # Keeps released binaries out of Cachix's garbage collection, so flakes
+      # that run a pinned Presswerk get it from the cache instead of building it.
+      - name: Pin release in Cachix
+        if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
+        run: >
+          cachix pin jkuball presswerk
+          "$(readlink -f "$RUNNER_TEMP/result-packages.x86_64-linux.presswerk")"
+          --keep-revisions 5
+
       - name: Collect docs
         if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
         run: |
