@@ -683,6 +683,44 @@ fn the_plan_lists_a_helm_chart_under_its_release_tag() {
 }
 
 #[test]
+fn the_plan_rejects_a_helm_tag_shared_with_an_oci_publisher() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated
+        .declaration
+        .publishers
+        .oci
+        .insert("image".into(), oci_publisher(&["0.1.0"], &[]));
+    evaluated.declaration.publishers.helm.insert(
+        "chart".into(),
+        HelmPublisher {
+            repository: "ghcr.io/owner/project".into(),
+            chart: "/nix/store/abc-project-0.1.0.tgz".into(),
+            public: true,
+            username: Username::Secret("REGISTRY_USERNAME".into()),
+            password: Token {
+                secret: "REGISTRY_TOKEN".into(),
+            },
+        },
+    );
+
+    let error = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("oci.image and helm.chart"), "{error}");
+    assert!(error.contains("both render 0.1.0"), "{error}");
+}
+
+#[test]
 fn conventional_commits_plan_notes_and_a_conventional_release_commit() {
     let repository = GitRepo::new();
     write_version(&repository, "0.0.0");

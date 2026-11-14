@@ -164,14 +164,7 @@ pub fn build_release_plan(
         .transpose()?;
     // Catch tags that the next version cannot fill before the release commit uses it up.
     if let Some(version) = &next_version {
-        for (name, publisher) in &declaration.publishers.oci {
-            crate::oci::render_tags(&publisher.tags, &publisher.aliases, version)
-                .map_err(|error| anyhow::anyhow!("oci.{name}: {error}"))?;
-        }
-        for name in declaration.publishers.helm.keys() {
-            crate::helm::validate_tag(version)
-                .map_err(|error| anyhow::anyhow!("helm.{name}: {error}"))?;
-        }
+        declaration.validate_publisher_tags(version)?;
     }
     let release_subject = next_tag
         .as_deref()
