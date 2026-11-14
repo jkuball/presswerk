@@ -94,10 +94,10 @@
           };
           extraBuildArgs = {
             inherit cargoArtifacts;
+            # The docs' CLI reference comes from this build rather than from compiling the crate once
+            # more. Crane installs the example next to the binary; it leaves as cli.json.
             cargoBuildExtraArgs = "--bins --example cli-reference";
-            installPhaseCommand = ''
-              mkdir -p "$out"
-              find "$postBuildInstallFromCargoBuildLogOut" -mindepth 1 -maxdepth 1 -exec mv -t "$out" {} +
+            postInstall = ''
               mkdir -p "$out/share/presswerk"
               "$out/bin/cli-reference" > "$out/share/presswerk/cli.json"
               rm "$out/bin/cli-reference"
