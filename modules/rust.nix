@@ -95,9 +95,11 @@
             inherit cargoArtifacts;
             cargoBuildExtraArgs = "--bins --example cli-reference";
             installPhaseCommand = ''
-              install -Dm755 "$postBuildInstallFromCargoBuildLogOut/bin/presswerk" "$out/bin/presswerk"
+              mkdir -p "$out"
+              find "$postBuildInstallFromCargoBuildLogOut" -mindepth 1 -maxdepth 1 -exec mv -t "$out" {} +
               mkdir -p "$out/share/presswerk"
-              "$postBuildInstallFromCargoBuildLogOut/bin/cli-reference" > "$out/share/presswerk/cli.json"
+              "$out/bin/cli-reference" > "$out/share/presswerk/cli.json"
+              rm "$out/bin/cli-reference"
             '';
           };
           outputs.drv.clippy = craneLib.cargoClippy (presswerkArgs // {
