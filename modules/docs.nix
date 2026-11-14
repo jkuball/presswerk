@@ -186,6 +186,7 @@ in
           reference/analyzers
           reference/analyzers/conventional-commits
           reference/analyzers/gitmoji
+          reference/changelog
           reference/cli
           reference/declaration-schema
           reference/options
@@ -197,7 +198,7 @@ in
         for page in $pages; do
           test -s "$site/$page.md" || { echo "missing Markdown page $page.md" >&2; exit 1; }
         done
-        for page in options declaration-schema cli publishers publishers/github-release publishers/oci analyzers analyzers/gitmoji analyzers/conventional-commits; do
+        for page in options changelog declaration-schema cli publishers publishers/github-release publishers/oci analyzers analyzers/gitmoji analyzers/conventional-commits; do
           test -s "$site/reference/$page/index.html" || { echo "missing reference page $page" >&2; exit 1; }
         done
         test -s "$site/llms.txt"

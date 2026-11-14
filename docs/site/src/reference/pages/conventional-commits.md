@@ -89,7 +89,9 @@ Groups follow the level of their type, from `major` to `null`; groups of the sam
 by size and then by type. A breaking change stays in the group of its type and starts with
 `**BREAKING**`. The scope stays in front of the description. A `git revert` of a commit that was
 released before, whose subject is `Revert "…"`, belongs to the `revert` type, so by default it
-releases a patch.
+releases a patch. Change the Markdown without changing analysis through
+[`changelog.template`](/reference/changelog/#template), whose context exposes each group's title
+and each commit's display text, parsed message and scope, breaking flag, and object ID.
 
 ## Change the type catalog
 

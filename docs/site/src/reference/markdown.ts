@@ -1,3 +1,4 @@
+import changelogPage from './pages/changelog.md?raw';
 import cliPage from './pages/cli.md?raw';
 import declarationSchemaPage from './pages/declaration-schema.md?raw';
 import githubReleasePage from './pages/github-release.md?raw';
@@ -149,6 +150,15 @@ export const referencePages: ReferencePage[] = [
     markdown: ({ cli }, base) =>
       fill(cliPage, base, {
         commands: commandMarkdown(cli, 2).join('\n'),
+      }),
+  },
+  {
+    slug: 'reference/changelog',
+    title: 'Changelog',
+    description: 'How Presswerk renders and commits frozen release notes.',
+    markdown: ({ options }, base, target) =>
+      fill(changelogPage, base, {
+        options: optionList(options, 'changelog.', 3, target),
       }),
   },
   {

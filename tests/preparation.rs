@@ -37,6 +37,7 @@ fn declaration(version: &str) -> ReleaseDeclaration {
         },
         changelog: Changelog {
             path: "CHANGELOG.md".into(),
+            template: presswerk::declaration::DEFAULT_CHANGELOG_TEMPLATE.into(),
         },
         publishers: Publishers {
             github_release: BTreeMap::from([(
@@ -47,6 +48,7 @@ fn declaration(version: &str) -> ReleaseDeclaration {
                     token: Token {
                         secret: "GITHUB_TOKEN".into(),
                     },
+                    body: presswerk::declaration::DEFAULT_GITHUB_RELEASE_BODY.into(),
                     assets: BTreeMap::new(),
                 },
             )]),
@@ -145,6 +147,32 @@ fn plans_and_prepares_the_full_range_after_a_completed_release() {
     assert!(changelog.contains("## [0.2.0] - 2026-11-05"));
     assert!(changelog.contains("\n- Add full-range planning"));
     assert!(changelog.contains("\n- Document the feature"));
+}
+
+#[test]
+fn prepares_the_declared_changelog_template() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.write("feature", "implemented\n");
+    repository.commit("✨ (cli): Add search");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated.declaration.changelog.template = "Version {{ version }}\n{% for group in groups %}{{ group.title }}\n{% for commit in group.commits %}{{ commit.text }}|{{ commit.message }}|{{ commit.scope }}|{{ commit.breaking }}|{{ commit.id }}\n{% endfor %}{% endfor %}".into();
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+
+    assert!(plan.notes.starts_with(
+        "Version 0.1.0\n✨ Introduce new features\n(cli): Add search|Add search|cli|False|"
+    ));
+    let release = prepare_release(&plan).unwrap().unwrap();
+    let changelog = repository.git(["show", &format!("{release}:CHANGELOG.md")]);
+    assert!(changelog.contains(plan.notes.trim_end()));
 }
 
 #[test]
