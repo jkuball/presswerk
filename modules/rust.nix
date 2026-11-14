@@ -34,36 +34,36 @@
         pname = "presswerk";
         strictDeps = true;
       };
+      # The dependency-only build must not see Presswerk's own version. Otherwise every release
+      # commit gets a new presswerk-deps derivation and rebuilds every crate. It builds from a
+      # dummy source whose Cargo.toml has no version, which Cargo reads as 0.0.0, and whose
+      # Cargo.lock says 0.0.0 for presswerk.
       cargoLock = builtins.fromTOML (builtins.readFile ../Cargo.lock);
-      normalizedCargoLock = (pkgs.formats.toml { }).generate "Cargo.lock" (cargoLock // {
-        package = map
-          (package:
-            if package.name == "presswerk" && !(package ? source)
-            then package // { version = "0.0.0"; }
-            else package)
-          cargoLock.package;
-      });
-      dependencyDummySrc = craneLib.mkDummySrc {
-        src = lib.cleanSourceWith {
-          src = config.rust-project.src;
-          filter = path: type:
-            craneLib.filterCargoSources path type
-            && !lib.hasSuffix "/Cargo.lock" path;
-        };
-        cargoLock = normalizedCargoLock;
-        cleanCargoTomlFilter = path:
-          path != [ "package" "version" ]
-          && craneLib.filters.cargoTomlDefault path;
-        extraDummyScript = ''
-          sed -i '/^name = "presswerk"$/a version = "0.0.0"' "$out/Cargo.toml"
-        '';
-      };
+      withoutOwnVersion = package:
+        if package.name == "presswerk" && !(package ? source)
+        then package // { version = "0.0.0"; }
+        else package;
       cargoArtifacts = craneLib.buildDepsOnly (
+        # Without src: it would bring back the real Cargo.toml and Cargo.lock.
         builtins.removeAttrs presswerkArgs [ "src" ]
         // {
-          cargoVendorDir = craneLib.vendorCargoDeps presswerkArgs;
-          dummySrc = dependencyDummySrc;
           version = "0.0.0";
+          cargoVendorDir = craneLib.vendorCargoDeps presswerkArgs;
+          dummySrc = craneLib.mkDummySrc {
+            # The real Cargo.lock stays out; the normalized one below takes its place.
+            src = lib.cleanSourceWith {
+              src = config.rust-project.src;
+              filter = path: type:
+                craneLib.filterCargoSources path type
+                && !lib.hasSuffix "/Cargo.lock" path;
+            };
+            cargoLock = (pkgs.formats.toml { }).generate "Cargo.lock" (
+              cargoLock // { package = map withoutOwnVersion cargoLock.package; }
+            );
+            cleanCargoTomlFilter = path:
+              path != [ "package" "version" ]
+              && craneLib.filters.cargoTomlDefault path;
+          };
         }
       );
     in
