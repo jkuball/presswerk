@@ -61,6 +61,7 @@
       cargoArtifacts = craneLib.buildDepsOnly (
         builtins.removeAttrs presswerkArgs [ "src" ]
         // {
+          cargoVendorDir = craneLib.vendorCargoDeps presswerkArgs;
           dummySrc = dependencyDummySrc;
           version = "0.0.0";
         }
