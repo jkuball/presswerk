@@ -103,13 +103,22 @@
               rm "$out/bin/cli-reference"
             '';
           };
-          outputs.drv.clippy = craneLib.cargoClippy (presswerkArgs // {
-            inherit cargoArtifacts;
-            cargoClippyExtraArgs = "--all-targets --all-features -- --deny warnings";
-            meta = presswerkArgs.meta // {
-              description = "Clippy check for the presswerk crate";
-            };
-          });
+          outputs.drv = {
+            clippy = craneLib.cargoClippy (presswerkArgs // {
+              inherit cargoArtifacts;
+              cargoClippyExtraArgs = "--all-targets --all-features -- --deny warnings";
+              meta = presswerkArgs.meta // {
+                description = "Clippy check for the presswerk crate";
+              };
+            });
+            doc = craneLib.cargoDoc (presswerkArgs // {
+              inherit cargoArtifacts;
+              RUSTDOCFLAGS = "-D warnings";
+              meta = presswerkArgs.meta // {
+                description = "Rust docs for the presswerk crate";
+              };
+            });
+          };
         };
       };
 
