@@ -8,12 +8,12 @@ recommend running the CLI from the Presswerk input locked in your flake, so it a
 $ nix run --inputs-from . presswerk -- plan
 ```
 
-Every command works on the repository in the current directory and reads the release
-declaration from the `presswerk.default` output of its flake at an exact commit. Presswerk invokes
-`nix` from `PATH`; the flake package used by `nix run` does not bundle or select another Nix
-version. There is no separate implementation or version check: a CLI with the required flake and
-command capabilities works, while missing capabilities fail with Nix's own diagnostic. Errors are
-printed
-to standard error and exit with status 1.
+Every command works on the repository in the current directory and reads the release declaration
+from the `presswerk.default` output of its flake at an exact commit. Presswerk invokes `nix` from
+`PATH` and uses `nix-store` there when `publish` substitutes artifacts. The flake package used by
+`nix run` does not bundle or select another Nix version. There is no separate implementation or
+version check: a CLI with the required flake and command capabilities works, while missing
+capabilities fail with Nix's own diagnostic. Errors are printed to standard error and exit with
+status 1.
 
 <!-- reference:commands -->
