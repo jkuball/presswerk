@@ -93,8 +93,7 @@ in
   };
 
   perSystem =
-    { config
-    , lib
+    { lib
     , pkgs
     , self'
     , ...
@@ -104,26 +103,13 @@ in
         root = ../docs/site;
         fileset = ../docs/site;
       };
-
-      cliReference = config.rust-project.crane-lib.mkCargoDerivation (
-        config.rust-project.crates.presswerk.crane.args
-        // {
-          inherit (config.rust-project) src;
-          pname = "presswerk-cli-reference";
-          version = self.presswerk.default.version;
-          cargoArtifacts = self'.packages.presswerk.cargoArtifacts;
-          doInstallCargoArtifacts = false;
-          buildPhaseCargoCommand = "cargoWithProfile run --locked --example cli-reference > cli.json";
-          installPhaseCommand = "install -Dm644 cli.json $out/cli.json";
-        }
-      );
     in
     {
       # Generated data behind the reference pages and the documented version; the site reads it from
       # $PRESSWERK_REFERENCE.
       packages.docs-reference = pkgs.runCommand "presswerk-docs-reference" { } ''
         mkdir -p $out
-        cp ${cliReference}/cli.json $out/cli.json
+        cp ${self'.packages.presswerk}/share/presswerk/cli.json $out/cli.json
         cp ${pkgs.writeText "options.json" (builtins.toJSON optionsReference)} $out/options.json
         cp ${pkgs.writeText "declaration.json" (builtins.toJSON schemaExample)} $out/declaration.json
         cp ${./release/gitmoji/catalog.json} $out/gitmoji.json
