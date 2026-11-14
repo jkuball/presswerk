@@ -6,6 +6,7 @@ pub mod classification;
 pub mod cli;
 pub mod declaration;
 pub mod evaluation;
+pub mod helm;
 pub mod oci;
 pub mod preparation;
 pub mod publication;

@@ -105,6 +105,7 @@ in
           assets = { };
         };
         publishers.oci = { };
+        publishers.helm = { };
       };
     };
 
@@ -319,6 +320,105 @@ in
       };
     };
 
+    "test Helm charts normalize to store paths with registry authentication" = {
+      expr =
+        (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.helm.default = {
+            repository = "ghcr.io/owner/charts/project";
+            chart = image;
+            public = true;
+            username.secret = "REGISTRY_USERNAME";
+            password.secret = "REGISTRY_TOKEN";
+          };
+        }).publishers.helm.default;
+      expected = {
+        repository = "ghcr.io/owner/charts/project";
+        chart = image.outPath;
+        public = true;
+        username.secret = "REGISTRY_USERNAME";
+        password.secret = "REGISTRY_TOKEN";
+      };
+    };
+
+    "test Helm publishers reject invalid declarations" = {
+      expr = map
+        (helm: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.helm.default = {
+            repository = "ghcr.io/owner/charts/project";
+            chart = image;
+            username.secret = "REGISTRY_USERNAME";
+            password.secret = "REGISTRY_TOKEN";
+          } // helm;
+        }).publishers.helm)
+        [
+          { }
+          { public = true; }
+          { username = { value = "oauth2accesstoken"; }; }
+          { repository = "owner/charts/project"; }
+          { repository = "ghcr.io/Owner/project"; }
+          { repository = "user:secret@ghcr.io/owner/charts/project"; }
+          { chart = "/nix/store/00000000000000000000000000000000-chart.tgz"; }
+          { username = { secret = "REGISTRY_USERNAME"; value = "user"; }; }
+        ];
+      expected = [ true true true false false false false false ];
+    };
+
+    "test Helm and OCI publishers do not share a release tag" = {
+      expr = map
+        (publishers: succeeds (mkRelease (lib.recursiveUpdate
+          {
+            sourceRoot = fixtureRoot;
+            versionFiles.cargo.example.cargoToml = cargoToml;
+            imports = [ publisher ];
+            publishers.helm.default = {
+              repository = "ghcr.io/owner/charts/project";
+              chart = image;
+              username.secret = "REGISTRY_USERNAME";
+              password.secret = "REGISTRY_TOKEN";
+            };
+            publishers.oci.default = {
+              repository = "ghcr.io/owner/images/project";
+              platforms."linux/amd64" = image;
+              username.secret = "REGISTRY_USERNAME";
+              password.secret = "REGISTRY_TOKEN";
+            };
+          }
+          publishers)).publishers)
+        [
+          { }
+          {
+            publishers.helm.other = {
+              repository = "ghcr.io/owner/charts/other";
+              chart = image;
+              username.secret = "REGISTRY_USERNAME";
+              password.secret = "REGISTRY_TOKEN";
+            };
+          }
+          {
+            publishers.helm.other = {
+              repository = "ghcr.io/owner/charts/project";
+              chart = image;
+              username.secret = "REGISTRY_USERNAME";
+              password.secret = "REGISTRY_TOKEN";
+            };
+          }
+          { publishers.oci.default.repository = "ghcr.io/owner/charts/project"; }
+          {
+            publishers.oci.default = {
+              repository = "ghcr.io/owner/charts/project";
+              tags = [ "v{version}" ];
+            };
+          }
+        ];
+      expected = [ true true false false true ];
+    };
+
     "test a literal OCI username normalizes without the secret" = {
       expr =
         (mkRelease {
@@ -425,6 +525,7 @@ in
       expected = {
         github-release = { };
         oci = { };
+        helm = { };
       };
     };
 

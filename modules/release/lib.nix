@@ -95,5 +95,10 @@ in
           username = lib.filterAttrs (_source: value: value != null) oci.username;
         })
         releaseConfig.publishers.oci;
+      publishers.helm = lib.mapAttrs
+        (_name: helm: helm // {
+          username = lib.filterAttrs (_source: value: value != null) helm.username;
+        })
+        releaseConfig.publishers.helm;
     };
 }

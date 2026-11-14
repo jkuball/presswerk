@@ -102,15 +102,15 @@ fn run() -> Result<()> {
                 };
                 let mut rows = vec![["tag".into(), report.tag.clone(), tag_status.into()]];
                 for (name, step, artifacts) in &report.publisher_steps {
-                    let oci = name.starts_with("oci.");
+                    let registry = name.starts_with("oci.") || name.starts_with("helm.");
                     let status = match step {
                         PublisherStep::Published => "published",
                         PublisherStep::DraftCompleted => "draft completed",
-                        PublisherStep::ArtifactsCompleted if oci => "tags completed",
+                        PublisherStep::ArtifactsCompleted if registry => "tags completed",
                         PublisherStep::ArtifactsCompleted => "assets completed",
                         PublisherStep::AlreadyPublished => "already published",
                     };
-                    let kind = if oci { "registry" } else { "release" };
+                    let kind = if registry { "registry" } else { "release" };
                     rows.push([kind.into(), name.clone(), status.into()]);
                     rows.extend(artifacts.iter().map(|artifact| {
                         let (kind, done, already) = match artifact.kind {
