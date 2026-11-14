@@ -1085,6 +1085,10 @@ pub fn publish_to_remote(
         }
     }
 
+    declaration
+        .validate_publisher_tags(&declaration.version)
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+
     let tag = declaration
         .tag
         .render(&declaration.version)
