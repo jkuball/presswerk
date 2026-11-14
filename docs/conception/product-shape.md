@@ -71,9 +71,8 @@ possible.
 The consumer declares what to release in its flake: artifacts, publishers, version source,
 branch policy, and commit analysis settings. The CLI reads that
 [release declaration](glossary.md#release-declaration) by evaluating the flake, instead of
-maintaining a separate configuration file. The CLI evaluates in-process with
-[nix-bindings-rust](https://github.com/nixops4/nix-bindings-rust), which wraps the Nix C API.
-It does not invoke `nix eval` or another Nix command.
+maintaining a separate configuration file. It invokes the `nix` CLI found on `PATH`, so the
+release declaration is evaluated by the same Nix installation the project uses.
 
 Reasons:
 
@@ -88,9 +87,11 @@ that guesses the forge, the version files, or the publishers.
 
 Consequences:
 
-- Nix is the primary distribution channel. The CLI links against the Nix C libraries it was
-  built with and uses the local Nix store, usually through the Nix daemon. The daemon may run a
-  different Nix version, such as Determinate Nix;
+- Nix is the primary distribution channel. The Presswerk package deliberately does not wrap or
+  add a second Nix installation: `nix` and `nix-store` must be on `PATH`, and their
+  configured local store is used. Presswerk does not enforce an implementation or version;
+  support is determined by the required flake and CLI capabilities, and unsupported commands or
+  flags fail with Nix's own diagnostic;
 - the declaration never contains secrets. It may name them, but their values only reach the
   CLI at runtime. Fetching private flake inputs during evaluation may still need
   authentication, configured in Nix itself (such as `access-tokens`), never in the
@@ -116,11 +117,12 @@ Nix does not enforce this on its own: a `git+file://` reference without `rev` re
 working tree, including uncommitted changes to tracked files. The CLI therefore always builds
 the flake reference itself and pins `rev`.
 
-The lock file is part of the commit as well. The CLI locks the flake in check mode: it never
-updates or writes `flake.lock`, and a commit whose lock file is missing or out of date fails
-instead of resolving inputs to whatever is current. The `nix` command behaves differently
-here: without `--no-update-lock-file`, it locks missing inputs and writes the result into the
-working tree.
+The lock file is part of the commit as well. Presswerk evaluates with
+`--no-update-lock-file --no-write-lock-file`, so it never writes `flake.lock`. Those flags together
+can still let Nix evaluate with a virtual lock update, so Presswerk also checks that the locked
+flake reports the pinned root revision. Nix omits that revision after a virtual update; a commit
+whose lock file is missing or out of date therefore fails instead of resolving inputs to whatever
+is current.
 
 The declaration is read by its exact output path, `presswerk.default`, starting from the flake
 outputs. Nix's installable search through `packages.<system>` and `legacyPackages.<system>`

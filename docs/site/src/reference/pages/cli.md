@@ -9,7 +9,11 @@ $ nix run --inputs-from . presswerk -- plan
 ```
 
 Every command works on the repository in the current directory and reads the release
-declaration from the `presswerk.default` output of its flake at an exact commit. Errors are
-printed to standard error and exit with status 1.
+declaration from the `presswerk.default` output of its flake at an exact commit. Presswerk invokes
+`nix` from `PATH`; the flake package used by `nix run` does not bundle or select another Nix
+version. There is no separate implementation or version check: a CLI with the required flake and
+command capabilities works, while missing capabilities fail with Nix's own diagnostic. Errors are
+printed
+to standard error and exit with status 1.
 
 <!-- reference:commands -->

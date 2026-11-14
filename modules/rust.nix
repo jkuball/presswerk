@@ -7,25 +7,6 @@
     , ...
     }:
     let
-      nixLibraries = with pkgs.nix.libs; [
-        nix-util
-        nix-util-c.dev
-        nix-store
-        nix-store-c.dev
-        nix-expr
-        nix-expr-c.dev
-        nix-fetchers
-        nix-fetchers-c.dev
-        nix-flake
-        nix-flake-c.dev
-      ];
-      nixBindingsEnvironment = {
-        PKG_CONFIG_PATH = lib.makeSearchPath "lib/pkgconfig" ([ pkgs.boehmgc.dev ] ++ nixLibraries);
-        LIBRARY_PATH = lib.makeLibraryPath ([ pkgs.boehmgc ] ++ nixLibraries);
-      };
-      configureBindgen = ''
-        export BINDGEN_EXTRA_CLANG_ARGS="''${BINDGEN_EXTRA_CLANG_ARGS:-}${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin " -isysroot ${pkgs.apple-sdk.sdkroot}"} -x c++ -std=c++2a"
-      '';
       craneLib = config.rust-project.crane-lib;
       presswerk = config.rust-project.crates.presswerk;
       presswerkArgs = presswerk.crane.args // {
@@ -78,16 +59,15 @@
         };
 
         crates.presswerk.crane = {
-          args = nixBindingsEnvironment // {
+          args = {
             meta = {
               description = "Controlled releases for software built with Nix flakes";
               homepage = "https://presswerk.dev/";
               license = with lib.licenses; [ mit asl20 ];
               mainProgram = "presswerk";
             };
-            nativeBuildInputs = with pkgs; [ rustPlatform.bindgenHook pkg-config makeWrapper gitMinimal ];
-            buildInputs = [ pkgs.boehmgc ] ++ nixLibraries;
-            postConfigure = configureBindgen;
+            nativeBuildInputs = [ pkgs.gitMinimal ];
+            nativeCheckInputs = [ pkgs.nix ];
             preCheck = ''
               export XDG_CACHE_HOME="$TMPDIR/cache"
             '';
@@ -123,16 +103,6 @@
       };
 
       packages.default = self'.packages.presswerk;
-
-      devshells.default = {
-        packages = [ pkgs.pkg-config pkgs.boehmgc ] ++ nixLibraries;
-        env = lib.mapAttrsToList (name: value: { inherit name value; }) nixBindingsEnvironment;
-        devshell.startup.configure-bindgen.text = ''
-          source ${pkgs.rustPlatform.bindgenHook}/nix-support/setup-hook
-          populateBindgenEnv
-          ${configureBindgen}
-        '';
-      };
 
       checks.presswerk-test = craneLib.cargoTest (presswerkArgs // { inherit cargoArtifacts; });
     };
