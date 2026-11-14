@@ -774,8 +774,9 @@ impl GitTagPublisher {
             })?;
         if !output.status.success() {
             return Err(PublicationError::new(format!(
-                "could not inspect Git tag {tag:?} on remote {:?} (git exited with {})",
-                self.remote, output.status
+                "could not inspect Git tag {tag:?} on remote {:?}: {}",
+                self.remote,
+                git_failure(&output)
             )));
         }
 
@@ -945,10 +946,34 @@ impl TagPublisher for GitTagPublisher {
             RemoteState::Matching => Ok(()),
             RemoteState::Conflicting(message) => Err(PublicationError::new(message)),
             RemoteState::Missing => Err(PublicationError::new(format!(
-                "could not push Git tag {:?} to remote {:?} (git exited with {})",
-                release.tag, self.remote, output.status
+                "could not push Git tag {:?} to remote {:?}: {}",
+                release.tag,
+                self.remote,
+                git_failure(&output)
             ))),
         }
+    }
+}
+
+/// Why a git command failed: its exit status, what it printed on stderr, and the refs a porcelain
+/// push reports as rejected, which carry the remote's reason.
+fn git_failure(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let details: Vec<_> = stderr
+        .lines()
+        .chain(stdout.lines().filter(|line| line.starts_with('!')))
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if details.is_empty() {
+        format!("git exited with {}", output.status)
+    } else {
+        format!(
+            "git exited with {}:\n  {}",
+            output.status,
+            details.join("\n  ")
+        )
     }
 }
 

@@ -341,6 +341,30 @@ fn pushes_an_annotated_tag_without_force_and_reuses_it() {
 }
 
 #[test]
+fn a_rejected_tag_push_reports_the_remotes_reason() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let repository = GitRepo::new();
+    let commit = repository.commit_version("0.1.0", "🔖 Release v0.1.0");
+    let remote = tempfile::tempdir().unwrap();
+    let remote_path = remote.path().to_string_lossy().into_owned();
+    repository.git(["init", "--bare", "--quiet", &remote_path]);
+    repository.git(["remote", "add", "origin", &remote_path]);
+    let hook = remote.path().join("hooks/pre-receive");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\necho 'tags are protected here' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let publisher = GitTagPublisher::new(repository.path(), "origin");
+
+    let error = publisher.publish(&release(commit)).unwrap_err().to_string();
+
+    assert!(error.contains("tags are protected here"), "{error}");
+    assert!(error.contains("pre-receive hook declined"), "{error}");
+}
+
+#[test]
 fn refuses_to_push_a_new_lightweight_tag() {
     let repository = GitRepo::new();
     let commit = repository.commit_version("0.1.0", "🔖 Release v0.1.0");
