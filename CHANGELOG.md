@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.1] - 2026-11-14
+
+### 🐛 Fix a bug
+
+- (build): Reuse cached dependencies for Rust docs
+- (build): Keep cross-system dependency evaluation build-free
+- (build): Preserve package outputs with the CLI reference
+
+### ♻️ Refactor code
+
+- (build): Build the tests from the shared crate arguments
+- (build): Generate the CLI reference in postInstall instead of copying crane's install
+- (build): Explain the version-free dependency build and let Cargo default the version
+
+### ⚡️ Improve performance
+
+- (build): Cache Rust dependencies across releases
+
 ## [0.8.0] - 2026-11-14
 
 ### 📝 Add or update documentation
