@@ -20,8 +20,9 @@ with exactly that tag. Then it acts on what it finds:
 - **Draft:** a previous run stopped between the two steps, so it publishes the existing draft
   instead of creating another one. It reports `draft completed`.
 - **Published:** the release is complete, and it is left as it is. It reports `already published`.
-- **Conflicting:** its prerelease flag does not match the version, or there are several releases
-  for the tag. Presswerk stops before anything is written and never changes them.
+- **Conflicting:** its body does not match the declared body template, its prerelease flag does not
+  match the version, or there are several releases for the tag. Presswerk stops before anything is
+  written and never changes them.
 
 An existing release is never edited; at most a draft is published. So a retry of the same candidate
 completes missing state and keeps everything that already matches. After publishing, Presswerk
