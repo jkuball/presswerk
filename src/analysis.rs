@@ -4,7 +4,7 @@ use crate::declaration::{
 use crate::release_commit::release_subject;
 use git_cliff_core::repo::Repository as GitCliffRepository;
 use git2::{Oid, Repository as GitRepository};
-use minijinja::{Environment, context, value::Serde};
+use minijinja::{Environment, UndefinedBehavior, context, value::Serde};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -13,7 +13,6 @@ use std::fmt;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_NOTES_TEMPLATE: &str = include_str!("release-notes.md.j2");
 const REVERT_PREFIX: &str = "This reverts commit ";
 const MAINLINE_PREFIX: &str = "changes made to ";
 const CONVENTIONAL_REVERT_TYPE: &str = "revert";
@@ -751,7 +750,7 @@ const BREAKING_CHANGE_MARKER: &str = "**BREAKING**";
 #[derive(Serialize)]
 struct NoteGroup<'a> {
     title: String,
-    commits: Vec<NoteCommit>,
+    commits: Vec<NoteCommit<'a>>,
     /// Groups sort by rank, then by size, then by key.
     #[serde(skip)]
     rank: u8,
@@ -760,13 +759,17 @@ struct NoteGroup<'a> {
 }
 
 #[derive(Serialize)]
-struct NoteCommit {
+struct NoteCommit<'a> {
     /// The commit's line without the intention, which the group heading already shows.
     text: String,
+    message: &'a str,
+    scope: Option<&'a str>,
+    breaking: bool,
+    id: &'a str,
 }
 
-impl NoteCommit {
-    fn new(commit: &AnalyzedCommit) -> Self {
+impl<'a> NoteCommit<'a> {
+    fn new(commit: &'a AnalyzedCommit) -> Self {
         let text = match &commit.intention {
             // The Gitmoji subject keeps its own scope spelling after the intention.
             Intention::Gitmoji(_) => commit
@@ -786,7 +789,13 @@ impl NoteCommit {
                 }
             }
         };
-        Self { text }
+        Self {
+            text,
+            message: &commit.message,
+            scope: commit.scope.as_deref(),
+            breaking: commit.breaking,
+            id: &commit.id,
+        }
     }
 }
 
@@ -815,7 +824,11 @@ fn note_group(commit: &AnalyzedCommit) -> (&str, String, u8) {
     }
 }
 
-pub fn render_release_notes(analysis: &Analysis) -> Result<String, RenderError> {
+pub fn render_release_notes(
+    analysis: &Analysis,
+    version: &Version,
+    template: &str,
+) -> Result<String, RenderError> {
     let mut groups = BTreeMap::<&str, NoteGroup<'_>>::new();
     for commit in &analysis.commits {
         let (key, title, rank) = note_group(commit);
@@ -839,10 +852,15 @@ pub fn render_release_notes(analysis: &Analysis) -> Result<String, RenderError> 
             .then_with(|| left.key.cmp(right.key))
     });
 
-    Environment::new()
-        .render_str(DEFAULT_NOTES_TEMPLATE, context!(groups => Serde(&groups)))
+    let mut environment = Environment::new();
+    environment.set_undefined_behavior(UndefinedBehavior::Strict);
+    environment
+        .render_str(
+            template,
+            context!(version => version.to_string(), groups => Serde(&groups)),
+        )
         .map_err(|error| RenderError {
-            message: format!("failed to render release notes: {error}"),
+            message: format!("failed to render changelog.template: {error}"),
         })
 }
 
@@ -1054,7 +1072,12 @@ mod tests {
             commit("4", ":bug: Fix bug"),
         ]);
 
-        let notes = render_release_notes(&analysis).unwrap();
+        let notes = render_release_notes(
+            &analysis,
+            &Version::new(1, 2, 3),
+            declaration::DEFAULT_CHANGELOG_TEMPLATE,
+        )
+        .unwrap();
         assert_eq!(
             notes,
             "### 📝 Add or update documentation\n\n- Document Unicode spelling\n- Document shortcode spelling\n\n### 🐛 Fix a bug\n\n- Fix bug\n\n### ✨ Introduce new features\n\n- Add feature\n"
@@ -1062,8 +1085,29 @@ mod tests {
     }
 
     #[test]
+    fn renders_the_analyzer_independent_template_context() {
+        let analysis = Analysis::from_commits(vec![commit("abc123", "✨ (cli): Add feature")]);
+        let notes = render_release_notes(
+            &analysis,
+            &Version::new(1, 2, 3),
+            "{{ version }}|{{ groups[0].title }}|{{ groups[0].commits[0].text }}|{{ groups[0].commits[0].message }}|{{ groups[0].commits[0].scope }}|{{ groups[0].commits[0].breaking }}|{{ groups[0].commits[0].id }}",
+        )
+        .unwrap();
+
+        assert_eq!(
+            notes,
+            "1.2.3|✨ Introduce new features|(cli): Add feature|Add feature|cli|False|abc123"
+        );
+    }
+
+    #[test]
     fn renders_a_message_when_no_gitmoji_commits_exist() {
-        let notes = render_release_notes(&Analysis::from_commits(Vec::new())).unwrap();
+        let notes = render_release_notes(
+            &Analysis::from_commits(Vec::new()),
+            &Version::new(1, 2, 3),
+            declaration::DEFAULT_CHANGELOG_TEMPLATE,
+        )
+        .unwrap();
         assert_eq!(notes, "No recorded changes.\n");
     }
 
@@ -1245,7 +1289,12 @@ mod tests {
             ),
         ]);
 
-        let notes = render_release_notes(&analysis).unwrap();
+        let notes = render_release_notes(
+            &analysis,
+            &Version::new(1, 2, 3),
+            declaration::DEFAULT_CHANGELOG_TEMPLATE,
+        )
+        .unwrap();
         assert_eq!(
             notes,
             "### Features\n\n- **cli:** Add --json\n- **BREAKING** **api:** Drop the v1 endpoint\n\n\

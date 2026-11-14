@@ -29,7 +29,9 @@ Every field is required, and unknown fields are rejected.
 - `schemaVersion`: the integer `0`.
 - `version`: the effective release version, such as `"1.4.0"` or `"2.0.0-rc.1"`.
 - `tag.format`: the release tag format, containing `{version}` exactly once.
-- `changelog.path`: the repository-relative path of the changelog.
+- `changelog.path`: the repository-relative path of the changelog. `changelog.template` is the
+  MiniJinja template that renders a version section from the analyzed commit groups; it may be
+  missing in older declarations and then means the built-in template.
 - `versionFiles`: the files whose version `prepare` updates. Each entry has a repository-relative
   `path` and either `toml` or `json`, a dotted key selector such as `"package.version"`, `plain`,
   an empty object for a file that contains only the version, `regex`, a pattern with a `version`
@@ -44,15 +46,16 @@ Every field is required, and unknown fields are rejected.
   level.
 - `publishers`: keyed by publisher type, `github-release`, `oci-helm`, or `oci-image`, and then by
   name. All may be empty. Each GitHub Release publisher has an `apiUrl`, a `repository` in
-  `owner/name` form, a `token.secret` naming the environment variable that holds the token, and
-  `assets`, which maps asset names to absolute store paths of files and may be missing in older
-  declarations. `oci-helm` and `oci-image` may be missing in older declarations. Both registry
-  publishers have a `repository`, a `username` with either `secret` or `value`, a
+  `owner/name` form, a `token.secret` naming the environment variable that holds the token, a
+  MiniJinja `body` template, and `assets`, which maps asset names to absolute store paths of files
+  and may be missing in older declarations. `body` may be missing in older declarations and then
+  means `{{ notes }}`. `oci-helm` and `oci-image` may be missing in older declarations. Both
+  registry publishers have a `repository`, a `username` with either `secret` or `value`, a
   `password.secret`, and `public`, which may be missing and then means `false`. An OCI Helm
   publisher has the absolute store path of its packaged `chart`. An OCI image publisher has
   `platforms`, which maps platforms such as `linux/amd64` to absolute store paths of image archives
-  or executables that write an uncompressed one to stdout. Its
-  `tags` and `aliases` are lists of templates that may use `{major}`, `{minor}`, and `{patch}`;
-  every tag contains `{version}`, no alias does, and `aliases` may be missing in older declarations.
-  `compression` has either `gzip` or `zstd`, each with its `level`; it may be missing in older
-  declarations and then means gzip at level 6.
+  or executables that write an uncompressed one to stdout. Its `tags` and `aliases` are lists of
+  templates that may use `{major}`, `{minor}`, and `{patch}`; every tag contains `{version}`, no
+  alias does, and `aliases` may be missing in older declarations. `compression` has either `gzip`
+  or `zstd`, each with its `level`; it may be missing in older declarations and then means gzip at
+  level 6.
