@@ -14,11 +14,6 @@ git-cliff-core = { version = "2.14.2", default-features = false, features = ["re
 git2 = { version = "0.21", default-features = false }
 jsonc-parser = "0.34.0"
 minijinja = { version = "3.0.5", features = ["serde"] }
-nix-bindings-expr = "0.2.1"
-nix-bindings-fetchers = "0.2.1"
-nix-bindings-flake = "0.2.1"
-nix-bindings-store = "0.2.1"
-nix-bindings-util = "0.2.1"
 regex = "1.13.1"
 semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
