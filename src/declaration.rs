@@ -103,30 +103,29 @@ impl ReleaseDeclaration {
         // Registry publishers of one repository that share a tag would each find the other's
         // manifest under it and conflict.
         let mut pushed = BTreeMap::new();
+        let mut register = |name: String, repository: &str, tag: String| {
+            if let Some(other) = pushed.insert((repository.to_owned(), tag.clone()), name.clone()) {
+                return Err(DeclarationError::Invalid(format!(
+                    "{other} and {name} both push to {repository} and must not share a tag; both render {tag} for version {version}"
+                )));
+            }
+            Ok(())
+        };
         for (name, publisher) in &self.publishers.oci {
-            let tags = crate::oci::render_tags(&publisher.tags, &publisher.aliases, version)
-                .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?;
-            for tag in tags {
-                let key = (publisher.repository.as_str(), tag.name().to_owned());
-                if let Some(other) = pushed.insert(key, format!("oci.{name}")) {
-                    return Err(DeclarationError::Invalid(format!(
-                        "{other} and oci.{name} both push to {} and must not share a tag or alias; both render {} for version {version}",
-                        publisher.repository,
-                        tag.name()
-                    )));
-                }
+            for tag in crate::oci::render_tags(&publisher.tags, &publisher.aliases, version)
+                .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?
+            {
+                register(
+                    format!("oci.{name}"),
+                    &publisher.repository,
+                    tag.name().into(),
+                )?;
             }
         }
         for (name, publisher) in &self.publishers.helm {
-            let rendered = crate::helm::validate_tag(version)
+            let tag = crate::helm::validate_tag(version)
                 .map_err(|error| DeclarationError::Invalid(format!("helm.{name}: {error}")))?;
-            let key = (publisher.repository.as_str(), rendered.clone());
-            if let Some(other) = pushed.insert(key, format!("helm.{name}")) {
-                return Err(DeclarationError::Invalid(format!(
-                    "{other} and helm.{name} both push to {} and must not share a tag; both render {rendered} for version {version}",
-                    publisher.repository
-                )));
-            }
+            register(format!("helm.{name}"), &publisher.repository, tag)?;
         }
 
         Ok(())

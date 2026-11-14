@@ -1,8 +1,8 @@
 //! The Helm publisher: pushes a packaged chart as one OCI manifest under its release version.
 
 use crate::oci::{
-    Blob, BlobData, Credentials, MANIFEST_MEDIA_TYPE, ORIGIN_ANNOTATION, RegistryClient,
-    VERSION_ANNOTATION,
+    Blob, BlobData, Credentials, Descriptor, MANIFEST_MEDIA_TYPE, Manifest, ORIGIN_ANNOTATION,
+    RegistryClient, VERSION_ANNOTATION, sha256_digest, sha256_digest_reader,
 };
 use crate::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, Publisher,
@@ -10,19 +10,23 @@ use crate::publication::{
 };
 use flate2::read::GzDecoder;
 use semver::Version;
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
-use sha2::{Digest, Sha256};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{Read, Seek};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
-use yaml_rust2::{Yaml, YamlLoader};
 
 pub const CONFIG_MEDIA_TYPE: &str = "application/vnd.cncf.helm.config.v1+json";
 pub const CHART_LAYER_MEDIA_TYPE: &str = "application/vnd.cncf.helm.chart.content.v1.tar+gzip";
 
 const CHART_METADATA_LIMIT: u64 = 1 << 20;
+
+fn chart_error(path: &Path, action: &str, error: impl std::fmt::Display) -> PublicationError {
+    PublicationError::new(format!(
+        "could not {action} Helm chart {}: {error}",
+        path.display()
+    ))
+}
 
 /// Helm replaces `+` with `_` because OCI tags cannot carry SemVer build metadata.
 #[must_use]
@@ -32,72 +36,46 @@ pub fn tag(version: &Version) -> String {
 
 pub fn validate_tag(version: &Version) -> Result<String, String> {
     let tag = tag(version);
-    if tag.len() > 128 {
-        return Err(format!(
-            "Helm chart version {version} renders an OCI tag longer than 128 characters"
-        ));
-    }
-    Ok(tag)
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Descriptor {
-    media_type: &'static str,
-    digest: String,
-    size: u64,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Manifest {
-    schema_version: u32,
-    media_type: &'static str,
-    config: Descriptor,
-    layers: [Descriptor; 1],
-    annotations: BTreeMap<String, String>,
+    (tag.len() <= 128).then_some(tag).ok_or_else(|| {
+        format!("Helm chart version {version} renders an OCI tag longer than 128 characters")
+    })
 }
 
 #[derive(Debug)]
 struct ChartPackage {
     path: PathBuf,
     origin: String,
-    name: String,
-    version: Version,
     config: Vec<u8>,
-    config_digest: String,
-    chart_digest: String,
-    chart_size: u64,
+    config_descriptor: Descriptor,
+    chart_descriptor: Descriptor,
 }
 
 impl ChartPackage {
-    fn open(path: &str) -> Result<Self, PublicationError> {
-        let path_buf = PathBuf::from(path);
-        let chart_size = path_buf
+    fn open(
+        path: &str,
+        repository: &str,
+        release_version: &Version,
+    ) -> Result<Self, PublicationError> {
+        let archive = PathBuf::from(path);
+        let chart_size = archive
             .metadata()
-            .map_err(|error| {
-                PublicationError::new(format!("could not inspect Helm chart {path:?}: {error}"))
-            })?
+            .map_err(|error| chart_error(&archive, "inspect", error))?
             .len();
-        let chart_digest = digest_reader(File::open(&path_buf).map_err(|error| {
-            PublicationError::new(format!("could not open Helm chart {path:?}: {error}"))
-        })?)?;
-        let (root, metadata) = read_chart_metadata(&path_buf)?;
-        let documents = YamlLoader::load_from_str(&metadata).map_err(|error| {
+        let chart_digest = sha256_digest_reader(
+            File::open(&archive).map_err(|error| chart_error(&archive, "open", error))?,
+        )
+        .map_err(|error| chart_error(&archive, "read", error))?;
+        let (root, metadata) = read_chart_metadata(&archive)?;
+        let mut config: Value = serde_yaml_ng::from_slice(&metadata).map_err(|error| {
             PublicationError::new(format!("could not parse Chart.yaml in {path:?}: {error}"))
         })?;
-        let [document] = documents.as_slice() else {
-            return Err(PublicationError::new(format!(
-                "Chart.yaml in {path:?} must contain exactly one YAML document"
-            )));
-        };
-        let mapping = document.as_hash().ok_or_else(|| {
+        let object = config.as_object_mut().ok_or_else(|| {
             PublicationError::new(format!("Chart.yaml in {path:?} must be a YAML mapping"))
         })?;
         let field = |name: &str| {
-            mapping
-                .get(&Yaml::String(name.into()))
-                .and_then(Yaml::as_str)
+            object
+                .get(name)
+                .and_then(Value::as_str)
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| {
                     PublicationError::new(format!(
@@ -106,104 +84,80 @@ impl ChartPackage {
                 })
         };
         let name = field("name")?.to_owned();
+        let version_text = field("version")?.to_owned();
         if root != name {
             return Err(PublicationError::new(format!(
                 "Helm chart {path:?} has root directory {root:?}, expected chart name {name:?}"
             )));
         }
-        let version_text = field("version")?;
-        let version = Version::parse(version_text).map_err(|error| {
+        let version = Version::parse(&version_text).map_err(|error| {
             PublicationError::new(format!(
                 "chart {name:?} in {path:?} has invalid version {version_text:?}: {error}"
             ))
         })?;
-        let mut config_value = yaml_json(document).map_err(|reason| {
-            PublicationError::new(format!(
-                "could not convert Chart.yaml in {path:?}: {reason}"
-            ))
-        })?;
-        let object = config_value
-            .as_object_mut()
-            .expect("Chart.yaml mapping converted to a JSON object");
-        object.insert("name".into(), Value::String(name.clone()));
-        object.insert("version".into(), Value::String(version_text.into()));
-        if let Some(app_version) = mapping.get(&Yaml::String("appVersion".into()))
-            && let Some(app_version) = yaml_scalar_string(app_version)
-        {
-            object.insert("appVersion".into(), Value::String(app_version));
+        if version != *release_version {
+            return Err(PublicationError::new(format!(
+                "Helm chart {path:?} has version {version}, expected release version {release_version}"
+            )));
         }
-        let config = serde_json::to_vec(&config_value).expect("YAML converted to JSON serializes");
-        let config_digest = digest(&config);
+        if repository.rsplit('/').next().unwrap_or_default() != name {
+            return Err(PublicationError::new(format!(
+                "Helm repository {repository:?} must end in chart name {name:?}"
+            )));
+        }
+        if let Some(app_version @ (Value::Number(_) | Value::Bool(_))) =
+            object.get_mut("appVersion")
+        {
+            *app_version = Value::String(app_version.to_string());
+        }
+        let config = serde_json::to_vec(&config).expect("YAML converted to JSON serializes");
         Ok(Self {
-            path: path_buf,
+            path: archive,
             origin: path.into(),
-            name,
-            version,
+            config_descriptor: Descriptor::new(
+                CONFIG_MEDIA_TYPE,
+                &sha256_digest(&config),
+                config.len() as u64,
+            ),
+            chart_descriptor: Descriptor::new(CHART_LAYER_MEDIA_TYPE, &chart_digest, chart_size),
             config,
-            config_digest,
-            chart_digest,
-            chart_size,
         })
     }
 
     fn manifest(&self, version: &Version) -> (Vec<u8>, String) {
         let manifest = Manifest {
             schema_version: 2,
-            media_type: MANIFEST_MEDIA_TYPE,
-            config: Descriptor {
-                media_type: CONFIG_MEDIA_TYPE,
-                digest: self.config_digest.clone(),
-                size: self.config.len() as u64,
-            },
-            layers: [Descriptor {
-                media_type: CHART_LAYER_MEDIA_TYPE,
-                digest: self.chart_digest.clone(),
-                size: self.chart_size,
-            }],
+            media_type: MANIFEST_MEDIA_TYPE.into(),
+            config: self.config_descriptor.clone(),
+            layers: vec![self.chart_descriptor.clone()],
             annotations: BTreeMap::from([
                 (VERSION_ANNOTATION.into(), version.to_string()),
                 (ORIGIN_ANNOTATION.into(), self.origin.clone()),
             ]),
         };
         let bytes = serde_json::to_vec(&manifest).expect("Helm manifest serializes");
-        let digest = digest(&bytes);
+        let digest = sha256_digest(&bytes);
         (bytes, digest)
     }
 }
 
-fn read_chart_metadata(path: &Path) -> Result<(String, String), PublicationError> {
-    let file = File::open(path).map_err(|error| {
-        PublicationError::new(format!(
-            "could not open Helm chart {:?}: {error}",
-            path.display()
-        ))
-    })?;
+fn read_chart_metadata(path: &Path) -> Result<(String, Vec<u8>), PublicationError> {
+    let file = File::open(path).map_err(|error| chart_error(path, "open", error))?;
     let mut archive = tar::Archive::new(GzDecoder::new(file));
     let mut found = None;
-    let entries = archive.entries().map_err(|error| {
-        PublicationError::new(format!(
-            "could not read Helm chart {:?}: {error}",
-            path.display()
-        ))
-    })?;
-    for entry in entries {
-        let mut entry = entry.map_err(|error| {
-            PublicationError::new(format!(
-                "could not read Helm chart {:?}: {error}",
-                path.display()
-            ))
-        })?;
-        let entry_path = entry.path().map_err(|error| {
-            PublicationError::new(format!(
-                "could not read a path in Helm chart {:?}: {error}",
-                path.display()
-            ))
-        })?;
+    for entry in archive
+        .entries()
+        .map_err(|error| chart_error(path, "read", error))?
+    {
+        let mut entry = entry.map_err(|error| chart_error(path, "read", error))?;
+        let entry_path = entry
+            .path()
+            .map_err(|error| chart_error(path, "read a path in", error))?;
         let components: Vec<_> = entry_path.components().collect();
         let [Component::Normal(root), Component::Normal(name)] = components.as_slice() else {
             continue;
         };
-        if *name != "Chart.yaml" {
+        if name.to_str() != Some("Chart.yaml") {
             continue;
         }
         let root = root
@@ -238,15 +192,7 @@ fn read_chart_metadata(path: &Path) -> Result<(String, String), PublicationError
                 path.display()
             )));
         }
-        found = Some((
-            root,
-            String::from_utf8(bytes).map_err(|error| {
-                PublicationError::new(format!(
-                    "Chart.yaml in {:?} is not UTF-8: {error}",
-                    path.display()
-                ))
-            })?,
-        ));
+        found = Some((root, bytes));
     }
     found.ok_or_else(|| {
         PublicationError::new(format!(
@@ -256,136 +202,8 @@ fn read_chart_metadata(path: &Path) -> Result<(String, String), PublicationError
     })
 }
 
-fn yaml_scalar_string(value: &Yaml) -> Option<String> {
-    match value {
-        Yaml::String(value) | Yaml::Real(value) => Some(value.clone()),
-        Yaml::Integer(value) => Some(value.to_string()),
-        Yaml::Boolean(value) => Some(value.to_string()),
-        _ => None,
-    }
-}
-
-fn yaml_json(value: &Yaml) -> Result<Value, String> {
-    Ok(match value {
-        Yaml::Real(value) => Value::Number(
-            value
-                .parse::<serde_json::Number>()
-                .map_err(|_| format!("number {value:?} is not valid JSON"))?,
-        ),
-        Yaml::Integer(value) => Value::Number((*value).into()),
-        Yaml::String(value) => Value::String(value.clone()),
-        Yaml::Boolean(value) => Value::Bool(*value),
-        Yaml::Array(values) => Value::Array(
-            values
-                .iter()
-                .map(yaml_json)
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        Yaml::Hash(values) => {
-            let mut object = Map::new();
-            for (key, value) in values {
-                let Yaml::String(key) = key else {
-                    return Err("mapping keys must be strings".into());
-                };
-                object.insert(key.clone(), yaml_json(value)?);
-            }
-            Value::Object(object)
-        }
-        Yaml::Null => Value::Null,
-        Yaml::Alias(_) | Yaml::BadValue => {
-            return Err("aliases and invalid values are not supported".into());
-        }
-    })
-}
-
-fn digest(bytes: &[u8]) -> String {
-    format!("sha256:{}", hex(&Sha256::digest(bytes)))
-}
-
-fn digest_reader(mut reader: impl Read) -> Result<String, PublicationError> {
-    let mut hash = Sha256::new();
-    let mut buffer = [0; 64 * 1024];
-    loop {
-        let read = reader.read(&mut buffer).map_err(|error| {
-            PublicationError::new(format!("could not read Helm chart archive: {error}"))
-        })?;
-        if read == 0 {
-            break;
-        }
-        hash.update(&buffer[..read]);
-    }
-    Ok(format!("sha256:{}", hex(&hash.finalize())))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-trait Registry {
-    fn manifest(&self, reference: &str) -> Result<Option<(String, Vec<u8>)>, PublicationError>;
-    fn manifest_digest(&self, reference: &str) -> Result<Option<String>, PublicationError>;
-    fn blob_exists(&self, digest: &str) -> Result<bool, PublicationError>;
-    fn upload_blob(&self, blob: &Blob<'_>) -> Result<(), PublicationError>;
-    fn put_manifest(
-        &self,
-        reference: &str,
-        media_type: &str,
-        bytes: &[u8],
-        digest: &str,
-    ) -> Result<(), PublicationError>;
-}
-
-impl Registry for RegistryClient {
-    fn manifest(&self, reference: &str) -> Result<Option<(String, Vec<u8>)>, PublicationError> {
-        RegistryClient::manifest(self, reference)
-    }
-
-    fn manifest_digest(&self, reference: &str) -> Result<Option<String>, PublicationError> {
-        RegistryClient::manifest_digest(self, reference)
-    }
-
-    fn blob_exists(&self, digest: &str) -> Result<bool, PublicationError> {
-        RegistryClient::blob_exists(self, digest)
-    }
-
-    fn upload_blob(&self, blob: &Blob<'_>) -> Result<(), PublicationError> {
-        RegistryClient::upload_blob(self, blob)
-    }
-
-    fn put_manifest(
-        &self,
-        reference: &str,
-        media_type: &str,
-        bytes: &[u8],
-        digest: &str,
-    ) -> Result<(), PublicationError> {
-        RegistryClient::put_manifest(self, reference, media_type, bytes, digest)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Identity {
-    version: Version,
-    origin: String,
-}
-
-fn identity(manifest: &[u8]) -> Option<Identity> {
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct RemoteDescriptor {
-        media_type: String,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct RemoteManifest {
-        schema_version: u32,
-        media_type: String,
-        config: RemoteDescriptor,
-        layers: Vec<RemoteDescriptor>,
-        #[serde(default)]
-        annotations: BTreeMap<String, String>,
-    }
-    let manifest: RemoteManifest = serde_json::from_slice(manifest).ok()?;
+fn identity(manifest: &[u8]) -> Option<(Version, String)> {
+    let manifest: Manifest = serde_json::from_slice(manifest).ok()?;
     if manifest.schema_version != 2
         || manifest.media_type != MANIFEST_MEDIA_TYPE
         || manifest.config.media_type != CONFIG_MEDIA_TYPE
@@ -394,49 +212,21 @@ fn identity(manifest: &[u8]) -> Option<Identity> {
     {
         return None;
     }
-    Some(Identity {
-        version: Version::parse(manifest.annotations.get(VERSION_ANNOTATION)?).ok()?,
-        origin: manifest.annotations.get(ORIGIN_ANNOTATION)?.clone(),
-    })
+    Some((
+        Version::parse(manifest.annotations.get(VERSION_ANNOTATION)?).ok()?,
+        manifest.annotations.get(ORIGIN_ANNOTATION)?.clone(),
+    ))
 }
 
 #[must_use]
 pub(crate) fn is_release_manifest(manifest: &[u8], version: &Version, origin: &str) -> bool {
-    identity(manifest).is_some_and(|found| found.version == *version && found.origin == origin)
-}
-
-enum TagState {
-    Missing,
-    Matching,
-    Conflicting(String),
+    identity(manifest).is_some_and(|found| found == (version.clone(), origin.into()))
 }
 
 pub struct HelmPublisher {
-    registry: Box<dyn Registry>,
+    registry: RegistryClient,
     repository: String,
     chart: ChartPackage,
-}
-
-fn checked_chart(
-    repository: &str,
-    chart_path: &str,
-    release_version: &Version,
-) -> Result<ChartPackage, PublicationError> {
-    let chart = ChartPackage::open(chart_path)?;
-    if chart.version != *release_version {
-        return Err(PublicationError::new(format!(
-            "Helm chart {chart_path:?} has version {}, expected release version {release_version}",
-            chart.version
-        )));
-    }
-    let repository_name = repository.rsplit('/').next().unwrap_or_default();
-    if repository_name != chart.name {
-        return Err(PublicationError::new(format!(
-            "Helm repository {repository:?} must end in chart name {:?}",
-            chart.name
-        )));
-    }
-    Ok(chart)
 }
 
 impl HelmPublisher {
@@ -445,59 +235,31 @@ impl HelmPublisher {
         declaration: &crate::declaration::HelmPublisher,
         release_version: &Version,
     ) -> Result<Self, PublicationError> {
-        let chart = checked_chart(&declaration.repository, &declaration.chart, release_version)?;
         let credentials =
             Credentials::from_environment(&declaration.username, &declaration.password.secret)?;
-        let registry = RegistryClient::new(&declaration.repository, Some(credentials))?;
+        Self::new(
+            RegistryClient::new(&declaration.repository, Some(credentials))?,
+            &declaration.repository,
+            &declaration.chart,
+            release_version,
+        )
+    }
+
+    pub fn new(
+        registry: RegistryClient,
+        repository: &str,
+        chart_path: &str,
+        release_version: &Version,
+    ) -> Result<Self, PublicationError> {
         Ok(Self {
-            registry: Box::new(registry),
-            repository: declaration.repository.clone(),
-            chart,
+            registry,
+            repository: repository.into(),
+            chart: ChartPackage::open(chart_path, repository, release_version)?,
         })
     }
 
     fn reference(&self, release: &Release) -> String {
         format!("{}:{}", self.repository, tag(&release.version))
-    }
-
-    fn tag_state(&self, release: &Release) -> Result<TagState, PublicationError> {
-        let tag = validate_tag(&release.version).map_err(PublicationError::new)?;
-        Ok(match self.registry.manifest(&tag)? {
-            None => TagState::Missing,
-            Some((_, manifest))
-                if is_release_manifest(&manifest, &release.version, &self.chart.origin) =>
-            {
-                TagState::Matching
-            }
-            Some((digest, manifest)) => {
-                let description = identity(&manifest).map_or_else(
-                    || "an unrecognized manifest".to_owned(),
-                    |identity| format!("version {} from {}", identity.version, identity.origin),
-                );
-                TagState::Conflicting(format!(
-                    "{} points to {digest}, {description}; expected version {} from {}",
-                    self.reference(release),
-                    release.version,
-                    self.chart.origin
-                ))
-            }
-        })
-    }
-
-    fn push_blob(
-        &self,
-        digest: &str,
-        size: u64,
-        data: BlobData<'_>,
-    ) -> Result<(), PublicationError> {
-        if !self.registry.blob_exists(digest)? {
-            self.registry.upload_blob(&Blob {
-                digest: digest.into(),
-                size,
-                data,
-            })?;
-        }
-        Ok(())
     }
 
     fn tag_step(&self, release: &Release, step: AssetStep) -> ArtifactSteps {
@@ -507,77 +269,82 @@ impl HelmPublisher {
             step,
         }]
     }
+
+    fn is_missing(&self, release: &Release) -> Result<bool, PublicationError> {
+        match self.state(release)? {
+            PublisherState::Missing => Ok(true),
+            PublisherState::Published => Ok(false),
+            PublisherState::Conflicting(message) => Err(PublicationError::new(message)),
+            _ => unreachable!("Helm publisher state"),
+        }
+    }
 }
 
 impl Publisher for HelmPublisher {
     fn state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
-        Ok(match self.tag_state(release)? {
-            TagState::Missing => PublisherState::Missing,
-            TagState::Matching => PublisherState::Published,
-            TagState::Conflicting(message) => PublisherState::Conflicting(message),
+        let tag = validate_tag(&release.version).map_err(PublicationError::new)?;
+        Ok(match self.registry.manifest(&tag)? {
+            None => PublisherState::Missing,
+            Some((_, manifest))
+                if is_release_manifest(&manifest, &release.version, &self.chart.origin) =>
+            {
+                PublisherState::Published
+            }
+            Some((digest, manifest)) => {
+                let description = identity(&manifest).map_or_else(
+                    || "an unrecognized manifest".to_owned(),
+                    |(version, origin)| format!("version {version} from {origin}"),
+                );
+                PublisherState::Conflicting(format!(
+                    "{} points to {digest}, {description}; expected version {} from {}",
+                    self.reference(release),
+                    release.version,
+                    self.chart.origin
+                ))
+            }
         })
     }
 
     fn publish(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
-        match self.tag_state(release)? {
-            TagState::Matching => {
-                return Ok(self.tag_step(release, AssetStep::AlreadyUploaded));
-            }
-            TagState::Conflicting(message) => return Err(PublicationError::new(message)),
-            TagState::Missing => {}
+        if !self.is_missing(release)? {
+            return Ok(self.tag_step(release, AssetStep::AlreadyUploaded));
         }
 
-        self.push_blob(
-            &self.chart.config_digest,
-            self.chart.config.len() as u64,
-            BlobData::Bytes(&self.chart.config),
-        )?;
-        let mut chart = File::open(&self.chart.path).map_err(|error| {
+        self.registry.push_blob(&Blob {
+            digest: self.chart.config_descriptor.digest.clone(),
+            size: self.chart.config_descriptor.size,
+            data: BlobData::Bytes(&self.chart.config),
+        })?;
+        let chart = File::open(&self.chart.path).map_err(|error| {
             PublicationError::new(format!(
                 "could not open Helm chart {:?}: {error}",
                 self.chart.path.display()
             ))
         })?;
-        chart.rewind().map_err(|error| {
-            PublicationError::new(format!(
-                "could not read Helm chart {:?}: {error}",
-                self.chart.path.display()
-            ))
+        self.registry.push_blob(&Blob {
+            digest: self.chart.chart_descriptor.digest.clone(),
+            size: self.chart.chart_descriptor.size,
+            data: BlobData::File(&chart),
         })?;
-        self.push_blob(
-            &self.chart.chart_digest,
-            self.chart.chart_size,
-            BlobData::File(&chart),
-        )?;
 
-        let (manifest, manifest_digest) = self.chart.manifest(&release.version);
-        if self.registry.manifest_digest(&manifest_digest)?.is_none() {
+        let (manifest, digest) = self.chart.manifest(&release.version);
+        self.registry
+            .push_manifest(MANIFEST_MEDIA_TYPE, &manifest, &digest)?;
+        if self.is_missing(release)? {
             self.registry.put_manifest(
-                &manifest_digest,
-                MANIFEST_MEDIA_TYPE,
-                &manifest,
-                &manifest_digest,
-            )?;
-        }
-
-        match self.tag_state(release)? {
-            TagState::Missing => self.registry.put_manifest(
                 &tag(&release.version),
                 MANIFEST_MEDIA_TYPE,
                 &manifest,
-                &manifest_digest,
-            )?,
-            TagState::Matching => {}
-            TagState::Conflicting(message) => return Err(PublicationError::new(message)),
+                &digest,
+            )?;
         }
-        match self.tag_state(release)? {
-            TagState::Matching => Ok(self.tag_step(release, AssetStep::Uploaded)),
-            TagState::Missing => Err(PublicationError::new(format!(
+        if self.is_missing(release)? {
+            return Err(PublicationError::new(format!(
                 "{} was not published",
                 self.reference(release)
-            ))),
-            TagState::Conflicting(message) => Err(PublicationError::new(message)),
+            )));
         }
+        Ok(self.tag_step(release, AssetStep::Uploaded))
     }
 
     fn complete_steps(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
@@ -592,9 +359,13 @@ mod tests {
     use flate2::Compression;
     use flate2::write::GzEncoder;
     use serde_json::json;
-    use std::cell::{Cell, RefCell};
+    use std::cell::Cell;
     use std::collections::HashMap;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{TcpListener, TcpStream};
     use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
 
     fn chart(directory: &Path, name: &str, version: &str) -> PathBuf {
         chart_with_root(directory, name, name, version)
@@ -625,7 +396,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakeState {
+    struct RegistryState {
         blobs: HashMap<String, Vec<u8>>,
         manifests: HashMap<String, Vec<u8>>,
         references: HashMap<String, String>,
@@ -633,16 +404,87 @@ mod tests {
         inspection_fails: bool,
     }
 
-    #[derive(Clone)]
-    struct FakeRegistry(Rc<RefCell<FakeState>>);
+    struct MockRegistry {
+        repository: String,
+        state: Arc<Mutex<RegistryState>>,
+    }
 
-    impl Registry for FakeRegistry {
-        fn manifest(&self, reference: &str) -> Result<Option<(String, Vec<u8>)>, PublicationError> {
-            let state = self.0.borrow();
-            if state.inspection_fails {
-                return Err(PublicationError::new(
-                    "could not inspect manifest: registry unavailable",
-                ));
+    impl MockRegistry {
+        fn start() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let repository = format!("{}/team/project", listener.local_addr().unwrap());
+            let state = Arc::new(Mutex::new(RegistryState::default()));
+            let shared = state.clone();
+            thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(stream) = stream else { break };
+                    let state = shared.clone();
+                    thread::spawn(move || handle(stream, &state));
+                }
+            });
+            Self { repository, state }
+        }
+
+        fn publisher(&self, chart: &Path, version: &Version) -> HelmPublisher {
+            HelmPublisher::new(
+                RegistryClient::new(&self.repository, None).unwrap(),
+                &self.repository,
+                &chart.to_string_lossy(),
+                version,
+            )
+            .unwrap()
+        }
+    }
+
+    fn handle(mut stream: TcpStream, state: &Mutex<RegistryState>) {
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut request = String::new();
+        reader.read_line(&mut request).unwrap();
+        let mut parts = request.split_whitespace();
+        let method = parts.next().unwrap();
+        let target = parts.next().unwrap();
+        let mut length = 0;
+        loop {
+            let mut header = String::new();
+            reader.read_line(&mut header).unwrap();
+            if header == "\r\n" {
+                break;
+            }
+            if let Some(value) = header.to_ascii_lowercase().strip_prefix("content-length:") {
+                length = value.trim().parse().unwrap();
+            }
+        }
+        let mut body = vec![0; length];
+        reader.read_exact(&mut body).unwrap();
+        let path = target.split('?').next().unwrap();
+        let mut state = state.lock().unwrap();
+        let fail = state.inspection_fails
+            && matches!(method, "GET" | "HEAD")
+            && path.contains("/manifests/");
+        if fail {
+            return response(&mut stream, 500, &[], &[]);
+        }
+        if method == "HEAD"
+            && let Some(digest) = path.strip_prefix("/v2/team/project/blobs/")
+        {
+            return response(
+                &mut stream,
+                if state.blobs.contains_key(digest) {
+                    200
+                } else {
+                    404
+                },
+                &[],
+                &[],
+            );
+        }
+        if let Some(reference) = path.strip_prefix("/v2/team/project/manifests/") {
+            if method == "PUT" {
+                let digest = sha256_digest(&body);
+                state.manifests.insert(digest.clone(), body);
+                state.references.insert(reference.into(), digest.clone());
+                state.writes.push(format!("manifest {reference}"));
+                return response(&mut stream, 201, &[("Docker-Content-Digest", &digest)], &[]);
             }
             let digest = state.references.get(reference).cloned().or_else(|| {
                 state
@@ -650,75 +492,54 @@ mod tests {
                     .contains_key(reference)
                     .then(|| reference.into())
             });
-            Ok(digest.and_then(|digest| {
-                state
-                    .manifests
-                    .get(&digest)
-                    .cloned()
-                    .map(|manifest| (digest, manifest))
-            }))
-        }
-
-        fn manifest_digest(&self, reference: &str) -> Result<Option<String>, PublicationError> {
-            Ok(self.manifest(reference)?.map(|(digest, _)| digest))
-        }
-
-        fn blob_exists(&self, digest: &str) -> Result<bool, PublicationError> {
-            Ok(self.0.borrow().blobs.contains_key(digest))
-        }
-
-        fn upload_blob(&self, blob: &Blob<'_>) -> Result<(), PublicationError> {
-            let bytes = match blob.data {
-                BlobData::File(file) => {
-                    let mut file = file;
-                    file.rewind().unwrap();
-                    let mut bytes = Vec::new();
-                    file.read_to_end(&mut bytes).unwrap();
-                    bytes
-                }
-                BlobData::Bytes(bytes) => bytes.to_vec(),
+            let Some(digest) = digest else {
+                return response(&mut stream, 404, &[], &[]);
             };
-            assert_eq!(digest(&bytes), blob.digest);
-            assert_eq!(bytes.len() as u64, blob.size);
-            let mut state = self.0.borrow_mut();
-            state.blobs.insert(blob.digest.clone(), bytes);
-            state.writes.push(format!("blob {}", blob.digest));
-            Ok(())
+            if method == "HEAD" {
+                return response(&mut stream, 200, &[("Docker-Content-Digest", &digest)], &[]);
+            }
+            let manifest = state.manifests[&digest].clone();
+            return response(&mut stream, 200, &[], &manifest);
         }
-
-        fn put_manifest(
-            &self,
-            reference: &str,
-            media_type: &str,
-            bytes: &[u8],
-            expected_digest: &str,
-        ) -> Result<(), PublicationError> {
-            assert_eq!(media_type, MANIFEST_MEDIA_TYPE);
-            assert_eq!(digest(bytes), expected_digest);
-            let mut state = self.0.borrow_mut();
-            state
-                .manifests
-                .insert(expected_digest.into(), bytes.to_vec());
-            state
-                .references
-                .insert(reference.into(), expected_digest.into());
-            state.writes.push(format!("manifest {reference}"));
-            Ok(())
+        if method == "POST" && path == "/v2/team/project/blobs/uploads/" {
+            return response(&mut stream, 202, &[("Location", "/upload")], &[]);
         }
+        if method == "PUT" && path == "/upload" {
+            let url = url::Url::parse(&format!("http://localhost{target}")).unwrap();
+            let digest = url
+                .query_pairs()
+                .find(|(key, _)| key == "digest")
+                .unwrap()
+                .1
+                .into_owned();
+            assert_eq!(sha256_digest(&body), digest);
+            state.blobs.insert(digest.clone(), body);
+            state.writes.push(format!("blob {digest}"));
+            return response(&mut stream, 201, &[], &[]);
+        }
+        response(&mut stream, 404, &[], &[]);
     }
 
-    fn make_publisher(
-        state: Rc<RefCell<FakeState>>,
-        repository: &str,
-        path: &Path,
-        version: &Version,
-    ) -> HelmPublisher {
-        let path = path.to_string_lossy();
-        HelmPublisher {
-            registry: Box::new(FakeRegistry(state)),
-            repository: repository.into(),
-            chart: checked_chart(repository, &path, version).unwrap(),
+    fn response(stream: &mut TcpStream, status: u16, headers: &[(&str, &str)], body: &[u8]) {
+        let reason = match status {
+            200 => "OK",
+            201 => "Created",
+            202 => "Accepted",
+            404 => "Not Found",
+            500 => "Internal Server Error",
+            _ => unreachable!(),
+        };
+        write!(
+            stream,
+            "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n",
+            body.len()
+        )
+        .unwrap();
+        for (name, value) in headers {
+            write!(stream, "{name}: {value}\r\n").unwrap();
         }
+        stream.write_all(b"\r\n").unwrap();
+        stream.write_all(body).unwrap();
     }
 
     fn release(version: &str) -> Release {
@@ -734,21 +555,16 @@ mod tests {
     fn pushes_one_helm_manifest_and_a_retry_writes_nothing() {
         let directory = tempfile::tempdir().unwrap();
         let chart = chart(directory.path(), "project", "1.2.3");
-        let state = Rc::new(RefCell::new(FakeState::default()));
+        let registry = MockRegistry::start();
         let release = release("1.2.3");
-        let publisher = make_publisher(
-            state.clone(),
-            "ghcr.io/owner/charts/project",
-            &chart,
-            &release.version,
-        );
+        let publisher = registry.publisher(&chart, &release.version);
 
         assert_eq!(publisher.state(&release).unwrap(), PublisherState::Missing);
         assert_eq!(
             publisher.publish(&release).unwrap(),
             [ArtifactStep {
                 kind: ArtifactKind::Tag,
-                name: "ghcr.io/owner/charts/project:1.2.3".into(),
+                name: format!("{}:1.2.3", registry.repository),
                 step: AssetStep::Uploaded,
             }]
         );
@@ -757,9 +573,9 @@ mod tests {
             PublisherState::Published
         );
 
-        let writes = state.borrow().writes.clone();
+        let writes = registry.state.lock().unwrap().writes.clone();
         let manifest = {
-            let state = state.borrow();
+            let state = registry.state.lock().unwrap();
             let digest = &state.references["1.2.3"];
             state.manifests[digest].clone()
         };
@@ -776,7 +592,8 @@ mod tests {
             })
         );
         let config_digest = manifest["config"]["digest"].as_str().unwrap();
-        let config: Value = serde_json::from_slice(&state.borrow().blobs[config_digest]).unwrap();
+        let config: Value =
+            serde_json::from_slice(&registry.state.lock().unwrap().blobs[config_digest]).unwrap();
         assert_eq!(config["name"], "project");
         assert_eq!(config["version"], "1.2.3");
         assert_eq!(config["appVersion"], "1.2.3");
@@ -785,11 +602,11 @@ mod tests {
             publisher.publish(&release).unwrap(),
             [ArtifactStep {
                 kind: ArtifactKind::Tag,
-                name: "ghcr.io/owner/charts/project:1.2.3".into(),
+                name: format!("{}:1.2.3", registry.repository),
                 step: AssetStep::AlreadyUploaded,
             }]
         );
-        assert_eq!(state.borrow().writes, writes);
+        assert_eq!(registry.state.lock().unwrap().writes, writes);
     }
 
     struct FakeTagPublisher {
@@ -813,23 +630,14 @@ mod tests {
         let first = chart(directory.path(), "project", "1.2.3");
         let other_directory = tempfile::tempdir().unwrap();
         let other = chart(other_directory.path(), "project", "1.2.3");
-        let state = Rc::new(RefCell::new(FakeState::default()));
+        let registry = MockRegistry::start();
         let release = release("1.2.3");
-        make_publisher(
-            state.clone(),
-            "ghcr.io/owner/charts/project",
-            &first,
-            &release.version,
-        )
-        .publish(&release)
-        .unwrap();
-        let writes_before = state.borrow().writes.clone();
-        let conflicting = make_publisher(
-            state.clone(),
-            "ghcr.io/owner/charts/project",
-            &other,
-            &release.version,
-        );
+        registry
+            .publisher(&first, &release.version)
+            .publish(&release)
+            .unwrap();
+        let writes_before = registry.state.lock().unwrap().writes.clone();
+        let conflicting = registry.publisher(&other, &release.version);
         let tag_writes = Rc::new(Cell::new(0));
 
         let error = publish_ordered(
@@ -847,29 +655,22 @@ mod tests {
             "{error}"
         );
         assert_eq!(tag_writes.get(), 0);
-        assert_eq!(state.borrow().writes, writes_before);
+        assert_eq!(registry.state.lock().unwrap().writes, writes_before);
     }
 
     #[test]
     fn an_unknown_remote_state_fails_closed() {
         let directory = tempfile::tempdir().unwrap();
         let chart = chart(directory.path(), "project", "1.2.3");
-        let state = Rc::new(RefCell::new(FakeState {
-            inspection_fails: true,
-            ..FakeState::default()
-        }));
+        let registry = MockRegistry::start();
+        registry.state.lock().unwrap().inspection_fails = true;
         let release = release("1.2.3");
-        let publisher = make_publisher(
-            state.clone(),
-            "ghcr.io/owner/charts/project",
-            &chart,
-            &release.version,
-        );
+        let publisher = registry.publisher(&chart, &release.version);
 
         let error = publisher.state(&release).unwrap_err().to_string();
 
-        assert!(error.contains("registry unavailable"), "{error}");
-        assert!(state.borrow().writes.is_empty());
+        assert!(error.contains("HTTP 500"), "{error}");
+        assert!(registry.state.lock().unwrap().writes.is_empty());
     }
 
     #[test]
@@ -877,24 +678,29 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let chart = chart(directory.path(), "project", "1.2.3");
         let path = chart.to_string_lossy();
-        let wrong_version = checked_chart(
-            "ghcr.io/owner/charts/project",
+        let wrong_version = ChartPackage::open(
             &path,
+            "ghcr.io/owner/charts/project",
             &Version::new(1, 2, 4),
         )
         .unwrap_err()
         .to_string();
         assert!(wrong_version.contains("expected release version 1.2.4"));
 
-        let wrong_name = checked_chart("ghcr.io/owner/charts/other", &path, &Version::new(1, 2, 3))
-            .unwrap_err()
-            .to_string();
+        let wrong_name =
+            ChartPackage::open(&path, "ghcr.io/owner/charts/other", &Version::new(1, 2, 3))
+                .unwrap_err()
+                .to_string();
         assert!(wrong_name.contains("must end in chart name \"project\""));
 
         let wrong_root = chart_with_root(directory.path(), "other", "project", "1.2.3");
-        let wrong_root = ChartPackage::open(&wrong_root.to_string_lossy())
-            .unwrap_err()
-            .to_string();
+        let wrong_root = ChartPackage::open(
+            &wrong_root.to_string_lossy(),
+            "ghcr.io/owner/charts/project",
+            &Version::new(1, 2, 3),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             wrong_root.contains("root directory \"other\""),
             "{wrong_root}"

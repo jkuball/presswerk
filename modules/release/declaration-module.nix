@@ -22,39 +22,33 @@
       renderOciTags = oci:
         map (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "1.2.3" "1" "2" "3" ])
           (oci.tags ++ oci.aliases);
-      # Image tags that two OCI publishers of one repository would both push.
-      sharedOciTags = lib.concatLists (lib.mapAttrsToList
-        (name: oci: lib.concatLists (lib.mapAttrsToList
-          (other: otherOci:
-            map (tag: { inherit name other tag; inherit (oci) repository; })
-              (lib.optionals (name < other && oci.repository == otherOci.repository)
-                (lib.intersectLists (renderOciTags oci) (renderOciTags otherOci))))
-          config.publishers.oci))
-        config.publishers.oci);
-      # Helm always pushes the release version, so two Helm publishers, or Helm and OCI, must not
-      # share that tag in one repository.
-      sharedHelmTags =
-        lib.concatLists
-          (lib.mapAttrsToList
-            (name: helm: lib.mapAttrsToList
-              (other: _otherHelm: {
-                name = "publishers.helm.${name}";
-                other = "publishers.helm.${other}";
-                inherit (helm) repository;
-                tag = "1.2.3";
+      registryPublishers =
+        lib.mapAttrs'
+          (name: oci: lib.nameValuePair "oci.${name}" {
+            inherit (oci) repository;
+            tags = renderOciTags oci;
+          })
+          config.publishers.oci
+        // lib.mapAttrs'
+          (name: helm: lib.nameValuePair "helm.${name}" {
+            inherit (helm) repository;
+            tags = [ "1.2.3" ];
+          })
+          config.publishers.helm;
+      sharedRegistryTags = lib.concatLists (lib.mapAttrsToList
+        (name: publisher: lib.concatLists (lib.mapAttrsToList
+          (other: otherPublisher:
+            map
+              (tag: {
+                name = "publishers.${name}";
+                other = "publishers.${other}";
+                inherit (publisher) repository;
+                inherit tag;
               })
-              (lib.filterAttrs (other: otherHelm: name < other && helm.repository == otherHelm.repository) config.publishers.helm))
-            config.publishers.helm)
-        ++ lib.concatLists (lib.mapAttrsToList
-          (name: helm: lib.mapAttrsToList
-            (other: _oci: {
-              name = "publishers.helm.${name}";
-              other = "publishers.oci.${other}";
-              inherit (helm) repository;
-              tag = "1.2.3";
-            })
-            (lib.filterAttrs (_other: oci: helm.repository == oci.repository && builtins.elem "1.2.3" (renderOciTags oci)) config.publishers.oci))
-          config.publishers.helm);
+              (lib.optionals (name < other && publisher.repository == otherPublisher.repository)
+                (lib.intersectLists publisher.tags otherPublisher.tags)))
+          registryPublishers))
+        registryPublishers);
 
       relativePath = types.addCheck types.str (
         path:
@@ -620,16 +614,10 @@
           config.publishers.helm)
         ++ [
           {
-            assertion = sharedOciTags == [ ];
+            assertion = sharedRegistryTags == [ ];
             message =
-              let shared = builtins.head sharedOciTags;
-              in "publishers.oci.${shared.name} and publishers.oci.${shared.other} both push to ${shared.repository} and must not share a tag or alias; both render ${shared.tag} for version 1.2.3";
-          }
-          {
-            assertion = sharedHelmTags == [ ];
-            message =
-              let shared = builtins.head sharedHelmTags;
-              in "${shared.name} and ${shared.other} both push to ${shared.repository} and must not share tag ${shared.tag} for version 1.2.3";
+              let shared = builtins.head sharedRegistryTags;
+              in "${shared.name} and ${shared.other} both push to ${shared.repository} and must not share a tag; both render ${shared.tag} for version 1.2.3";
           }
           {
             assertion = builtins.length enabledAnalyzers == 1;

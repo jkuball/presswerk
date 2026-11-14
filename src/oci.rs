@@ -297,11 +297,23 @@ pub fn render_tags(
     Ok(rendered)
 }
 
-fn sha256_digest(bytes: &[u8]) -> String {
+pub(crate) fn sha256_digest(bytes: &[u8]) -> String {
     hex_digest(&Sha256::digest(bytes))
 }
 
-fn hex_digest(digest: &[u8]) -> String {
+pub(crate) fn sha256_digest_reader(mut reader: impl Read) -> io::Result<String> {
+    let mut hash = Sha256::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(hex_digest(&hash.finalize()));
+        }
+        hash.update(&buffer[..read]);
+    }
+}
+
+pub(crate) fn hex_digest(digest: &[u8]) -> String {
     digest
         .iter()
         .fold(String::from("sha256:"), |mut output, byte| {
@@ -331,7 +343,9 @@ pub enum BlobData<'a> {
 #[serde(rename_all = "camelCase")]
 pub struct Descriptor {
     pub media_type: String,
+    #[serde(default)]
     pub digest: String,
+    #[serde(default)]
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform: Option<Platform>,
@@ -339,13 +353,27 @@ pub struct Descriptor {
     pub annotations: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Serialize)]
+impl Descriptor {
+    pub(crate) fn new(media_type: &str, digest: &str, size: u64) -> Self {
+        Self {
+            media_type: media_type.into(),
+            digest: digest.into(),
+            size,
+            platform: None,
+            annotations: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ImageManifest {
-    schema_version: u32,
-    media_type: &'static str,
-    config: Descriptor,
-    layers: Vec<Descriptor>,
+pub(crate) struct Manifest {
+    pub(crate) schema_version: u32,
+    pub(crate) media_type: String,
+    pub(crate) config: Descriptor,
+    pub(crate) layers: Vec<Descriptor>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) annotations: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -668,13 +696,7 @@ impl Image {
             ));
         }
 
-        let descriptor = |media_type: &str, digest: &str, size: u64| Descriptor {
-            media_type: media_type.into(),
-            digest: digest.into(),
-            size,
-            platform: None,
-            annotations: BTreeMap::new(),
-        };
+        let descriptor = Descriptor::new;
         let layers = entry
             .layers
             .iter()
@@ -693,11 +715,12 @@ impl Image {
             size: config.len() as u64,
             data: BlobData::Bytes(config),
         })?;
-        let manifest = serde_json::to_vec(&ImageManifest {
+        let manifest = serde_json::to_vec(&Manifest {
             schema_version: 2,
-            media_type: MANIFEST_MEDIA_TYPE,
+            media_type: MANIFEST_MEDIA_TYPE.into(),
             config: descriptor(CONFIG_MEDIA_TYPE, &config_digest, config.len() as u64),
             layers,
+            annotations: BTreeMap::new(),
         })
         .expect("serialize an image manifest");
         let manifest_digest = sha256_digest(&manifest);
@@ -1098,6 +1121,15 @@ impl RegistryClient {
         }
     }
 
+    /// Upload a blob unless the registry already has it. Returns whether it was uploaded.
+    pub fn push_blob(&self, blob: &Blob<'_>) -> Result<bool, PublicationError> {
+        if self.blob_exists(&blob.digest)? {
+            return Ok(false);
+        }
+        self.upload_blob(blob)?;
+        Ok(true)
+    }
+
     /// Upload a blob in one request; a blob that appears meanwhile counts as uploaded.
     pub fn upload_blob(&self, blob: &Blob<'_>) -> Result<(), PublicationError> {
         let failure = match self.start_upload() {
@@ -1143,6 +1175,20 @@ impl RegistryClient {
             .ok_or("the registry started an upload without a Location")?;
         url.join(location)
             .map_err(|error| format!("the registry sent an invalid upload location: {error}"))
+    }
+
+    /// Put a manifest under its digest unless the registry already has it.
+    pub fn push_manifest(
+        &self,
+        media_type: &str,
+        bytes: &[u8],
+        digest: &str,
+    ) -> Result<bool, PublicationError> {
+        if self.manifest_digest(digest)?.is_some() {
+            return Ok(false);
+        }
+        self.put_manifest(digest, media_type, bytes, digest)?;
+        Ok(true)
     }
 
     /// Put a manifest under a tag or digest; a failed write is inspected again, and succeeds
@@ -1430,32 +1476,18 @@ impl OciPublisher {
     ) -> Result<(Image, AssetStep), PublicationError> {
         let mut pushed = false;
         let image = Image::convert(&platform.to_string(), path, self.compression, &mut |blob| {
-            if !self
+            pushed |= self
                 .registry
-                .blob_exists(&blob.digest)
-                .map_err(|error| error.to_string())?
-            {
-                self.registry
-                    .upload_blob(blob)
-                    .map_err(|error| error.to_string())?;
-                pushed = true;
-            }
+                .push_blob(blob)
+                .map_err(|error| error.to_string())?;
             Ok(())
         })
         .map_err(PublicationError::new)?;
-        if self
-            .registry
-            .manifest_digest(&image.manifest_digest)?
-            .is_none()
-        {
-            self.registry.put_manifest(
-                &image.manifest_digest,
-                MANIFEST_MEDIA_TYPE,
-                &image.manifest,
-                &image.manifest_digest,
-            )?;
-            pushed = true;
-        }
+        pushed |= self.registry.push_manifest(
+            MANIFEST_MEDIA_TYPE,
+            &image.manifest,
+            &image.manifest_digest,
+        )?;
         let step = if pushed {
             AssetStep::Uploaded
         } else {
