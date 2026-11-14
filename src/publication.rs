@@ -1085,9 +1085,7 @@ pub fn publish_to_remote(
         }
     }
 
-    declaration
-        .validate_publisher_tags(&declaration.version)
-        .map_err(|error| PublicationError::new(error.to_string()))?;
+    validate_release_publisher_tags(&declaration)?;
 
     let tag = declaration
         .tag
@@ -1897,6 +1895,14 @@ fn has_release_tags(
     Ok(false)
 }
 
+fn validate_release_publisher_tags(
+    declaration: &ReleaseDeclaration,
+) -> Result<(), PublicationError> {
+    declaration
+        .validate_publisher_tags(&declaration.version)
+        .map_err(|error| PublicationError::new(error.to_string()))
+}
+
 fn read_text_at(
     repository_path: &Path,
     commit: Oid,
@@ -1938,4 +1944,58 @@ fn read_text_at(
 
 fn version_core(version: &Version) -> [u64; 3] {
     [version.major, version.minor, version.patch]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_release_publisher_tags;
+    use crate::declaration::ReleaseDeclaration;
+
+    #[test]
+    fn publication_rejects_actual_version_registry_tag_collisions() {
+        let declaration = ReleaseDeclaration::from_json(
+            r#"{
+              "schemaVersion": 0,
+              "version": "0.1.0",
+              "versionFiles": [],
+              "tag": { "format": "v{version}" },
+              "analyzer": {
+                "convention": "gitmoji",
+                "gitmoji": { "catalog": {} }
+              },
+              "changelog": { "path": "CHANGELOG.md" },
+              "publishers": {
+                "github-release": {},
+                "oci": {
+                  "image": {
+                    "repository": "ghcr.io/owner/project",
+                    "platforms": {
+                      "linux/amd64": "/nix/store/00000000000000000000000000000000-image.tar.gz"
+                    },
+                    "tags": ["v{version}"],
+                    "aliases": ["0.1.0"],
+                    "username": { "secret": "REGISTRY_USERNAME" },
+                    "password": { "secret": "REGISTRY_TOKEN" }
+                  }
+                },
+                "helm": {
+                  "chart": {
+                    "repository": "ghcr.io/owner/project",
+                    "chart": "/nix/store/00000000000000000000000000000000-chart.tgz",
+                    "username": { "secret": "REGISTRY_USERNAME" },
+                    "password": { "secret": "REGISTRY_TOKEN" }
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let error = validate_release_publisher_tags(&declaration)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("oci.image and helm.chart"), "{error}");
+        assert!(error.contains("both render 0.1.0"), "{error}");
+    }
 }

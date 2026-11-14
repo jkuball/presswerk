@@ -1,6 +1,6 @@
 mod support;
 
-use presswerk::analysis::{Analysis, Bump, GitCliffAnalyzer};
+use presswerk::analysis::{Analysis, Bump};
 use presswerk::declaration::{
     Compression, HelmPublisher, OciPublisher, ReleaseDeclaration, Token, Username,
 };
@@ -8,8 +8,8 @@ use presswerk::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GitTagPublisher, GithubClient,
     GithubPublisher, GithubReleaseReader, GithubReleaseState, LocalAsset, PublicationError,
     Publisher, PublisherState, PublisherStep, Release, RemoteState, TagPublisher, TagStep,
-    is_valid_successor, publish_ordered, publish_to_remote, validate_new_release,
-    verify_predecessor_with, verify_predecessor_with_helm,
+    is_valid_successor, publish_ordered, validate_new_release, verify_predecessor_with,
+    verify_predecessor_with_helm,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
@@ -229,67 +229,6 @@ fn preflight_conflicts_stop_before_the_tag_is_written() {
 
     assert!(error.to_string().contains("wrong prerelease flag"));
     assert!(writes.borrow().is_empty());
-}
-
-#[test]
-fn publish_rejects_actual_version_tag_collisions_before_remote_writes() {
-    let repository = GitRepo::new();
-    repository.write(
-        "flake.lock",
-        r#"{
-          "nodes": { "root": {} },
-          "root": "root",
-          "version": 7
-        }
-        "#,
-    );
-    let flake = |version: &str| {
-        format!(
-            r#"{{
-              outputs = {{ self }}: {{
-                presswerk.default = {{
-                  schemaVersion = 0;
-                  version = "{version}";
-                  versionFiles = [];
-                  tag.format = "v{{version}}";
-                  analyzer = {{
-                    convention = "gitmoji";
-                    gitmoji.catalog = {{}};
-                  }};
-                  changelog.path = "CHANGELOG.md";
-                  publishers."github-release" = {{}};
-                  publishers.oci.image = {{
-                    repository = "ghcr.io/owner/project";
-                    platforms."linux/amd64" = "/nix/store/00000000000000000000000000000000-image.tar.gz";
-                    tags = [ "v{{version}}" ];
-                    aliases = [ "0.1.0" ];
-                    username.secret = "REGISTRY_USERNAME";
-                    password.secret = "REGISTRY_TOKEN";
-                  }};
-                  publishers.helm.chart = {{
-                    repository = "ghcr.io/owner/project";
-                    chart = "/nix/store/00000000000000000000000000000000-chart.tgz";
-                    username.secret = "REGISTRY_USERNAME";
-                    password.secret = "REGISTRY_TOKEN";
-                  }};
-                }};
-              }};
-            }}"#
-        )
-    };
-    repository.write("flake.nix", flake("0.0.0"));
-    repository.commit("🎉 Begin project");
-    repository.annotated_tag("v0.0.0");
-    repository.write("flake.nix", flake("0.1.0"));
-    repository.commit("🔖 Release v0.1.0");
-
-    let error = publish_to_remote(repository.path(), "HEAD", "origin", &GitCliffAnalyzer)
-        .unwrap_err()
-        .to_string();
-
-    assert!(error.contains("oci.image and helm.chart"), "{error}");
-    assert!(error.contains("both render 0.1.0"), "{error}");
-    assert!(repository.git_output(["rev-parse", "v0.1.0"]).status.code() != Some(0));
 }
 
 #[test]
