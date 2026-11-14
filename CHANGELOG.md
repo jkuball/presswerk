@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.2] - 2026-11-14
+
+### 🐛 Fix a bug
+
+- (nix): Enable the required CLI features
+- (evaluation): Use the user's Nix CLI
+
+### 👷 Add or update CI build system
+
+- Pin released binaries in Cachix
+
+### 📝 Add or update documentation
+
+- (docs): Name both required Nix commands
+
 ## [0.8.1] - 2026-11-14
 
 ### 🐛 Fix a bug
