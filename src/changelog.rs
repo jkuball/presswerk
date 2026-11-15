@@ -243,22 +243,22 @@ pub fn read_unreleased<'a>(
     unreleased_heading: &str,
 ) -> &'a str {
     unreleased_section(contents, heading, unreleased_heading)
-        .map_or("", |(body_start, body_end)| {
+        .map_or("", |(_, body_start, body_end)| {
             contents[body_start..body_end].trim()
         })
 }
 
-/// The body of the unreleased section as byte offsets: from after its heading line up to the
-/// next level-2 heading or section-ending heading.
+/// The unreleased section as byte offsets: the start of its heading line, the start of its body,
+/// and the end of its body at the next level-2 heading or section-ending heading.
 fn unreleased_section(
     contents: &str,
     heading: &ChangelogHeading,
     unreleased_heading: &str,
-) -> Option<(usize, usize)> {
+) -> Option<(usize, usize, usize)> {
     let first_version = version_headings(contents, heading)
         .next()
         .map_or(contents.len(), |(start, _, _)| start);
-    let (_, body_start, _) = heading_lines(contents)
+    let (heading_start, body_start, _) = heading_lines(contents)
         .take_while(|(start, _, _)| *start < first_version)
         .find(|(_, _, line)| line.trim_end() == unreleased_heading.trim_end())?;
     let body_end = heading_lines(contents)
@@ -266,7 +266,7 @@ fn unreleased_section(
             *start >= body_start && (is_level_two_heading(line) || heading.ends_section(line))
         })
         .map_or(contents.len(), |(start, _, _)| start);
-    Some((body_start, body_end))
+    Some((heading_start, body_start, body_end))
 }
 
 pub fn insert_version_section(
@@ -296,15 +296,15 @@ pub fn insert_version_section(
         return Ok(changelog);
     }
 
-    // The unreleased heading stays with an empty body; its text has moved into the notes. Without
-    // `unreleased_heading`, the template does not use the text and the section stays untouched.
-    // Without one, the section goes above the newest version heading or, without a recognized
-    // version heading, above the first level-2 heading of any format, so changelogs written by
-    // other tools get the new section above their history.
-    let (before, after) = if let Some((body_start, body_end)) = unreleased_heading
+    // The new section replaces the whole unreleased section, heading included; its text has moved
+    // into the notes. Without `unreleased_heading`, the template does not use the text and the
+    // section stays untouched. Without an unreleased section, the new one goes above the newest
+    // version heading or, without a recognized version heading, above the first level-2 heading
+    // of any format, so changelogs written by other tools get the new section above their history.
+    let (before, after) = if let Some((heading_start, _, body_end)) = unreleased_heading
         .and_then(|unreleased_heading| unreleased_section(contents, heading, unreleased_heading))
     {
-        (&contents[..body_start], &contents[body_end..])
+        (&contents[..heading_start], &contents[body_end..])
     } else {
         let insertion = version_headings(contents, heading)
             .next()

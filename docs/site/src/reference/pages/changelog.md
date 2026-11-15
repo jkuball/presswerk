@@ -79,12 +79,10 @@ The configuration file is now `presswerk.toml`; see the migration below.
 ```
 
 `prepare` moves the text into the new version section through the template's `unreleased`
-variable and leaves the heading with an empty body:
+variable and removes the unreleased section, heading included, even when it has no text:
 
 ```markdown
 # Changelog
-
-## [Unreleased]
 
 ## [0.11.0] - 2026-11-20
 
@@ -95,7 +93,8 @@ The configuration file is now `presswerk.toml`; see the migration below.
 - …
 ```
 
-`prepare` never creates the heading; a changelog without it gets commit-derived notes alone. The
+`prepare` never adds the heading; write it again for the next release's notes. A changelog without
+it gets commit-derived notes alone. The
 text does not cause a release by itself, the commit analysis decides. `presswerk plan` shows it in
 the notes preview.
 

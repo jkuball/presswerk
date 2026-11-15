@@ -634,7 +634,7 @@
             type = unreleasedHeading;
             default = "## [Unreleased]";
             example = "## Upcoming";
-            description = "Literal heading line of an optional section above the first version heading for hand-written release notes; trailing whitespace is ignored. `prepare` moves its text into the new version section through the template's `unreleased` variable and leaves the heading with an empty body. It never creates the heading, and the text alone does not cause a release.";
+            description = "Literal heading line of an optional section above the first version heading for hand-written release notes; trailing whitespace is ignored. `prepare` moves its text into the new version section through the template's `unreleased` variable and removes the section, heading included. It never adds the heading, and the text alone does not cause a release. A template that does not use `unreleased` leaves the section untouched.";
           };
         };
 

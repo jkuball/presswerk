@@ -59,7 +59,7 @@ fn inserts_the_newest_version_without_changing_older_sections() {
 }
 
 #[test]
-fn moves_unreleased_text_into_the_new_section_and_keeps_the_heading() {
+fn moves_unreleased_text_into_the_new_section_and_removes_the_section() {
     let contents = "# Changelog\n\n## [Unreleased]  \n\nThe configuration file is now `presswerk.toml`.\n\n### Migration\n\nRename it.\n\n## [1.0.0] - 2026-01-01\n\nFirst release.\n";
     let heading = ChangelogHeading::default();
 
@@ -81,7 +81,7 @@ fn moves_unreleased_text_into_the_new_section_and_keeps_the_heading() {
 
     assert_eq!(
         changelog,
-        "# Changelog\n\n## [Unreleased]  \n\n## [1.1.0] - 2026-11-04\n\nThe configuration file is now `presswerk.toml`.\n\n### Migration\n\nRename it.\n\n## [1.0.0] - 2026-01-01\n\nFirst release.\n"
+        "# Changelog\n\n## [1.1.0] - 2026-11-04\n\nThe configuration file is now `presswerk.toml`.\n\n### Migration\n\nRename it.\n\n## [1.0.0] - 2026-01-01\n\nFirst release.\n"
     );
     assert_eq!(
         read_unreleased(&changelog, &heading, DEFAULT_UNRELEASED_HEADING),
@@ -115,11 +115,11 @@ fn reads_unreleased_text_only_above_the_first_version_heading() {
             "Soon.\n",
         )
         .unwrap(),
-        "# Changelog\n\n## Upcoming\n\n## [1.0.0] - 2026-11-04\n\nSoon.\n\n"
+        "# Changelog\n\n## [1.0.0] - 2026-11-04\n\nSoon.\n\n"
     );
 
     // The first level-2 heading of a changelog without version headings yet is the unreleased
-    // heading; the section goes below it, not above.
+    // heading; the new section replaces it.
     let first = "# Changelog\n\n## [Unreleased]\n\nFirst notes.\n";
     assert_eq!(
         insert_version_section(
@@ -131,7 +131,22 @@ fn reads_unreleased_text_only_above_the_first_version_heading() {
             "First notes.\n",
         )
         .unwrap(),
-        "# Changelog\n\n## [Unreleased]\n\n## [0.1.0] - 2026-11-04\n\nFirst notes.\n\n"
+        "# Changelog\n\n## [0.1.0] - 2026-11-04\n\nFirst notes.\n\n"
+    );
+
+    // An empty unreleased section is removed as well.
+    let empty = "# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\nFirst.\n";
+    assert_eq!(
+        insert_version_section(
+            Some(empty),
+            &heading,
+            Some(DEFAULT_UNRELEASED_HEADING),
+            &Version::new(1, 1, 0),
+            "2026-11-04",
+            "Second.\n",
+        )
+        .unwrap(),
+        "# Changelog\n\n## [1.1.0] - 2026-11-04\n\nSecond.\n\n## [1.0.0] - 2026-01-01\n\nFirst.\n"
     );
 }
 
@@ -657,7 +672,7 @@ fn keeps_comment_lines_of_code_blocks_in_the_unreleased_text() {
     assert_eq!(
         changelog,
         format!(
-            "# Changelog\n\n## [Unreleased]\n\n## [1.1.0] - 2026-11-04\n\n{text}\n\n## [1.0.0] - 2026-01-01\n\nFirst.\n"
+            "# Changelog\n\n## [1.1.0] - 2026-11-04\n\n{text}\n\n## [1.0.0] - 2026-01-01\n\nFirst.\n"
         )
     );
 }

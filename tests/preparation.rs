@@ -226,7 +226,7 @@ fn moves_unreleased_text_into_the_prepared_section() {
     let release = prepare_release(&plan).unwrap().unwrap();
     let changelog = repository.git(["show", &format!("{release}:CHANGELOG.md")]);
     assert!(changelog.starts_with(
-        "# Changelog\n\n## [Unreleased]\n\n## [0.2.0] - 2026-11-05\n\nRead the migration notes.\n\n### ✨"
+        "# Changelog\n\n## [0.2.0] - 2026-11-05\n\nRead the migration notes.\n\n### ✨"
     ));
     assert!(changelog.ends_with("## [0.1.0] - 2026-10-01\n\nFirst release."));
 }
