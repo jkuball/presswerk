@@ -25,6 +25,8 @@ Add Presswerk as a flake input and declare the release, as in the
   outputs = { self, presswerk, ... }: {
     presswerk.default = presswerk.lib.mkRelease {
       sourceRoot = self.outPath;
+      # At least one version file is required. It need not be Cargo: any kind from
+      # the version files reference fits.
       versionFiles.cargo.YOUR-CRATE = { };
       publishers.github-release.default.repository = "YOUR-OWNER/YOUR-REPO";
       analyzer.gitmoji.enable = true;
