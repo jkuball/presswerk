@@ -20,7 +20,8 @@ Presswerk's built-in Markdown template. Read a template file with `builtins.read
 The context is the same for every commit analyzer:
 
 - `version`: the version being prepared, as a string.
-- `groups`: the ordered release-note groups.
+- `groups`: the release-note groups, ordered by level (`rank`), then by descending size, then by
+  name.
   - `title`: the group heading.
   - `level`: the group's highest effective level: `"major"`, `"minor"`, `"patch"`, or `none`
     (`null`). A breaking commit counts as `"major"`.
@@ -32,8 +33,6 @@ The context is the same for every commit analyzer:
     - `scope`: the parsed scope as a string, or `none`.
     - `breaking`: whether the commit is a breaking change.
     - `id`: the full Git object ID.
-
-Sort groups by level with `{% for group in groups|sort(attribute="rank") %}`.
 
 For example:
 
