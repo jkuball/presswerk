@@ -56,9 +56,8 @@ For a release with these commits, newest first:
 ```
 
 Groups with more commits come first, and groups of equal size follow the order of their shortcodes.
-Change the Markdown without changing analysis through
-[`changelog.template`](/reference/changelog/#template), whose context exposes each group's title
-and each commit's display text, parsed message and scope, breaking flag, and object ID.
+To change how the section looks, see
+[`changelog.template`](/reference/changelog/#template).
 
 ## Version levels
 

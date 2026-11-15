@@ -1,6 +1,5 @@
 `prepare` writes one version section into the declared changelog and commits it with the version
-files. That committed section is the frozen release notes used by publishers and by retries of the
-same release commit.
+files. Publishers use that section as the release notes.
 
 ## Path
 
@@ -10,8 +9,7 @@ It defaults to `CHANGELOG.md`.
 ## Template
 
 [`changelog.template`](/reference/options/#changelog.template) is a MiniJinja string. Its default is
-Presswerk's built-in Markdown template, so adding this option does not change existing output. Read
-a template file with `builtins.readFile`:
+Presswerk's built-in Markdown template. Read a template file with `builtins.readFile`:
 
 ```nix presswerk-module
 {

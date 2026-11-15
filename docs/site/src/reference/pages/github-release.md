@@ -30,15 +30,15 @@ reads every release back and fails unless it is published.
 
 ## Body
 
-[`body`](/reference/options/#publishers.github-release.name.body) is a MiniJinja string rendered
-when `publish` reads the release commit. Its context contains:
+[`body`](/reference/options/#publishers.github-release.name.body) is a MiniJinja string. Its context
+contains:
 
 - `notes`: the committed changelog section for the release version.
 - `version`: the release version as a string.
 - `tag`: the rendered release tag.
 
-It defaults to `{{ notes }}`, which preserves the changelog section as the complete GitHub Release
-body. A custom template can append publisher-specific instructions:
+It defaults to `{{ notes }}`, the changelog section. A custom template can append
+publisher-specific instructions:
 
 ````nix presswerk-module
 {
@@ -56,10 +56,8 @@ body. A custom template can append publisher-specific instructions:
 }
 ````
 
-Read a longer template with `builtins.readFile ./github-release.md.j2`. Presswerk validates the
-template when it reads the declaration, and renders it before writing any publication state. A
-retry reads `notes`, `version`, `tag`, and the template from the same release commit, so it produces
-the same body while completing an existing draft or missing assets.
+Read longer templates with `builtins.readFile ./github-release.md.j2`. A retry produces the same
+body.
 
 ## Assets
 

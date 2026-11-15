@@ -17,9 +17,8 @@ Presswerk has two built-in analyzers:
 A release enables exactly one of them, and none is enabled by default. A release without an
 enabled analyzer, or with more than one, fails evaluation with a message that names them.
 
-Both analyzers return the same structured release-note context. The
-[changelog template](/reference/changelog/#template) decides how those groups and commits become
-the section that `prepare` commits.
+To change how release notes look, see the
+[changelog template](/reference/changelog/#template).
 
 ## Version levels
 
