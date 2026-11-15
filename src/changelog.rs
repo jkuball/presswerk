@@ -4,6 +4,7 @@ use std::fmt;
 use time::format_description::{self, OwnedFormatItem};
 
 pub const DEFAULT_HEADING: &str = "## [{version}] - {date}";
+pub const DEFAULT_UNRELEASED_HEADING: &str = "## [Unreleased]";
 const VERSION_PLACEHOLDER: &str = "{version}";
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
 
@@ -226,9 +227,52 @@ fn parse_release_date(date: &str) -> Option<time::Date> {
     DateFormat::parse(DEFAULT_DATE_FORMAT)?.parse_date(date)
 }
 
+/// Checks a declared unreleased heading: one literal line that starts with `#`.
+pub fn validate_unreleased_heading(line: &str) -> Result<(), ChangelogError> {
+    if !line.starts_with('#') || line.contains(['\r', '\n']) {
+        return Err(ChangelogError::InvalidUnreleasedHeading(line.into()));
+    }
+    Ok(())
+}
+
+/// The hand-written text under the unreleased heading above the first version heading, trimmed;
+/// empty without such a heading or text.
+pub fn read_unreleased<'a>(
+    contents: &'a str,
+    heading: &ChangelogHeading,
+    unreleased_heading: &str,
+) -> &'a str {
+    unreleased_section(contents, heading, unreleased_heading)
+        .map_or("", |(body_start, body_end)| {
+            contents[body_start..body_end].trim()
+        })
+}
+
+/// The body of the unreleased section as byte offsets: from after its heading line up to the
+/// next level-2 heading or section-ending heading.
+fn unreleased_section(
+    contents: &str,
+    heading: &ChangelogHeading,
+    unreleased_heading: &str,
+) -> Option<(usize, usize)> {
+    let first_version = version_headings(contents, heading)
+        .next()
+        .map_or(contents.len(), |(start, _, _)| start);
+    let (_, body_start, _) = heading_lines(contents)
+        .take_while(|(start, _, _)| *start < first_version)
+        .find(|(_, _, line)| line.trim_end() == unreleased_heading.trim_end())?;
+    let body_end = heading_lines(contents)
+        .find(|(start, _, line)| {
+            *start >= body_start && (is_level_two_heading(line) || heading.ends_section(line))
+        })
+        .map_or(contents.len(), |(start, _, _)| start);
+    Some((body_start, body_end))
+}
+
 pub fn insert_version_section(
     contents: Option<&str>,
     heading: &ChangelogHeading,
+    unreleased_heading: &str,
     version: &Version,
     date: &str,
     notes: &str,
@@ -252,19 +296,26 @@ pub fn insert_version_section(
         return Ok(changelog);
     }
 
-    // Without a recognized version heading, take the first level-2 heading of any format,
-    // so changelogs written by other tools get the new section above their history.
-    let insertion = version_headings(contents, heading)
-        .next()
-        .map(|(start, _, _)| start)
-        .or_else(|| {
-            heading_lines(contents)
-                .find(|(_, _, line)| is_level_two_heading(line))
-                .map(|(start, _, _)| start)
-        })
-        .unwrap_or(contents.len());
-    let before = &contents[..insertion];
-    let after = &contents[insertion..];
+    // The unreleased heading stays with an empty body; its text has moved into the notes.
+    // Without one, the section goes above the newest version heading or, without a recognized
+    // version heading, above the first level-2 heading of any format, so changelogs written by
+    // other tools get the new section above their history.
+    let (before, after) = if let Some((body_start, body_end)) =
+        unreleased_section(contents, heading, unreleased_heading)
+    {
+        (&contents[..body_start], &contents[body_end..])
+    } else {
+        let insertion = version_headings(contents, heading)
+            .next()
+            .map(|(start, _, _)| start)
+            .or_else(|| {
+                heading_lines(contents)
+                    .find(|(_, _, line)| is_level_two_heading(line))
+                    .map(|(start, _, _)| start)
+            })
+            .unwrap_or(contents.len());
+        contents.split_at(insertion)
+    };
     let blank_line = format!("{line_ending}{line_ending}");
     let separator = if before.ends_with(&blank_line) {
         ""
@@ -420,6 +471,7 @@ pub enum ChangelogError {
     InvalidHeading(String),
     AmbiguousHeading(String),
     UnreadableSection(Version),
+    InvalidUnreleasedHeading(String),
 }
 
 impl fmt::Display for ChangelogError {
@@ -443,6 +495,10 @@ impl fmt::Display for ChangelogError {
             Self::InvalidHeading(format) => write!(
                 formatter,
                 "changelog.heading {format:?} must be one line that starts with #, with {{version}} exactly once and {{date}} or {{date:<format>}} at most once, where the format is a strftime format that writes and reads back a full date"
+            ),
+            Self::InvalidUnreleasedHeading(line) => write!(
+                formatter,
+                "changelog.unreleasedHeading {line:?} must be one line that starts with #"
             ),
         }
     }

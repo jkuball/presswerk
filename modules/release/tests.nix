@@ -140,6 +140,7 @@ in
           path = "CHANGELOG.md";
           template = defaultChangelogTemplate;
           heading = "## [{version}] - {date}";
+          unreleasedHeading = "## [Unreleased]";
         };
         publishers.github-release.default = {
           apiUrl = "https://api.github.com";
@@ -178,6 +179,7 @@ in
           path = "docs/NEWS.md";
           template = defaultChangelogTemplate;
           heading = "## [{version}] - {date}";
+          unreleasedHeading = "## [Unreleased]";
         };
       };
     };
@@ -1152,6 +1154,28 @@ in
         true
         true
         false
+        false
+        false
+      ];
+    };
+
+    "test unreleased headings are validated" = {
+      expr = map
+        (
+          heading:
+          succeeds (mkRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            changelog.unreleasedHeading = heading;
+          })
+        )
+        [
+          "## Upcoming"
+          "Unreleased"
+          "## [Unreleased]\n"
+        ];
+      expected = [
+        true
         false
         false
       ];

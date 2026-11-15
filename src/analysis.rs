@@ -825,6 +825,7 @@ fn note_group(commit: &AnalyzedCommit) -> (&str, String) {
 pub fn render_release_notes(
     analysis: &Analysis,
     version: &Version,
+    unreleased: &str,
     template: &str,
 ) -> Result<String, RenderError> {
     let mut groups = BTreeMap::<&str, NoteGroup<'_>>::new();
@@ -855,7 +856,11 @@ pub fn render_release_notes(
     environment
         .render_str(
             template,
-            context!(version => version.to_string(), groups => Serde(&groups)),
+            context!(
+                version => version.to_string(),
+                unreleased => unreleased,
+                groups => Serde(&groups),
+            ),
         )
         .map_err(|error| RenderError {
             message: format!("failed to render changelog.template: {error}"),
@@ -1075,6 +1080,7 @@ mod tests {
         let notes = render_release_notes(
             &analysis,
             &Version::new(1, 2, 3),
+            "",
             declaration::DEFAULT_CHANGELOG_TEMPLATE,
         )
         .unwrap();
@@ -1090,6 +1096,7 @@ mod tests {
         let notes = render_release_notes(
             &analysis,
             &Version::new(1, 2, 3),
+            "",
             "{{ version }}|{{ groups[0].title }}|{{ groups[0].level }}|{{ groups[0].rank }}|{{ groups[0].commits[0].text }}|{{ groups[0].commits[0].message }}|{{ groups[0].commits[0].scope }}|{{ groups[0].commits[0].breaking }}|{{ groups[0].commits[0].id }}",
         )
         .unwrap();
@@ -1111,6 +1118,7 @@ mod tests {
         let notes = render_release_notes(
             &analysis,
             &Version::new(1, 2, 3),
+            "",
             "{% for group in groups %}{{ group.level }}:{{ group.rank }}|{% endfor %}",
         )
         .unwrap();
@@ -1123,10 +1131,30 @@ mod tests {
         let notes = render_release_notes(
             &Analysis::from_commits(Vec::new()),
             &Version::new(1, 2, 3),
+            "",
             declaration::DEFAULT_CHANGELOG_TEMPLATE,
         )
         .unwrap();
         assert_eq!(notes, "No recorded changes.\n");
+    }
+
+    #[test]
+    fn puts_unreleased_text_before_the_groups() {
+        let render = |commits| {
+            render_release_notes(
+                &Analysis::from_commits(commits),
+                &Version::new(1, 2, 3),
+                "Hand-written.",
+                declaration::DEFAULT_CHANGELOG_TEMPLATE,
+            )
+            .unwrap()
+        };
+
+        assert_eq!(
+            render(vec![commit("1", "✨ Add feature")]),
+            "Hand-written.\n\n### ✨ Introduce new features\n\n- Add feature\n"
+        );
+        assert_eq!(render(Vec::new()), "Hand-written.\n");
     }
 
     fn conventional_catalog() -> ConventionalCatalog {
@@ -1301,6 +1329,7 @@ mod tests {
         let notes = render_release_notes(
             &analysis,
             &Version::new(1, 2, 3),
+            "",
             "{% for group in groups %}{{ group.title }}={{ group.level }}:{{ group.rank }}\n{% endfor %}",
         )
         .unwrap();
@@ -1327,6 +1356,7 @@ mod tests {
         let notes = render_release_notes(
             &analysis,
             &Version::new(1, 2, 3),
+            "",
             declaration::DEFAULT_CHANGELOG_TEMPLATE,
         )
         .unwrap();

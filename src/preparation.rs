@@ -129,9 +129,19 @@ pub fn build_release_plan(
     )?;
     let analysis = analyzer.analyze(&range, &declaration.analyzer, &declaration.tag)?;
     let next_version = analysis.next_version(Some(&declaration.version))?;
+    let heading = declaration.changelog.heading()?;
+    let changelog = read_optional_text(&repository, &tree, &declaration.changelog.path)?;
+    let unreleased = changelog.as_deref().map_or("", |changelog| {
+        crate::changelog::read_unreleased(
+            changelog,
+            &heading,
+            &declaration.changelog.unreleased_heading,
+        )
+    });
     let notes = render_release_notes(
         &analysis,
         next_version.as_ref().unwrap_or(&declaration.version),
+        unreleased,
         &declaration.changelog.template,
     )?;
     let mut version_files = Vec::new();
@@ -174,10 +184,10 @@ pub fn build_release_plan(
                 .map(|(path, contents)| ReleaseFile::new(path, contents)),
         );
 
-        let changelog = read_optional_text(&repository, &tree, &declaration.changelog.path)?;
         let changelog = crate::changelog::insert_version_section(
             changelog.as_deref(),
-            &declaration.changelog.heading()?,
+            &heading,
+            &declaration.changelog.unreleased_heading,
             next_version,
             date,
             &notes,

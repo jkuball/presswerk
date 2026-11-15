@@ -40,6 +40,7 @@ fn declaration(version: &str) -> ReleaseDeclaration {
             path: "CHANGELOG.md".into(),
             template: presswerk::declaration::DEFAULT_CHANGELOG_TEMPLATE.into(),
             heading: presswerk::changelog::DEFAULT_HEADING.into(),
+            unreleased_heading: presswerk::changelog::DEFAULT_UNRELEASED_HEADING.into(),
         },
         publishers: Publishers {
             github_release: BTreeMap::from([(
@@ -176,6 +177,58 @@ fn prepares_the_declared_changelog_template() {
     let release = prepare_release(&plan).unwrap().unwrap();
     let changelog = repository.git(["show", &format!("{release}:CHANGELOG.md")]);
     assert!(changelog.contains(plan.notes.trim_end()));
+}
+
+#[test]
+fn moves_unreleased_text_into_the_prepared_section() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.1.0");
+    repository.write(
+        "CHANGELOG.md",
+        "# Changelog\n\n## [0.1.0] - 2026-10-01\n\nFirst release.\n",
+    );
+    repository.commit("🔖 Release v0.1.0");
+    repository.annotated_tag("v0.1.0");
+    repository.write(
+        "CHANGELOG.md",
+        "# Changelog\n\n## [Unreleased]\n\nRead the migration notes.\n\n## [0.1.0] - 2026-10-01\n\nFirst release.\n",
+    );
+    repository.commit("📝 Write migration notes");
+    let previous = predecessor(&repository, "0.1.0");
+
+    // The hand-written text alone does not cause a release, but the plan shows it.
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated(&repository, "0.1.0"),
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(Some(previous.clone())),
+    )
+    .unwrap();
+    assert_eq!(plan.next_version, None);
+    assert!(render_plan(&plan).contains("notes\n  Read the migration notes.\n"));
+
+    repository.write("feature", "implemented\n");
+    repository.commit("✨ Add migration");
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated(&repository, "0.1.0"),
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(Some(previous.clone())),
+    )
+    .unwrap();
+    assert!(
+        plan.notes
+            .starts_with("Read the migration notes.\n\n### ✨ Introduce new features\n")
+    );
+
+    let release = prepare_release(&plan).unwrap().unwrap();
+    let changelog = repository.git(["show", &format!("{release}:CHANGELOG.md")]);
+    assert!(changelog.starts_with(
+        "# Changelog\n\n## [Unreleased]\n\n## [0.2.0] - 2026-11-05\n\nRead the migration notes.\n\n### ✨"
+    ));
+    assert!(changelog.ends_with("## [0.1.0] - 2026-10-01\n\nFirst release."));
 }
 
 #[test]

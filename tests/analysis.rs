@@ -527,6 +527,7 @@ fn gitmoji_reverts_of_released_commits_become_revert_entries() {
         render_release_notes(
             &analysis,
             &semver::Version::new(1, 2, 3),
+            "",
             declaration::DEFAULT_CHANGELOG_TEMPLATE,
         )
         .unwrap(),
@@ -676,6 +677,7 @@ fn conventional_breaking_footers_in_commit_bodies_select_major() {
         render_release_notes(
             &analysis,
             &semver::Version::new(1, 2, 3),
+            "",
             declaration::DEFAULT_CHANGELOG_TEMPLATE,
         )
         .unwrap(),
@@ -733,6 +735,7 @@ fn conventional_reverts_of_released_commits_use_the_revert_type() {
         render_release_notes(
             &analysis,
             &semver::Version::new(1, 2, 3),
+            "",
             declaration::DEFAULT_CHANGELOG_TEMPLATE,
         )
         .unwrap(),
