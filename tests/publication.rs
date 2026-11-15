@@ -1117,6 +1117,49 @@ fn github_publishes_a_matching_custom_body_draft_found_only_in_the_release_listi
 }
 
 #[test]
+fn github_reports_a_published_release_with_a_different_body_as_already_published() {
+    let requests = (0..3)
+        .flat_map(|_| {
+            [
+                get("/repos/owner/project", 200, "{}"),
+                get(
+                    "/repos/owner/project/releases/tags/v0.1.0",
+                    200,
+                    r#"{"id":7,"draft":false,"prerelease":false,"body":"Edited by hand"}"#,
+                ),
+            ]
+        })
+        .collect();
+    let (url, server) = mock_github_api(requests);
+    let writes = Rc::new(RefCell::new(Vec::new()));
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        writes,
+    };
+    let publisher = GithubPublisher::new(
+        GithubClient::new(&url, "test-token").unwrap(),
+        "owner/project",
+    )
+    .with_body("{{ notes }}\nInstall {{ version }}");
+
+    let steps = publish_ordered(
+        &tag,
+        &release("0123456789012345678901234567890123456789".into()),
+        &[Box::new(publisher)],
+    )
+    .unwrap();
+
+    assert_eq!(
+        steps,
+        (
+            TagStep::AlreadyPushed,
+            vec![(PublisherStep::AlreadyPublished, Vec::new())]
+        )
+    );
+    server.join().unwrap();
+}
+
+#[test]
 fn github_rejects_an_existing_draft_with_a_different_custom_body() {
     let (url, server) = mock_github_api(tag_lookup_and_listing(vec![
         r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false,"body":"Different body"}]"#

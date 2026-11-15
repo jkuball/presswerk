@@ -630,9 +630,9 @@ impl GithubPublisher {
         let Some(github_release) = self.client.release(&self.repository, &release.tag)? else {
             return Ok(PublisherState::Missing);
         };
-        if github_release.body.as_deref() != Some(body.as_str()) {
+        if github_release.draft && github_release.body.as_deref() != Some(body.as_str()) {
             return Ok(PublisherState::Conflicting(format!(
-                "GitHub Release {:?} in {} has a body that does not match the declared template",
+                "draft GitHub Release {:?} in {} has a body that does not match the declared template",
                 release.tag, self.repository
             )));
         }
@@ -697,9 +697,9 @@ impl Publisher for GithubPublisher {
             None => self.client.create_draft(&self.repository, release, &body)?,
             Some(existing) => existing,
         };
-        if github_release.body.as_deref() != Some(body.as_str()) {
+        if github_release.draft && github_release.body.as_deref() != Some(body.as_str()) {
             return Err(PublicationError::new(format!(
-                "GitHub Release {:?} in {} has a body that does not match the declared template",
+                "draft GitHub Release {:?} in {} has a body that does not match the declared template",
                 release.tag, self.repository
             )));
         }
