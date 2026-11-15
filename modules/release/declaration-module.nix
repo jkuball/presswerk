@@ -22,15 +22,33 @@
       renderOciTags = oci:
         map (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "1.2.3" "1" "2" "3" ])
           (oci.tags ++ oci.aliases);
-      # Image tags that two OCI publishers of one repository would both push.
-      sharedOciTags = lib.concatLists (lib.mapAttrsToList
-        (name: oci: lib.concatLists (lib.mapAttrsToList
-          (other: otherOci:
-            map (tag: { inherit name other tag; inherit (oci) repository; })
-              (lib.optionals (name < other && oci.repository == otherOci.repository)
-                (lib.intersectLists (renderOciTags oci) (renderOciTags otherOci))))
-          config.publishers.oci))
-        config.publishers.oci);
+      registryPublishers =
+        lib.mapAttrs'
+          (name: oci: lib.nameValuePair "oci-image.${name}" {
+            inherit (oci) repository;
+            tags = renderOciTags oci;
+          })
+          config.publishers.oci-image
+        // lib.mapAttrs'
+          (name: helm: lib.nameValuePair "oci-helm.${name}" {
+            inherit (helm) repository;
+            tags = [ "1.2.3" ];
+          })
+          config.publishers.oci-helm;
+      sharedRegistryTags = lib.concatLists (lib.mapAttrsToList
+        (name: publisher: lib.concatLists (lib.mapAttrsToList
+          (other: otherPublisher:
+            map
+              (tag: {
+                name = "publishers.${name}";
+                other = "publishers.${other}";
+                inherit (publisher) repository;
+                inherit tag;
+              })
+              (lib.optionals (name < other && publisher.repository == otherPublisher.repository)
+                (lib.intersectLists publisher.tags otherPublisher.tags)))
+          registryPublishers))
+        registryPublishers);
 
       relativePath = types.addCheck types.str (
         path:
@@ -268,21 +286,52 @@
         };
       };
 
+      registryPublisherOptions = what: {
+        repository = mkOption {
+          # A plain host and optional port: no credentials, query, or fragment in the declaration.
+          type = types.strMatching "(([A-Za-z0-9-]+[.])+[A-Za-z0-9-]+(:[0-9]+)?|[A-Za-z0-9.-]+:[0-9]+|localhost|\\[[0-9A-Fa-f:]+](:[0-9]+)?)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
+          example = "ghcr.io/owner/project";
+          description = "Registry host, with an optional port, and repository path the ${what} are pushed to. Credentials never go here, only into `username` and `password`. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
+        };
+
+        public = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Whether anyone may pull the ${what} without credentials. `plan` and `prepare` then check the previous release anonymously and never read `username` or `password`; otherwise they need the credentials for that check. `publish` always needs the credentials.";
+        };
+
+        username = mkOption {
+          type = types.submodule {
+            options.secret = mkOption {
+              type = types.nullOr types.nonEmptyStr;
+              default = null;
+              example = "REGISTRY_USERNAME";
+              description = "Name of the environment variable that holds the registry username.";
+            };
+            options.value = mkOption {
+              type = types.nullOr types.nonEmptyStr;
+              default = null;
+              example = "oauth2accesstoken";
+              description = "The registry username itself, for registries where it is no secret, such as `oauth2accesstoken` for Google Artifact Registry. It is written into the release declaration.";
+            };
+          };
+          description = "Registry username: either `secret`, read from an environment variable at run time, or `value`.";
+        };
+
+        password = mkOption {
+          type = types.submodule (secretModule "registry password or token" "REGISTRY_TOKEN");
+          description = "Registry password or token, read from an environment variable at run time.";
+        };
+      };
+
       # Rendered with a stand-in version, a tag must be a valid OCI tag.
       ociTag = types.addCheck types.nonEmptyStr
         (
           template: builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "0.0.0" "0" "0" "0" ] template) != null
         ) // { description = "OCI tag, optionally containing {version}, {major}, {minor}, or {patch}"; };
 
-      ociModule = { config, ... }: {
-        options = {
-          repository = mkOption {
-            # A plain host and optional port: no credentials, query, or fragment in the declaration.
-            type = types.strMatching "(([A-Za-z0-9-]+[.])+[A-Za-z0-9-]+(:[0-9]+)?|[A-Za-z0-9.-]+:[0-9]+|localhost|\\[[0-9A-Fa-f:]+](:[0-9]+)?)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
-            example = "ghcr.io/owner/project";
-            description = "Registry host, with an optional port, and repository path the images are pushed to. Credentials never go here, only into `username` and `password`. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
-          };
-
+      ociImageModule = { config, ... }: {
+        options = registryPublisherOptions "images" // {
           platforms = mkOption {
             type = types.attrsOf artifactFile;
             example = lib.literalExpression ''
@@ -306,12 +355,6 @@
             default = [ ];
             example = [ "latest" "{major}" "{major}.{minor}" ];
             description = "Floating tags, also called rolling tags, that follow the release line, such as `latest`, `{major}`, or `{major}.{minor}`. An alias may use `{major}`, `{minor}`, and `{patch}`, but not `{version}`. It moves only to a higher stable version than the one it points to, so `{major}` stays within its major version.";
-          };
-
-          public = mkOption {
-            type = types.bool;
-            default = false;
-            description = "Whether anyone may pull the images without credentials. `plan` and `prepare` then check the previous release's tags anonymously and never read `username` or `password`; otherwise they need the credentials for that check. `publish` always needs the credentials.";
           };
 
           compression = {
@@ -338,32 +381,30 @@
             };
           };
 
-          username = mkOption {
-            type = types.submodule {
-              options.secret = mkOption {
-                type = types.nullOr types.nonEmptyStr;
-                default = null;
-                example = "REGISTRY_USERNAME";
-                description = "Name of the environment variable that holds the registry username.";
-              };
-              options.value = mkOption {
-                type = types.nullOr types.nonEmptyStr;
-                default = null;
-                example = "oauth2accesstoken";
-                description = "The registry username itself, for registries where it is no secret, such as `oauth2accesstoken` for Google Artifact Registry. It is written into the release declaration.";
-              };
-            };
-            description = "Registry username: either `secret`, read from an environment variable at run time, or `value`.";
-          };
+        };
+      };
 
-          password = mkOption {
-            type = types.submodule (secretModule "registry password or token" "REGISTRY_TOKEN");
-            description = "Registry password or token, read from an environment variable at run time.";
+      ociHelmModule = {
+        options = registryPublisherOptions "chart" // {
+          chart = mkOption {
+            type = artifactFile;
+            example = lib.literalExpression "self.packages.x86_64-linux.chart";
+            description = "Chart archive written by `helm package`. `publish` fetches it from the local store or a substituter without building.";
           };
         };
       };
     in
     {
+      imports = [
+        (lib.doRename {
+          from = [ "publishers" "oci" ];
+          to = [ "publishers" "oci-image" ];
+          visible = false;
+          warn = false;
+          use = lib.id;
+        })
+      ];
+
       options = {
         sourceRoot = mkOption {
           type = types.path;
@@ -490,8 +531,8 @@
           description = "GitHub Release publishers.";
         };
 
-        publishers.oci = mkOption {
-          type = types.attrsOf (types.submodule ociModule);
+        publishers.oci-image = mkOption {
+          type = types.attrsOf (types.submodule ociImageModule);
           default = { };
           example = lib.literalExpression ''
             {
@@ -507,6 +548,23 @@
             }
           '';
           description = "OCI image publishers.";
+        };
+
+        publishers.oci-helm = mkOption {
+          type = types.attrsOf (types.submodule ociHelmModule);
+          default = { };
+          example = lib.literalExpression ''
+            {
+              default = {
+                repository = "ghcr.io/owner/charts/project";
+                chart = self.packages.x86_64-linux.chart;
+                public = true;
+                username.secret = "GITHUB_ACTOR";
+                password.secret = "GITHUB_TOKEN";
+              };
+            }
+          '';
+          description = "OCI Helm publishers.";
         };
 
         assertions = mkOption {
@@ -532,35 +590,44 @@
             (name: oci: [
               {
                 assertion = oci.platforms != { };
-                message = "publishers.oci.${name}.platforms must contain at least one image";
+                message = "publishers.oci-image.${name}.platforms must contain at least one image";
               }
               {
                 assertion = oci.tags != [ ] && lib.all (lib.hasInfix "{version}") oci.tags;
-                message = "publishers.oci.${name}.tags must contain {version} in every tag, and at least one tag, so every release has a tag of its own; declare tags that follow other versions under aliases";
+                message = "publishers.oci-image.${name}.tags must contain {version} in every tag, and at least one tag, so every release has a tag of its own; declare tags that follow other versions under aliases";
               }
               {
                 assertion = !lib.any (lib.hasInfix "{version}") oci.aliases;
-                message = "publishers.oci.${name}.aliases must not contain {version}, which names a single version; declare such tags under tags";
+                message = "publishers.oci-image.${name}.aliases must not contain {version}, which names a single version; declare such tags under tags";
               }
               {
                 assertion = oci.compression.gzip.enable != oci.compression.zstd.enable;
-                message = "publishers.oci.${name}.compression needs exactly one of gzip and zstd enabled";
+                message = "publishers.oci-image.${name}.compression needs exactly one of gzip and zstd enabled";
               }
               {
                 assertion = (oci.username.secret == null) != (oci.username.value == null);
-                message = "publishers.oci.${name}.username needs exactly one of secret and value";
+                message = "publishers.oci-image.${name}.username needs exactly one of secret and value";
               }
               {
                 assertion = lib.allUnique (renderOciTags oci);
-                message = "publishers.oci.${name}.tags and aliases must not render to the same tag";
+                message = "publishers.oci-image.${name}.tags and aliases must not render to the same tag";
               }
             ])
-            config.publishers.oci) ++ [
+            config.publishers.oci-image)
+        ++ lib.concatLists (lib.mapAttrsToList
+          (name: helm: [
+            {
+              assertion = (helm.username.secret == null) != (helm.username.value == null);
+              message = "publishers.oci-helm.${name}.username needs exactly one of secret and value";
+            }
+          ])
+          config.publishers.oci-helm)
+        ++ [
           {
-            assertion = sharedOciTags == [ ];
+            assertion = sharedRegistryTags == [ ];
             message =
-              let shared = builtins.head sharedOciTags;
-              in "publishers.oci.${shared.name} and publishers.oci.${shared.other} both push to ${shared.repository} and must not share a tag or alias; both render ${shared.tag} for version 1.2.3";
+              let shared = builtins.head sharedRegistryTags;
+              in "${shared.name} and ${shared.other} both push to ${shared.repository} and must not share a tag; both render ${shared.tag} for version 1.2.3";
           }
           {
             assertion = builtins.length enabledAnalyzers == 1;

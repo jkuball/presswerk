@@ -5,8 +5,8 @@ use git2::Oid;
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::declaration::{
     Analyzer, BadgeOptions, BadgeVersionFile, Changelog, Compression, ConventionalAnalyzer,
-    GithubReleasePublisher, GitmojiAnalyzer, OciPublisher, Publishers, ReleaseDeclaration, Tag,
-    Token, TomlVersionFile, Username, VersionFile,
+    GithubReleasePublisher, GitmojiAnalyzer, OciHelmPublisher, OciImagePublisher, Publishers,
+    ReleaseDeclaration, Tag, Token, TomlVersionFile, Username, VersionFile,
 };
 use presswerk::evaluation::EvaluatedReleaseDeclaration;
 use presswerk::preparation::{build_release_plan, is_worktree_dirty, prepare_release, render_plan};
@@ -50,7 +50,8 @@ fn declaration(version: &str) -> ReleaseDeclaration {
                     assets: BTreeMap::new(),
                 },
             )]),
-            oci: BTreeMap::new(),
+            oci_image: BTreeMap::new(),
+            oci_helm: BTreeMap::new(),
         },
     }
 }
@@ -316,7 +317,7 @@ fn uses_the_exact_predecessor_declaration_for_release_state_checks() {
                         .push(publisher.repository.clone());
                     Ok(GithubReleaseState::Published { prerelease: false })
                 },
-                |_, _| unreachable!("no OCI publishers are declared"),
+                |_, _| unreachable!("no OCI image publishers are declared"),
             )
             .map_err(Into::into)
         },
@@ -366,7 +367,7 @@ fn refuses_deleted_moved_and_lightweight_remote_predecessor_tags() {
                     None,
                     |_| Ok(previous_declaration.clone()),
                     |_, _, _| Ok(GithubReleaseState::Published { prerelease: false }),
-                    |_, _| unreachable!("no OCI publishers are declared"),
+                    |_, _| unreachable!("no OCI image publishers are declared"),
                 )
                 .map_err(Into::into)
             },
@@ -595,8 +596,8 @@ fn the_plan_lists_each_publisher_with_its_release_and_assets() {
     )));
 }
 
-fn oci_publisher(tags: &[&str], aliases: &[&str]) -> OciPublisher {
-    OciPublisher {
+fn oci_image_publisher(tags: &[&str], aliases: &[&str]) -> OciImagePublisher {
+    OciImagePublisher {
         repository: "ghcr.io/owner/project".into(),
         platforms: BTreeMap::from([
             ("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into()),
@@ -619,9 +620,9 @@ fn the_plan_lists_oci_images_and_rendered_tags_before_the_release() {
     write_version(&repository, "0.0.0");
     repository.commit("✨ Add the first feature");
     let mut evaluated = evaluated(&repository, "0.0.0");
-    evaluated.declaration.publishers.oci.insert(
+    evaluated.declaration.publishers.oci_image.insert(
         "default".into(),
-        oci_publisher(&["{version}"], &["latest", "{major}.{minor}"]),
+        oci_image_publisher(&["{version}"], &["latest", "{major}.{minor}"]),
     );
 
     let plan = build_release_plan(
@@ -635,7 +636,7 @@ fn the_plan_lists_oci_images_and_rendered_tags_before_the_release() {
 
     assert!(render_plan(&plan).contains(concat!(
         "\npublishers\n",
-        "  oci.default  ghcr.io/owner/project\n",
+        "  oci-image.default  ghcr.io/owner/project\n",
         "    image    linux/amd64\n",
         "    image    linux/arm64\n",
         "    tag      0.1.0\n",
@@ -644,6 +645,82 @@ fn the_plan_lists_oci_images_and_rendered_tags_before_the_release() {
         "  github-release.default  owner/project\n",
         "    release  v0.1.0\n",
     )));
+}
+
+#[test]
+fn the_plan_lists_an_oci_helm_chart_under_its_release_tag() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated.declaration.publishers.oci_helm.insert(
+        "default".into(),
+        OciHelmPublisher {
+            repository: "ghcr.io/owner/charts/project".into(),
+            chart: "/nix/store/abc-project-0.1.0.tgz".into(),
+            public: true,
+            username: Username::Secret("REGISTRY_USERNAME".into()),
+            password: Token {
+                secret: "REGISTRY_TOKEN".into(),
+            },
+        },
+    );
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+
+    assert!(render_plan(&plan).contains(concat!(
+        "  oci-helm.default  ghcr.io/owner/charts/project\n",
+        "    tag      ghcr.io/owner/charts/project:0.1.0\n",
+        "  github-release.default  owner/project\n",
+    )));
+}
+
+#[test]
+fn the_plan_rejects_an_oci_helm_tag_shared_with_an_oci_image_publisher() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated
+        .declaration
+        .publishers
+        .oci_image
+        .insert("image".into(), oci_image_publisher(&["0.1.0"], &[]));
+    evaluated.declaration.publishers.oci_helm.insert(
+        "chart".into(),
+        OciHelmPublisher {
+            repository: "ghcr.io/owner/project".into(),
+            chart: "/nix/store/abc-project-0.1.0.tgz".into(),
+            public: true,
+            username: Username::Secret("REGISTRY_USERNAME".into()),
+            password: Token {
+                secret: "REGISTRY_TOKEN".into(),
+            },
+        },
+    );
+
+    let error = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(
+        error.contains("oci-image.image and oci-helm.chart"),
+        "{error}"
+    );
+    assert!(error.contains("both render 0.1.0"), "{error}");
 }
 
 #[test]

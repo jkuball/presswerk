@@ -1,12 +1,15 @@
 mod support;
 
 use presswerk::analysis::{Analysis, Bump};
-use presswerk::declaration::{Compression, OciPublisher, ReleaseDeclaration, Token, Username};
+use presswerk::declaration::{
+    Compression, OciHelmPublisher, OciImagePublisher, ReleaseDeclaration, Token, Username,
+};
 use presswerk::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GitTagPublisher, GithubClient,
     GithubPublisher, GithubReleaseReader, GithubReleaseState, LocalAsset, PublicationError,
     Publisher, PublisherState, PublisherStep, Release, RemoteState, TagPublisher, TagStep,
     is_valid_successor, publish_ordered, validate_new_release, verify_predecessor_with,
+    verify_predecessor_with_oci_helm,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
@@ -457,7 +460,7 @@ fn predecessor_verification_uses_the_tagged_commits_own_publishers() {
             repositories.borrow_mut().push(publisher.repository.clone());
             Ok(GithubReleaseState::Published { prerelease: false })
         },
-        |_, _| unreachable!("no OCI publishers are declared"),
+        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap()
     .unwrap();
@@ -491,7 +494,7 @@ fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() 
         None,
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
-        |_, _| unreachable!("no OCI publishers are declared"),
+        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap_err();
     assert_eq!(
@@ -512,7 +515,7 @@ fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() 
         Some(&forged),
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
-        |_, _| unreachable!("no OCI publishers are declared"),
+        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap_err();
     assert!(error.to_string().contains("does not match expected"));
@@ -531,7 +534,7 @@ fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() 
         Some(&trusted),
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
-        |_, _| unreachable!("no OCI publishers are declared"),
+        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap_err();
     assert!(error.to_string().contains("missing from the remote"));
@@ -546,7 +549,7 @@ fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() 
         Some(&trusted),
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
-        |_, _| unreachable!("no OCI publishers are declared"),
+        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap()
     .unwrap();
@@ -584,7 +587,7 @@ fn trusted_predecessor_must_be_an_ancestor() {
         Some(&trusted),
         |_| unreachable!("ancestry is checked before decoding"),
         |_, _, _| unreachable!("ancestry is checked before publishers"),
-        |_, _| unreachable!("no OCI publishers are declared"),
+        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap_err();
 
@@ -619,7 +622,7 @@ fn supported_predecessors_reject_unnecessary_trust() {
         Some(&trusted),
         |_| Ok(previous_declaration.clone()),
         |_, _, _| Ok(GithubReleaseState::Published { prerelease: false }),
-        |_, _| unreachable!("no OCI publishers are declared"),
+        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap_err();
 
@@ -650,7 +653,7 @@ fn a_predecessor_without_publishers_is_complete_with_its_remote_tag() {
             None,
             |_commit| Ok(previous_declaration.clone()),
             |_, _, _| unreachable!("no GitHub Release publishers are declared"),
-            |_, _| unreachable!("no OCI publishers are declared"),
+            |_, _| unreachable!("no OCI image publishers are declared"),
         )
     };
 
@@ -665,12 +668,12 @@ fn a_predecessor_without_publishers_is_complete_with_its_remote_tag() {
     );
 }
 
-fn oci_predecessor(tags: &[&str], aliases: &[&str]) -> ReleaseDeclaration {
+fn oci_image_predecessor(tags: &[&str], aliases: &[&str]) -> ReleaseDeclaration {
     let mut declaration = declaration("0.1.0", "old/project");
     declaration.publishers.github_release.clear();
-    declaration.publishers.oci.insert(
+    declaration.publishers.oci_image.insert(
         "default".into(),
-        OciPublisher {
+        OciImagePublisher {
             repository: "ghcr.io/owner/project".into(),
             platforms: [("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into())].into(),
             tags: tags.iter().map(|tag| (*tag).into()).collect(),
@@ -693,8 +696,8 @@ fn annotated_index(version: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-/// Verify a predecessor with OCI publishers against the manifests a fake registry holds by tag.
-fn verify_oci_predecessor(
+/// Verify a predecessor with OCI image publishers against the manifests a fake registry holds by tag.
+fn verify_oci_image_predecessor(
     previous_declaration: &ReleaseDeclaration,
     manifests: &[(&str, Vec<u8>)],
 ) -> (Result<(), PublicationError>, Vec<String>) {
@@ -732,9 +735,9 @@ fn verify_oci_predecessor(
 }
 
 #[test]
-fn a_complete_oci_predecessor_passes_and_ignores_aliases() {
-    let previous = oci_predecessor(&["{version}", "v{version}"], &["latest"]);
-    let (result, read) = verify_oci_predecessor(
+fn a_complete_oci_image_predecessor_passes_and_ignores_aliases() {
+    let previous = oci_image_predecessor(&["{version}", "v{version}"], &["latest"]);
+    let (result, read) = verify_oci_image_predecessor(
         &previous,
         &[
             ("0.1.0", annotated_index("0.1.0")),
@@ -749,12 +752,12 @@ fn a_complete_oci_predecessor_passes_and_ignores_aliases() {
 }
 
 #[test]
-fn an_incomplete_oci_predecessor_blocks_the_next_release() {
-    let previous = oci_predecessor(&["{version}", "v{version}"], &["latest"]);
+fn an_incomplete_oci_image_predecessor_blocks_the_next_release() {
+    let previous = oci_image_predecessor(&["{version}", "v{version}"], &["latest"]);
     for (manifests, expected) in [
         (
             vec![("0.1.0", annotated_index("0.1.0"))],
-            "ghcr.io/owner/project:v0.1.0 (oci.default) is incomplete: the tag is missing",
+            "ghcr.io/owner/project:v0.1.0 (oci-image.default) is incomplete: the tag is missing",
         ),
         (
             vec![
@@ -768,7 +771,7 @@ fn an_incomplete_oci_predecessor_blocks_the_next_release() {
                 ("0.1.0", br#"{"schemaVersion":2,"manifests":[]}"#.to_vec()),
                 ("v0.1.0", annotated_index("0.1.0")),
             ],
-            "0.1.0 (oci.default) is incomplete: the tag does not point to an image index with a version annotation",
+            "0.1.0 (oci-image.default) is incomplete: the tag does not point to an image index with a version annotation",
         ),
         (
             // A single image manifest, even with the right annotation, is not the release's index.
@@ -779,7 +782,7 @@ fn an_incomplete_oci_predecessor_blocks_the_next_release() {
                 ),
                 ("v0.1.0", annotated_index("0.1.0")),
             ],
-            "0.1.0 (oci.default) is incomplete: the tag does not point to an image index with a version annotation",
+            "0.1.0 (oci-image.default) is incomplete: the tag does not point to an image index with a version annotation",
         ),
         (
             // An index needs schema version 2.
@@ -790,14 +793,92 @@ fn an_incomplete_oci_predecessor_blocks_the_next_release() {
                 ),
                 ("v0.1.0", annotated_index("0.1.0")),
             ],
-            "0.1.0 (oci.default) is incomplete: the tag does not point to an image index with a version annotation",
+            "0.1.0 (oci-image.default) is incomplete: the tag does not point to an image index with a version annotation",
         ),
     ] {
-        let (result, _) = verify_oci_predecessor(&previous, &manifests);
+        let (result, _) = verify_oci_image_predecessor(&previous, &manifests);
         let error = result.unwrap_err().to_string();
-        assert!(error.contains("previous OCI release"), "{error}");
+        assert!(error.contains("previous OCI image release"), "{error}");
         assert!(error.contains(expected), "{error}");
     }
+}
+
+fn oci_helm_manifest(version: &str, origin: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": { "mediaType": "application/vnd.cncf.helm.config.v1+json" },
+        "layers": [{ "mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip" }],
+        "annotations": {
+            "org.opencontainers.image.version": version,
+            "dev.presswerk.origin": origin,
+        }
+    }))
+    .unwrap()
+}
+
+#[test]
+fn an_oci_helm_predecessor_needs_its_version_tag_and_store_path() {
+    let repository = GitRepo::new();
+    repository.commit_version("0.1.0", "🔖 Prepare predecessor");
+    repository.annotated_tag("v0.1.0");
+    repository.write("feature", "implemented\n");
+    let candidate = repository.commit("✨ Add a feature");
+    let current_declaration = declaration("0.1.0", "new/project");
+    let mut previous_declaration = declaration("0.1.0", "old/project");
+    previous_declaration.publishers.github_release.clear();
+    previous_declaration.publishers.oci_helm.insert(
+        "default".into(),
+        OciHelmPublisher {
+            repository: "ghcr.io/owner/charts/project".into(),
+            chart: "/nix/store/abc-project-0.1.0.tgz".into(),
+            public: true,
+            username: Username::Secret("REGISTRY_USERNAME".into()),
+            password: Token {
+                secret: "REGISTRY_TOKEN".into(),
+            },
+        },
+    );
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        writes: Rc::new(RefCell::new(Vec::new())),
+    };
+    let verify = |manifest: Option<Vec<u8>>| {
+        verify_predecessor_with_oci_helm(
+            repository.path(),
+            candidate.parse().unwrap(),
+            &Version::new(0, 1, 0),
+            &current_declaration,
+            &tag,
+            None,
+            |_commit| Ok(previous_declaration.clone()),
+            |_, _, _| unreachable!("no GitHub Release publishers are declared"),
+            |_, _| unreachable!("no OCI image publishers are declared"),
+            |publisher, read_tag| {
+                assert_eq!(publisher.repository, "ghcr.io/owner/charts/project");
+                assert_eq!(read_tag, "0.1.0");
+                Ok(manifest.clone())
+            },
+        )
+    };
+
+    verify(Some(oci_helm_manifest(
+        "0.1.0",
+        "/nix/store/abc-project-0.1.0.tgz",
+    )))
+    .unwrap();
+    let missing = verify(None).unwrap_err().to_string();
+    assert!(missing.contains("the tag is missing"), "{missing}");
+    let conflict = verify(Some(oci_helm_manifest(
+        "0.1.0",
+        "/nix/store/other-project-0.1.0.tgz",
+    )))
+    .unwrap_err()
+    .to_string();
+    assert!(
+        conflict.contains("does not point to this release's Helm chart"),
+        "{conflict}"
+    );
 }
 
 #[derive(Clone)]

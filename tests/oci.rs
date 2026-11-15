@@ -1,6 +1,6 @@
 use presswerk::declaration::{Compression, Username};
 use presswerk::oci::{
-    BlobData, Credentials, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, Image, OciPublisher,
+    BlobData, Credentials, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, Image, OciImagePublisher,
     RegistryClient, ZSTD_LAYER_MEDIA_TYPE, image_index,
 };
 use presswerk::publication::{
@@ -135,7 +135,7 @@ fn gunzip(bytes: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn every_dockertools_format_converts_to_the_same_oci_manifest_with_gzipped_layers() {
+fn every_dockertools_format_converts_to_the_same_oci_image_manifest_with_gzipped_layers() {
     let directory = tempfile::tempdir().unwrap();
     let archive = docker_archive("amd64", "hello");
     let plain = write(directory.path(), "image.tar", &archive);
@@ -346,7 +346,7 @@ impl MockRegistry {
         images: Vec<(String, PathBuf)>,
         tags: &[&str],
         aliases: &[&str],
-    ) -> OciPublisher {
+    ) -> OciImagePublisher {
         self.publisher_with(images, tags, aliases, "secret-password")
     }
 
@@ -356,12 +356,12 @@ impl MockRegistry {
         tags: &[&str],
         aliases: &[&str],
         password: &str,
-    ) -> OciPublisher {
+    ) -> OciImagePublisher {
         let credentials = Credentials {
             username: "user".into(),
             password: password.into(),
         };
-        OciPublisher::new(
+        OciImagePublisher::new(
             RegistryClient::new(&self.repository(), Some(credentials)).unwrap(),
             &self.repository(),
             tags.iter().map(|tag| (*tag).into()).collect(),
@@ -886,7 +886,7 @@ fn another_compression_on_a_rerun_is_no_conflict() {
         .publisher(images.platforms(), &["{version}"], &[])
         .publish(&release)
         .unwrap();
-    let zstd = OciPublisher::new(
+    let zstd = OciImagePublisher::new(
         RegistryClient::new(
             &registry.repository(),
             Some(Credentials {

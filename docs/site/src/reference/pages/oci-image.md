@@ -1,12 +1,13 @@
-The OCI publisher pushes container images built with Nix to any registry that speaks the
+The OCI image publisher pushes container images built with Nix to any registry that speaks the
 [OCI distribution API](https://github.com/opencontainers/distribution-spec), such as GitHub
 Container Registry, Google Artifact Registry, or Docker Hub. Declare it under
-[`publishers.oci`](/reference/options/#publishers.oci), keyed by a name of your choice, with the
-image for each platform:
+[`publishers.oci-image`](/reference/options/#publishers.oci-image), keyed by a name of your choice,
+with the image for each platform. The Nix option `publishers.oci` is an alias for
+`publishers.oci-image`.
 
 ```nix presswerk-module
 {
-  publishers.oci.default = {
+  publishers.oci-image.default = {
     repository = "ghcr.io/owner/project";
     platforms."linux/amd64" = self.packages.x86_64-linux.image;
     platforms."linux/arm64" = self.packages.aarch64-linux.image;
@@ -23,14 +24,14 @@ image for each platform:
 such as `user:token@`, a query, or a fragment. Loopback registries such as `localhost:5000/project`
 are reached over plain HTTP, every other registry over HTTPS.
 
-Container images are the only content the OCI publisher supports so far; publishing Helm charts,
-which registries store as OCI artifacts as well, is planned.
+Helm charts use [OCI: Helm Chart](/reference/publishers/oci-helm/), which shares this
+publisher's registry authentication but has chart-specific version and repository checks.
 
 `presswerk plan` lists the publisher with its platforms and the tags it will push:
 
 ```console
 publishers
-  oci.default  ghcr.io/owner/project
+  oci-image.default  ghcr.io/owner/project
     image    linux/amd64
     image    linux/arm64
     tag      1.2.0
@@ -118,9 +119,9 @@ at the index.
 
 A release's images are complete once all of its `tags` point to an index whose
 `org.opencontainers.image.version` annotation is the release version. Aliases do not count. Before
-`plan` and `prepare` start the next release, they check this for every OCI publisher of the previous
-release, without fetching images or comparing digests; a missing image tag or a different annotation
-stops them, so a release whose `publish` broke off is rerun first.
+`plan` and `prepare` start the next release, they check this for every OCI image publisher of the
+previous release, without fetching images or comparing digests; a missing image tag or a different
+annotation stops them, so a release whose `publish` broke off is rerun first.
 
 A rerun of a complete release only inspects the image tags and reports `already pushed`, without
 reading its images. An image tag that was deleted is restored on the next run, pointing at the index

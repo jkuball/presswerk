@@ -7,6 +7,12 @@ import versionPlugin from './src/plugins/version.mjs';
 
 export default defineConfig({
   site: 'https://presswerk.dev',
+  redirects: {
+    '/reference/publishers/oci/': {
+      status: 301,
+      destination: '/reference/publishers/oci-image/',
+    },
+  },
   markdown: {
     processor: satteri({ mdastPlugins: [versionPlugin(), pelePlugin()] }),
   },
@@ -73,7 +79,8 @@ export default defineConfig({
               items: [
                 { label: 'Overview', slug: 'reference/publishers' },
                 { label: 'GitHub Release', slug: 'reference/publishers/github-release' },
-                { label: 'OCI', slug: 'reference/publishers/oci' },
+                { label: 'OCI: Helm Chart', slug: 'reference/publishers/oci-helm' },
+                { label: 'OCI: Image', slug: 'reference/publishers/oci-image' },
               ],
             },
           ],
