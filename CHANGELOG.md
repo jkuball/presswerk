@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.12.0] - 2026-11-15
+
+### ✨ Introduce new features
+
+- (prepare): Trust a lightweight tag of any trusted predecessor
+- (prepare): Adopt a predecessor without a Presswerk declaration
+
+### 📝 Add or update documentation
+
+- (docs): Shorten the version file comment
+- (docs): List how to adopt a project without a matching tag
+- (docs): Note that any kind of version file fits for adoption
+- (docs): Name the adoption commit without "Release"
+- (docs): Adopt Presswerk with a commit that selects no version level
+- (docs): State what adopting a predecessor checks
+
 ## [0.11.0] - 2026-11-15
 
 ### ✨ Introduce new features
