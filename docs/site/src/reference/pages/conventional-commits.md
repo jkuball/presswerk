@@ -85,11 +85,13 @@ Update the readme
 - Document search
 ```
 
-Groups follow the level of their type, from `major` to `null`; groups of the same level are ordered
-by size and then by type. A breaking change stays in the group of its type and starts with
-`**BREAKING**`. The scope stays in front of the description. A `git revert` of a commit that was
+Groups follow their highest effective level, from `major` to `null`; groups of the same level are
+ordered by size and then by type. A breaking change gives its group the `major` level, stays in the
+group of its type, and starts with `**BREAKING**`. The scope stays in front of the description. A
+`git revert` of a commit that was
 released before, whose subject is `Revert "…"`, belongs to the `revert` type, so by default it
-releases a patch.
+releases a patch. To change how the section looks, see
+[`changelog.template`](/reference/changelog/#template).
 
 ## Change the type catalog
 

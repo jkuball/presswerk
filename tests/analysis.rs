@@ -524,7 +524,12 @@ fn gitmoji_reverts_of_released_commits_become_revert_entries() {
     assert_eq!(entry.message, "💥 Remove the feature again");
     assert_eq!(entry.intention.gitmoji().unwrap().shortcode, ":rewind:");
     assert_eq!(
-        render_release_notes(&analysis).unwrap(),
+        render_release_notes(
+            &analysis,
+            &semver::Version::new(1, 2, 3),
+            declaration::DEFAULT_CHANGELOG_TEMPLATE,
+        )
+        .unwrap(),
         "### ⏪️ Revert changes\n\n- 💥 Remove the feature again\n"
     );
 }
@@ -668,7 +673,12 @@ fn conventional_breaking_footers_in_commit_bodies_select_major() {
         Some(semver::Version::new(0, 4, 0))
     );
     assert_eq!(
-        render_release_notes(&analysis).unwrap(),
+        render_release_notes(
+            &analysis,
+            &semver::Version::new(1, 2, 3),
+            declaration::DEFAULT_CHANGELOG_TEMPLATE,
+        )
+        .unwrap(),
         "### Bug fixes\n\n- **BREAKING** Rename the output field\n"
     );
 }
@@ -720,7 +730,12 @@ fn conventional_reverts_of_released_commits_use_the_revert_type() {
     assert_eq!(entry.intention.conventional().unwrap().name, "revert");
     assert_eq!(entry.message, "Revert \"feat: Add feature\"");
     assert_eq!(
-        render_release_notes(&analysis).unwrap(),
+        render_release_notes(
+            &analysis,
+            &semver::Version::new(1, 2, 3),
+            declaration::DEFAULT_CHANGELOG_TEMPLATE,
+        )
+        .unwrap(),
         "### Bug fixes\n\n- **cli:** Restore the old output\n\n### Reverts\n\n- Revert \"feat: Add feature\"\n"
     );
 

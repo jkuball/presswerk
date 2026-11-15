@@ -4,7 +4,7 @@ use crate::declaration::{
 use crate::release_commit::release_subject;
 use git_cliff_core::repo::Repository as GitCliffRepository;
 use git2::{Oid, Repository as GitRepository};
-use minijinja::{Environment, context, value::Serde};
+use minijinja::{Environment, UndefinedBehavior, context, value::Serde};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -13,7 +13,6 @@ use std::fmt;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_NOTES_TEMPLATE: &str = include_str!("release-notes.md.j2");
 const REVERT_PREFIX: &str = "This reverts commit ";
 const MAINLINE_PREFIX: &str = "changes made to ";
 const CONVENTIONAL_REVERT_TYPE: &str = "revert";
@@ -751,22 +750,25 @@ const BREAKING_CHANGE_MARKER: &str = "**BREAKING**";
 #[derive(Serialize)]
 struct NoteGroup<'a> {
     title: String,
-    commits: Vec<NoteCommit>,
-    /// Groups sort by rank, then by size, then by key.
-    #[serde(skip)]
+    level: Option<Bump>,
     rank: u8,
+    commits: Vec<NoteCommit<'a>>,
     #[serde(skip)]
     key: &'a str,
 }
 
 #[derive(Serialize)]
-struct NoteCommit {
+struct NoteCommit<'a> {
     /// The commit's line without the intention, which the group heading already shows.
     text: String,
+    message: &'a str,
+    scope: Option<&'a str>,
+    breaking: bool,
+    id: &'a str,
 }
 
-impl NoteCommit {
-    fn new(commit: &AnalyzedCommit) -> Self {
+impl<'a> NoteCommit<'a> {
+    fn new(commit: &'a AnalyzedCommit) -> Self {
         let text = match &commit.intention {
             // The Gitmoji subject keeps its own scope spelling after the intention.
             Intention::Gitmoji(_) => commit
@@ -786,12 +788,27 @@ impl NoteCommit {
                 }
             }
         };
-        Self { text }
+        Self {
+            text,
+            message: &commit.message,
+            scope: commit.scope.as_deref(),
+            breaking: commit.breaking,
+            id: &commit.id,
+        }
     }
 }
 
-/// The note group a commit belongs to: its key, heading, and rank.
-fn note_group(commit: &AnalyzedCommit) -> (&str, String, u8) {
+fn note_rank(level: Option<Bump>) -> u8 {
+    match level {
+        Some(Bump::Major) => 0,
+        Some(Bump::Minor) => 1,
+        Some(Bump::Patch) => 2,
+        None => 3,
+    }
+}
+
+/// The note group a commit belongs to: its key and heading.
+fn note_group(commit: &AnalyzedCommit) -> (&str, String) {
     match &commit.intention {
         Intention::Gitmoji(gitmoji) => (
             &gitmoji.shortcode,
@@ -800,35 +817,29 @@ fn note_group(commit: &AnalyzedCommit) -> (&str, String, u8) {
                 gitmoji.emoji,
                 gitmoji.description.trim_end_matches('.')
             ),
-            0,
         ),
-        // Types come in the order of the level they select; a breaking commit stays in its type.
-        Intention::Conventional(kind) => {
-            let rank = match kind.bump {
-                Some(Bump::Major) => 0,
-                Some(Bump::Minor) => 1,
-                Some(Bump::Patch) => 2,
-                None => 3,
-            };
-            (&kind.name, kind.title.clone(), rank)
-        }
+        Intention::Conventional(kind) => (&kind.name, kind.title.clone()),
     }
 }
 
-pub fn render_release_notes(analysis: &Analysis) -> Result<String, RenderError> {
+pub fn render_release_notes(
+    analysis: &Analysis,
+    version: &Version,
+    template: &str,
+) -> Result<String, RenderError> {
     let mut groups = BTreeMap::<&str, NoteGroup<'_>>::new();
     for commit in &analysis.commits {
-        let (key, title, rank) = note_group(commit);
-        groups
-            .entry(key)
-            .or_insert_with(|| NoteGroup {
-                title,
-                commits: Vec::new(),
-                rank,
-                key,
-            })
-            .commits
-            .push(NoteCommit::new(commit));
+        let (key, title) = note_group(commit);
+        let group = groups.entry(key).or_insert_with(|| NoteGroup {
+            title,
+            level: None,
+            rank: note_rank(None),
+            commits: Vec::new(),
+            key,
+        });
+        group.level = group.level.max(commit.bump());
+        group.rank = note_rank(group.level);
+        group.commits.push(NoteCommit::new(commit));
     }
 
     let mut groups: Vec<_> = groups.into_values().collect();
@@ -839,10 +850,15 @@ pub fn render_release_notes(analysis: &Analysis) -> Result<String, RenderError> 
             .then_with(|| left.key.cmp(right.key))
     });
 
-    Environment::new()
-        .render_str(DEFAULT_NOTES_TEMPLATE, context!(groups => Serde(&groups)))
+    let mut environment = Environment::new();
+    environment.set_undefined_behavior(UndefinedBehavior::Strict);
+    environment
+        .render_str(
+            template,
+            context!(version => version.to_string(), groups => Serde(&groups)),
+        )
         .map_err(|error| RenderError {
-            message: format!("failed to render release notes: {error}"),
+            message: format!("failed to render changelog.template: {error}"),
         })
 }
 
@@ -1046,24 +1062,70 @@ mod tests {
     }
 
     #[test]
-    fn renders_grouped_notes_by_size_then_shortcode() {
+    fn renders_gitmoji_notes_by_level_size_then_shortcode() {
         let analysis = Analysis::from_commits(vec![
             commit("1", "📝 Document Unicode spelling"),
             commit("2", ":memo: Document shortcode spelling"),
             commit("3", "✨ Add feature"),
             commit("4", ":bug: Fix bug"),
+            commit("5", "⚡ Improve performance"),
+            commit("6", "💥 Break the API"),
         ]);
 
-        let notes = render_release_notes(&analysis).unwrap();
+        let notes = render_release_notes(
+            &analysis,
+            &Version::new(1, 2, 3),
+            declaration::DEFAULT_CHANGELOG_TEMPLATE,
+        )
+        .unwrap();
         assert_eq!(
             notes,
-            "### 📝 Add or update documentation\n\n- Document Unicode spelling\n- Document shortcode spelling\n\n### 🐛 Fix a bug\n\n- Fix bug\n\n### ✨ Introduce new features\n\n- Add feature\n"
+            "### 💥 Introduce breaking changes\n\n- Break the API\n\n### ✨ Introduce new features\n\n- Add feature\n\n### 🐛 Fix a bug\n\n- Fix bug\n\n### ⚡️ Improve performance\n\n- Improve performance\n\n### 📝 Add or update documentation\n\n- Document Unicode spelling\n- Document shortcode spelling\n"
         );
     }
 
     #[test]
+    fn renders_the_analyzer_independent_template_context() {
+        let analysis = Analysis::from_commits(vec![commit("abc123", "✨ (cli): Add feature")]);
+        let notes = render_release_notes(
+            &analysis,
+            &Version::new(1, 2, 3),
+            "{{ version }}|{{ groups[0].title }}|{{ groups[0].level }}|{{ groups[0].rank }}|{{ groups[0].commits[0].text }}|{{ groups[0].commits[0].message }}|{{ groups[0].commits[0].scope }}|{{ groups[0].commits[0].breaking }}|{{ groups[0].commits[0].id }}",
+        )
+        .unwrap();
+
+        assert_eq!(
+            notes,
+            "1.2.3|✨ Introduce new features|minor|1|(cli): Add feature|Add feature|cli|False|abc123"
+        );
+    }
+
+    #[test]
+    fn exposes_gitmoji_group_levels_and_ranks() {
+        let analysis = Analysis::from_commits(vec![
+            commit("1", "💥 Break the API"),
+            commit("2", "✨ Add feature"),
+            commit("3", "🐛 Fix bug"),
+            commit("4", "📝 Document behavior"),
+        ]);
+        let notes = render_release_notes(
+            &analysis,
+            &Version::new(1, 2, 3),
+            "{% for group in groups %}{{ group.level }}:{{ group.rank }}|{% endfor %}",
+        )
+        .unwrap();
+
+        assert_eq!(notes, "major:0|minor:1|patch:2|None:3|");
+    }
+
+    #[test]
     fn renders_a_message_when_no_gitmoji_commits_exist() {
-        let notes = render_release_notes(&Analysis::from_commits(Vec::new())).unwrap();
+        let notes = render_release_notes(
+            &Analysis::from_commits(Vec::new()),
+            &Version::new(1, 2, 3),
+            declaration::DEFAULT_CHANGELOG_TEMPLATE,
+        )
+        .unwrap();
         assert_eq!(notes, "No recorded changes.\n");
     }
 
@@ -1230,6 +1292,23 @@ mod tests {
     }
 
     #[test]
+    fn breaking_conventional_commit_lifts_its_group_and_exposes_the_level() {
+        let analysis = Analysis::from_commits(vec![
+            conventional("1", "feat: Add search"),
+            conventional("2", "fix!: Remove the old output"),
+        ]);
+
+        let notes = render_release_notes(
+            &analysis,
+            &Version::new(1, 2, 3),
+            "{% for group in groups %}{{ group.title }}={{ group.level }}:{{ group.rank }}\n{% endfor %}",
+        )
+        .unwrap();
+
+        assert_eq!(notes, "Bug fixes=major:0\nFeatures=minor:1\n");
+    }
+
+    #[test]
     fn renders_conventional_notes_by_type_level_size_and_name() {
         let analysis = Analysis::from_commits(vec![
             conventional("1", "docs: Document search"),
@@ -1245,11 +1324,16 @@ mod tests {
             ),
         ]);
 
-        let notes = render_release_notes(&analysis).unwrap();
+        let notes = render_release_notes(
+            &analysis,
+            &Version::new(1, 2, 3),
+            declaration::DEFAULT_CHANGELOG_TEMPLATE,
+        )
+        .unwrap();
         assert_eq!(
             notes,
-            "### Features\n\n- **cli:** Add --json\n- **BREAKING** **api:** Drop the v1 endpoint\n\n\
-             ### Bug fixes\n\n- **cli:** Keep the search order stable\n- Fix tag lookup\n- **BREAKING** Rename the output field\n\n\
+            "### Bug fixes\n\n- **cli:** Keep the search order stable\n- Fix tag lookup\n- **BREAKING** Rename the output field\n\n\
+             ### Features\n\n- **cli:** Add --json\n- **BREAKING** **api:** Drop the v1 endpoint\n\n\
              ### Performance\n\n- Cache the catalog\n\n\
              ### Chores\n\n- Update dependencies\n\n\
              ### Documentation\n\n- Document search\n"

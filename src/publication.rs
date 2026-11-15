@@ -9,6 +9,7 @@ use crate::declaration::{
 use crate::evaluation::{EvaluationError, evaluate_release_declaration};
 use crate::release_commit::TrustedPredecessor;
 use git2::{ErrorCode, ObjectType, Oid, Repository};
+use minijinja::{Environment, UndefinedBehavior, context};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -350,13 +351,14 @@ impl GithubClient {
         &self,
         repository: &str,
         release: &Release,
+        body: &str,
     ) -> Result<GithubRelease, PublicationError> {
         let url = self.endpoint(repository, &["releases"])?;
         let request = GithubReleaseRequest {
             tag_name: &release.tag,
             target_commitish: &release.commit,
             name: &release.tag,
-            body: &release.notes,
+            body,
             draft: true,
             prerelease: !release.version.pre.is_empty(),
         };
@@ -558,6 +560,7 @@ impl LocalAsset {
 pub struct GithubPublisher {
     client: GithubClient,
     repository: String,
+    body: String,
     assets: Vec<LocalAsset>,
 }
 
@@ -577,6 +580,7 @@ impl GithubPublisher {
                 &declaration.token.secret,
             )?,
             repository: declaration.repository.clone(),
+            body: declaration.body.clone(),
             assets,
         })
     }
@@ -585,8 +589,15 @@ impl GithubPublisher {
         Self {
             client,
             repository: repository.into(),
+            body: crate::declaration::DEFAULT_GITHUB_RELEASE_BODY.into(),
             assets: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_body(mut self, body: impl Into<String>) -> Self {
+        self.body = body.into();
+        self
     }
 
     #[must_use]
@@ -595,10 +606,36 @@ impl GithubPublisher {
         self
     }
 
+    fn render_body(&self, release: &Release) -> Result<String, PublicationError> {
+        let mut environment = Environment::new();
+        environment.set_undefined_behavior(UndefinedBehavior::Strict);
+        environment
+            .render_str(
+                &self.body,
+                context!(
+                    notes => &release.notes,
+                    version => release.version.to_string(),
+                    tag => &release.tag
+                ),
+            )
+            .map_err(|error| {
+                PublicationError::new(format!(
+                    "failed to render GitHub Release body template: {error}"
+                ))
+            })
+    }
+
     fn checked_state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
+        let body = self.render_body(release)?;
         let Some(github_release) = self.client.release(&self.repository, &release.tag)? else {
             return Ok(PublisherState::Missing);
         };
+        if github_release.draft && github_release.body.as_deref() != Some(body.as_str()) {
+            return Ok(PublisherState::Conflicting(format!(
+                "draft GitHub Release {:?} in {} has a body that does not match the declared template",
+                release.tag, self.repository
+            )));
+        }
         let expected_prerelease = !release.version.pre.is_empty();
         if github_release.prerelease != expected_prerelease {
             return Ok(PublisherState::Conflicting(format!(
@@ -655,10 +692,17 @@ impl Publisher for GithubPublisher {
     }
 
     fn publish(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
+        let body = self.render_body(release)?;
         let github_release = match self.client.release(&self.repository, &release.tag)? {
-            None => self.client.create_draft(&self.repository, release)?,
+            None => self.client.create_draft(&self.repository, release, &body)?,
             Some(existing) => existing,
         };
+        if github_release.draft && github_release.body.as_deref() != Some(body.as_str()) {
+            return Err(PublicationError::new(format!(
+                "draft GitHub Release {:?} in {} has a body that does not match the declared template",
+                release.tag, self.repository
+            )));
+        }
         let expected_prerelease = !release.version.pre.is_empty();
         if github_release.prerelease != expected_prerelease {
             return Err(PublicationError::new(format!(
@@ -717,6 +761,7 @@ struct GithubRelease {
     id: u64,
     draft: bool,
     prerelease: bool,
+    body: Option<String>,
     #[serde(default)]
     upload_url: Option<String>,
     #[serde(default)]

@@ -1049,7 +1049,16 @@ fn github_missing_is_distinct_from_inaccessible_or_unknown_state() {
 }
 
 #[test]
-fn github_publishes_a_draft_found_only_in_the_release_listing() {
+fn github_publishes_a_matching_custom_body_draft_found_only_in_the_release_listing() {
+    let body = "Frozen notes.\n\nInstall 0.1.0";
+    let draft = leak(format!(
+        r#"[{{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false,"body":{}}}]"#,
+        serde_json::to_string(body).unwrap()
+    ));
+    let published = leak(format!(
+        r#"{{"id":7,"draft":false,"prerelease":false,"body":{}}}"#,
+        serde_json::to_string(body).unwrap()
+    ));
     let (url, server) = mock_github_api(vec![
         ExpectedRequest {
             method: "GET",
@@ -1069,14 +1078,14 @@ fn github_publishes_a_draft_found_only_in_the_release_listing() {
             method: "GET",
             path: "/repos/owner/project/releases?per_page=100&page=1",
             status: 200,
-            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#,
+            response: draft,
             body_contains: None,
         },
         ExpectedRequest {
             method: "PATCH",
             path: "/repos/owner/project/releases/7",
             status: 200,
-            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            response: published,
             body_contains: Some(r#""draft":false"#),
         },
         ExpectedRequest {
@@ -1090,19 +1099,83 @@ fn github_publishes_a_draft_found_only_in_the_release_listing() {
             method: "GET",
             path: "/repos/owner/project/releases/tags/v0.1.0",
             status: 200,
-            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            response: published,
             body_contains: None,
         },
     ]);
     let publisher = GithubPublisher::new(
         GithubClient::new(&url, "test-token").unwrap(),
         "owner/project",
-    );
+    )
+    .with_body("{{ notes }}\nInstall {{ version }}");
 
     publisher
         .publish(&release("0123456789012345678901234567890123456789".into()))
         .unwrap();
 
+    server.join().unwrap();
+}
+
+#[test]
+fn github_reports_a_published_release_with_a_different_body_as_already_published() {
+    let requests = (0..3)
+        .flat_map(|_| {
+            [
+                get("/repos/owner/project", 200, "{}"),
+                get(
+                    "/repos/owner/project/releases/tags/v0.1.0",
+                    200,
+                    r#"{"id":7,"draft":false,"prerelease":false,"body":"Edited by hand"}"#,
+                ),
+            ]
+        })
+        .collect();
+    let (url, server) = mock_github_api(requests);
+    let writes = Rc::new(RefCell::new(Vec::new()));
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        writes,
+    };
+    let publisher = GithubPublisher::new(
+        GithubClient::new(&url, "test-token").unwrap(),
+        "owner/project",
+    )
+    .with_body("{{ notes }}\nInstall {{ version }}");
+
+    let steps = publish_ordered(
+        &tag,
+        &release("0123456789012345678901234567890123456789".into()),
+        &[Box::new(publisher)],
+    )
+    .unwrap();
+
+    assert_eq!(
+        steps,
+        (
+            TagStep::AlreadyPushed,
+            vec![(PublisherStep::AlreadyPublished, Vec::new())]
+        )
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn github_rejects_an_existing_draft_with_a_different_custom_body() {
+    let (url, server) = mock_github_api(tag_lookup_and_listing(vec![
+        r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false,"body":"Different body"}]"#
+            .into(),
+    ]));
+    let publisher = GithubPublisher::new(
+        GithubClient::new(&url, "test-token").unwrap(),
+        "owner/project",
+    )
+    .with_body("{{ notes }}\nInstall {{ version }}");
+
+    let error = publisher
+        .publish(&release("0123456789012345678901234567890123456789".into()))
+        .unwrap_err();
+
+    assert!(error.to_string().contains("does not match"), "{error}");
     server.join().unwrap();
 }
 
@@ -1143,7 +1216,7 @@ fn published_releases(count: usize) -> String {
     let releases: Vec<_> = (0..count)
         .map(|index| {
             format!(
-                r#"{{"id":{},"tag_name":"v0.0.{index}","draft":false,"prerelease":false}}"#,
+                r#"{{"id":{},"tag_name":"v0.0.{index}","draft":false,"prerelease":false,"body":"Frozen notes.\n"}}"#,
                 100 + index
             )
         })
@@ -1155,7 +1228,7 @@ fn published_releases(count: usize) -> String {
 fn github_finds_a_draft_on_a_later_listing_page_by_exact_tag() {
     let (url, server) = mock_github_api(tag_lookup_and_listing(vec![
         published_releases(100),
-        r#"[{"id":8,"tag_name":"v0.1.0-rc.1","draft":true,"prerelease":true},{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#.into(),
+        r#"[{"id":8,"tag_name":"v0.1.0-rc.1","draft":true,"prerelease":true,"body":"Candidate notes.\n"},{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false,"body":"Frozen notes.\n"}]"#.into(),
     ]));
     let client = GithubClient::new(&url, "test-token").unwrap();
 
@@ -1189,7 +1262,7 @@ fn github_rejects_listed_releases_without_a_tag_name() {
             "could not decode GitHub Releases",
         ),
         (
-            r#"[{"id":7,"tag_name":"","draft":true,"prerelease":false}]"#,
+            r#"[{"id":7,"tag_name":"","draft":true,"prerelease":false,"body":"Frozen notes.\n"}]"#,
             "without a tag name",
         ),
     ] {
@@ -1211,7 +1284,7 @@ fn github_rejects_listed_releases_without_a_tag_name() {
 #[test]
 fn github_rejects_several_drafts_for_one_tag() {
     let (url, server) = mock_github_api(tag_lookup_and_listing(vec![
-        r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false},{"id":8,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#.into(),
+        r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false,"body":"Frozen notes.\n"},{"id":8,"tag_name":"v0.1.0","draft":true,"prerelease":false,"body":"Frozen notes.\n"}]"#.into(),
     ]));
     let client = GithubClient::new(&url, "test-token").unwrap();
 
@@ -1272,14 +1345,14 @@ fn github_reinspects_ambiguous_post_and_patch_failures() {
             method: "GET",
             path: "/repos/owner/project/releases?per_page=100&page=1",
             status: 200,
-            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#,
+            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false,"body":"Frozen notes.\n"}]"#,
             body_contains: None,
         },
         ExpectedRequest {
             method: "PATCH",
             path: "/repos/owner/project/releases/7",
             status: 200,
-            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            response: r#"{"id":7,"draft":false,"prerelease":false,"body":"Frozen notes.\n"}"#,
             body_contains: Some(r#""draft":false"#),
         },
         ExpectedRequest {
@@ -1293,7 +1366,7 @@ fn github_reinspects_ambiguous_post_and_patch_failures() {
             method: "GET",
             path: "/repos/owner/project/releases/tags/v0.1.0",
             status: 200,
-            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            response: r#"{"id":7,"draft":false,"prerelease":false,"body":"Frozen notes.\n"}"#,
             body_contains: None,
         },
     ]);
@@ -1325,7 +1398,7 @@ fn github_reinspects_ambiguous_post_and_patch_failures() {
             method: "GET",
             path: "/repos/owner/project/releases?per_page=100&page=1",
             status: 200,
-            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#,
+            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false,"body":"Frozen notes.\n"}]"#,
             body_contains: None,
         },
         ExpectedRequest {
@@ -1346,7 +1419,7 @@ fn github_reinspects_ambiguous_post_and_patch_failures() {
             method: "GET",
             path: "/repos/owner/project/releases/tags/v0.1.0",
             status: 200,
-            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            response: r#"{"id":7,"draft":false,"prerelease":false,"body":"Frozen notes.\n"}"#,
             body_contains: None,
         },
         ExpectedRequest {
@@ -1360,7 +1433,7 @@ fn github_reinspects_ambiguous_post_and_patch_failures() {
             method: "GET",
             path: "/repos/owner/project/releases/tags/v0.1.0",
             status: 200,
-            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            response: r#"{"id":7,"draft":false,"prerelease":false,"body":"Frozen notes.\n"}"#,
             body_contains: None,
         },
     ]);
@@ -1395,7 +1468,7 @@ fn github_reinspection_rejects_a_still_draft_release() {
             method: "GET",
             path: "/repos/owner/project/releases?per_page=100&page=1",
             status: 200,
-            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#,
+            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false,"body":"Frozen notes.\n"}]"#,
             body_contains: None,
         },
         ExpectedRequest {
@@ -1423,7 +1496,7 @@ fn github_reinspection_rejects_a_still_draft_release() {
             method: "GET",
             path: "/repos/owner/project/releases?per_page=100&page=1",
             status: 200,
-            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false}]"#,
+            response: r#"[{"id":7,"tag_name":"v0.1.0","draft":true,"prerelease":false,"body":"Frozen notes.\n"}]"#,
             body_contains: None,
         },
     ]);
@@ -1468,14 +1541,14 @@ fn github_creates_a_draft_then_publishes_and_verifies_it() {
             method: "POST",
             path: "/repos/owner/project/releases",
             status: 201,
-            response: r#"{"id":7,"draft":true,"prerelease":false}"#,
-            body_contains: Some(r#""draft":true"#),
+            response: r#"{"id":7,"draft":true,"prerelease":false,"body":"Frozen notes.\n\nInstall 0.1.0 from v0.1.0"}"#,
+            body_contains: Some(r#""body":"Frozen notes.\n\nInstall 0.1.0 from v0.1.0""#),
         },
         ExpectedRequest {
             method: "PATCH",
             path: "/repos/owner/project/releases/7",
             status: 200,
-            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            response: r#"{"id":7,"draft":false,"prerelease":false,"body":"Frozen notes.\n\nInstall 0.1.0 from v0.1.0"}"#,
             body_contains: Some(r#""draft":false"#),
         },
         ExpectedRequest {
@@ -1489,18 +1562,34 @@ fn github_creates_a_draft_then_publishes_and_verifies_it() {
             method: "GET",
             path: "/repos/owner/project/releases/tags/v0.1.0",
             status: 200,
-            response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+            response: r#"{"id":7,"draft":false,"prerelease":false,"body":"Frozen notes.\n\nInstall 0.1.0 from v0.1.0"}"#,
             body_contains: None,
         },
     ]);
     let client = GithubClient::new(&url, "test-token").unwrap();
-    let publisher = GithubPublisher::new(client, "owner/project");
+    let publisher = GithubPublisher::new(client, "owner/project")
+        .with_body("{{ notes }}\nInstall {{ version }} from {{ tag }}");
 
     publisher
         .publish(&release("0123456789012345678901234567890123456789".into()))
         .unwrap();
 
     server.join().unwrap();
+}
+
+#[test]
+fn github_body_template_errors_before_reading_remote_state() {
+    let publisher = GithubPublisher::new(
+        GithubClient::new("https://api.github.com", "test-token").unwrap(),
+        "owner/project",
+    )
+    .with_body("{{ unknown }}");
+
+    let error = publisher
+        .state(&release("0123456789012345678901234567890123456789".into()))
+        .unwrap_err();
+
+    assert!(error.to_string().contains("body template"), "{error}");
 }
 
 fn leak(text: String) -> &'static str {
@@ -1542,10 +1631,10 @@ fn github_uploads_assets_into_the_draft_before_publishing_it() {
     let asset = local_asset(&directory);
     let (url, server) = mock_github_api_at(|url| {
         let draft = leak(format!(
-            r#"{{"id":7,"draft":true,"prerelease":false,"upload_url":"{url}/uploads/7/assets{{?name,label}}","assets":[]}}"#
+            r#"{{"id":7,"draft":true,"prerelease":false,"body":"Frozen notes.\n","upload_url":"{url}/uploads/7/assets{{?name,label}}","assets":[]}}"#
         ));
         let published = leak(format!(
-            r#"{{"id":7,"draft":false,"prerelease":false,"assets":[{{"name":"tool-x86_64-linux","digest":"{}"}}]}}"#,
+            r#"{{"id":7,"draft":false,"prerelease":false,"body":"Frozen notes.\n","assets":[{{"name":"tool-x86_64-linux","digest":"{}"}}]}}"#,
             asset.digest
         ));
         vec![
@@ -1561,7 +1650,7 @@ fn github_uploads_assets_into_the_draft_before_publishing_it() {
                 path: "/repos/owner/project/releases",
                 status: 201,
                 response: draft,
-                body_contains: Some(r#""draft":true"#),
+                body_contains: Some(r#""body":"Frozen notes.\n""#),
             },
             ExpectedRequest {
                 method: "POST",
@@ -1574,7 +1663,7 @@ fn github_uploads_assets_into_the_draft_before_publishing_it() {
                 method: "PATCH",
                 path: "/repos/owner/project/releases/7",
                 status: 200,
-                response: r#"{"id":7,"draft":false,"prerelease":false}"#,
+                response: r#"{"id":7,"draft":false,"prerelease":false,"body":"Frozen notes.\n"}"#,
                 body_contains: Some(r#""draft":false"#),
             },
             get("/repos/owner/project", 200, "{}"),
@@ -1608,25 +1697,25 @@ fn github_assets_decide_whether_a_published_release_is_complete() {
     let asset = local_asset(&directory);
     let release = release("0123456789012345678901234567890123456789".into());
     let matching = leak(format!(
-        r#"{{"id":7,"draft":false,"prerelease":false,"assets":[{{"name":"tool-x86_64-linux","digest":"{}"}}]}}"#,
+        r#"{{"id":7,"draft":false,"prerelease":false,"body":"Frozen notes.\n","assets":[{{"name":"tool-x86_64-linux","digest":"{}"}}]}}"#,
         asset.digest
     ));
     for (response, expected) in [
         (
-            r#"{"id":7,"draft":false,"prerelease":false,"assets":[]}"#,
+            r#"{"id":7,"draft":false,"prerelease":false,"body":"Frozen notes.\n","assets":[]}"#,
             Ok(PublisherState::Incomplete),
         ),
         (matching, Ok(PublisherState::Published)),
         (
-            r#"{"id":7,"draft":false,"prerelease":false,"assets":[{"name":"tool-x86_64-linux","digest":"sha256:00"}]}"#,
+            r#"{"id":7,"draft":false,"prerelease":false,"body":"Frozen notes.\n","assets":[{"name":"tool-x86_64-linux","digest":"sha256:00"}]}"#,
             Err("has digest sha256:00"),
         ),
         (
-            r#"{"id":7,"draft":false,"prerelease":false,"assets":[{"name":"tool-x86_64-linux"}]}"#,
+            r#"{"id":7,"draft":false,"prerelease":false,"body":"Frozen notes.\n","assets":[{"name":"tool-x86_64-linux"}]}"#,
             Err("has no digest"),
         ),
         (
-            r#"{"id":7,"draft":false,"prerelease":false,"assets":[{"name":"by-hand.txt","digest":"sha256:00"}]}"#,
+            r#"{"id":7,"draft":false,"prerelease":false,"body":"Frozen notes.\n","assets":[{"name":"by-hand.txt","digest":"sha256:00"}]}"#,
             Ok(PublisherState::Incomplete),
         ),
     ] {

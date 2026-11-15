@@ -20,12 +20,44 @@ with exactly that tag. Then it acts on what it finds:
 - **Draft:** a previous run stopped between the two steps, so it publishes the existing draft
   instead of creating another one. It reports `draft completed`.
 - **Published:** the release is complete, and it is left as it is. It reports `already published`.
-- **Conflicting:** its prerelease flag does not match the version, or there are several releases
-  for the tag. Presswerk stops before anything is written and never changes them.
+- **Conflicting:** a draft's body does not match the declared body template, the release's
+  prerelease flag does not match the version, or there are several releases for the tag. Presswerk
+  stops before anything is written and never changes them.
 
 An existing release is never edited; at most a draft is published. So a retry of the same candidate
 completes missing state and keeps everything that already matches. After publishing, Presswerk
 reads every release back and fails unless it is published.
+
+## Body
+
+[`body`](/reference/options/#publishers.github-release.name.body) is a MiniJinja string. Its context
+contains:
+
+- `notes`: the committed changelog section for the release version.
+- `version`: the release version as a string.
+- `tag`: the rendered release tag.
+
+It defaults to `{{ notes }}`, the changelog section. A custom template can append
+publisher-specific instructions:
+
+````nix presswerk-module
+{
+  publishers.github-release.default = {
+    repository = "owner/project";
+    body = ''
+      {{ notes }}
+
+      ### Install
+      ```console
+      helm install project oci://ghcr.io/owner/charts/project --version {{ version }}
+      ```
+    '';
+  };
+}
+````
+
+Read longer templates with `builtins.readFile ./github-release.md.j2`. A retry of a draft uses the
+same body.
 
 ## Assets
 
