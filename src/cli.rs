@@ -14,7 +14,7 @@ pub enum Command {
     Plan,
     /// Create a release commit from the committed HEAD tree.
     Prepare {
-        /// Trust one exact unsupported predecessor after verifying it with its original toolchain.
+        /// Trust one exact previous release whose declaration this CLI cannot read: one released by another tool, or with an unsupported schema version.
         #[arg(long, value_name = "TAG=SHA")]
         trust_predecessor: Option<String>,
     },

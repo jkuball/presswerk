@@ -167,3 +167,6 @@ $ presswerk prepare --trust-predecessor v0.3.0=RELEASE_COMMIT_SHA
 Presswerk then skips the previous declaration but still checks that the tag points to that commit.
 The release commit records the trust in a `Presswerk-Trusted-Predecessor` trailer, so `publish`
 accepts it as well.
+
+The same flag adopts a previous release that has no Presswerk declaration at all, because another
+tool made it. See [Adopt an existing project](../adoption/).

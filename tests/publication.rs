@@ -8,8 +8,8 @@ use presswerk::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GitTagPublisher, GithubClient,
     GithubPublisher, GithubReleaseReader, GithubReleaseState, LocalAsset, PublicationError,
     Publisher, PublisherState, PublisherStep, Release, RemoteState, TagPublisher, TagStep,
-    is_valid_successor, publish_ordered, validate_new_release, verify_predecessor_with,
-    verify_predecessor_with_oci_helm,
+    UnreadableDeclaration, is_valid_successor, publish_ordered, validate_new_release,
+    verify_predecessor_with, verify_predecessor_with_oci_helm,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
@@ -470,7 +470,16 @@ fn predecessor_verification_uses_the_tagged_commits_own_publishers() {
 }
 
 #[test]
-fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() {
+fn unreadable_predecessors_require_the_exact_trust_and_a_matching_remote_tag() {
+    for unreadable in [
+        UnreadableDeclaration::UnsupportedSchema(1),
+        UnreadableDeclaration::Missing,
+    ] {
+        unreadable_predecessor_requires_the_exact_trust(unreadable);
+    }
+}
+
+fn unreadable_predecessor_requires_the_exact_trust(unreadable: UnreadableDeclaration) {
     let repository = GitRepo::new();
     let predecessor = repository.commit_version("0.1.0", "🔖 Prepare predecessor");
     repository.annotated_tag("v0.1.0");
@@ -479,7 +488,14 @@ fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() 
     let predecessor = predecessor.parse().unwrap();
     let candidate = candidate.parse().unwrap();
     let current_declaration = declaration("0.1.0", "new/project");
-    let unsupported = PublicationError::unsupported_predecessor("v0.1.0", predecessor, 1);
+    let unsupported = match unreadable {
+        UnreadableDeclaration::UnsupportedSchema(schema_version) => {
+            PublicationError::unsupported_predecessor("v0.1.0", predecessor, schema_version)
+        }
+        UnreadableDeclaration::Missing => {
+            PublicationError::undeclared_predecessor("v0.1.0", predecessor)
+        }
+    };
 
     let tag = FakeTagPublisher {
         state: Rc::new(RefCell::new(RemoteState::Matching)),
@@ -497,10 +513,9 @@ fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() 
         |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap_err();
-    assert_eq!(
-        error.as_unsupported_predecessor().unwrap().commit,
-        predecessor
-    );
+    let reported = error.as_unreadable_predecessor().unwrap();
+    assert_eq!(reported.commit, predecessor);
+    assert_eq!(reported.declaration, unreadable);
 
     let forged = TrustedPredecessor {
         tag: "v0.1.0".into(),

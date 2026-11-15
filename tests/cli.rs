@@ -68,19 +68,7 @@ fn ordinary_repository() -> GitRepo {
     repository
 }
 
-fn release_repository() -> GitRepo {
-    let repository = GitRepo::new();
-    repository.write(
-        "Cargo.toml",
-        "[package]\nname = \"example\"\nversion = \"0.0.0\"\n",
-    );
-    repository.write(
-        "Cargo.lock",
-        "version = 4\n\n[[package]]\nname = \"example\"\nversion = \"0.0.0\"\n",
-    );
-    repository.write(
-        "flake.nix",
-        r#"{
+const RELEASE_FLAKE: &str = r#"{
   outputs = { self }: {
     presswerk.default = {
       schemaVersion = 0;
@@ -107,8 +95,23 @@ fn release_repository() -> GitRepo {
     };
   };
 }
-"#,
+"#;
+
+fn write_cargo_version(repository: &GitRepo, version: &str) {
+    repository.write(
+        "Cargo.toml",
+        format!("[package]\nname = \"example\"\nversion = \"{version}\"\n"),
     );
+    repository.write(
+        "Cargo.lock",
+        format!("version = 4\n\n[[package]]\nname = \"example\"\nversion = \"{version}\"\n"),
+    );
+}
+
+fn release_repository() -> GitRepo {
+    let repository = GitRepo::new();
+    write_cargo_version(&repository, "0.0.0");
+    repository.write("flake.nix", RELEASE_FLAKE);
     repository.write("flake.lock", LOCK_FILE);
     repository.write("feature", "implemented\n");
     repository.commit("✨ Add the first feature");
@@ -237,6 +240,95 @@ fn plan_reads_head_and_prepare_creates_the_first_release_commit() {
     assert!(
         changelog.contains("### ✨ Introduce new features\n\n- Add the first feature"),
         "{changelog}"
+    );
+}
+
+/// A repository whose release v0.38.2 was made by another tool, followed by the Presswerk declaration.
+fn adopted_repository(lightweight_tag: bool) -> (GitRepo, String, tempfile::TempDir) {
+    let repository = GitRepo::new();
+    write_cargo_version(&repository, "0.38.2");
+    repository.write(
+        "CHANGELOG.md",
+        "# Changelog\n\n## v0.38.2 (2026-11-10)\n\n- Old\n",
+    );
+    let predecessor = repository.commit("chore(release): 0.38.2");
+    if lightweight_tag {
+        repository.tag("v0.38.2");
+    } else {
+        repository.annotated_tag("v0.38.2");
+    }
+    repository.write("flake.nix", RELEASE_FLAKE);
+    repository.write("flake.lock", LOCK_FILE);
+    repository.write("feature", "implemented\n");
+    repository.commit("✨ Release with Presswerk");
+    let remote = tempfile::tempdir().unwrap();
+    repository.git(["init", "--quiet", "--bare", remote.path().to_str().unwrap()]);
+    repository.git(["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    repository.git([
+        "push",
+        "--quiet",
+        "origin",
+        "HEAD:refs/heads/main",
+        "v0.38.2",
+    ]);
+    (repository, predecessor, remote)
+}
+
+#[test]
+fn prepare_adopts_a_release_of_another_tool_once_it_is_trusted() {
+    let (repository, predecessor, _remote) = adopted_repository(false);
+    let command = format!("presswerk prepare --trust-predecessor v0.38.2={predecessor}");
+
+    let refused = presswerk_in(repository.path(), &["prepare"]);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success());
+    assert!(
+        stderr.contains(&format!(
+            "previous release v0.38.2 at {predecessor} has no Presswerk declaration"
+        )),
+        "{stderr}"
+    );
+    assert!(stderr.contains(&command), "{stderr}");
+
+    let trust = format!("v0.38.2={predecessor}");
+    let prepared = presswerk_in(
+        repository.path(),
+        &["prepare", "--trust-predecessor", &trust],
+    );
+    let stderr = String::from_utf8_lossy(&prepared.stderr);
+    assert!(prepared.status.success(), "{stderr}");
+    let message = repository.git(["log", "-1", "--format=%B"]);
+    assert!(
+        message.ends_with(&format!(
+            "Presswerk-Trusted-Predecessor: v0.38.2 {predecessor}"
+        )),
+        "{message}"
+    );
+    let release = repository.head();
+    assert!(
+        repository
+            .git(["show", &format!("{release}:Cargo.toml")])
+            .contains("version = \"0.39.0\"")
+    );
+}
+
+#[test]
+fn prepare_adopts_a_lightweight_tag_of_another_tool() {
+    let (repository, predecessor, _remote) = adopted_repository(true);
+
+    let trust = format!("v0.38.2={predecessor}");
+    let prepared = presswerk_in(
+        repository.path(),
+        &["prepare", "--trust-predecessor", &trust],
+    );
+    let stderr = String::from_utf8_lossy(&prepared.stderr);
+    assert!(prepared.status.success(), "{stderr}");
+    assert!(
+        repository
+            .git(["log", "-1", "--format=%B"])
+            .ends_with(&format!(
+                "Presswerk-Trusted-Predecessor: v0.38.2 {predecessor}"
+            ))
     );
 }
 
