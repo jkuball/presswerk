@@ -62,10 +62,11 @@ impl ChangelogHeading {
         version.parse().ok()
     }
 
-    /// Whether a line is a heading of the declared level, which ends a section.
+    /// Whether a line is a heading of the declared level or a higher one, which ends a section.
     fn ends_section(&self, line: &str) -> bool {
         let rest = line.trim_start_matches('#');
-        (line.len() - rest.len() == self.level && (rest.is_empty() || rest.starts_with(' ')))
+        let level = line.len() - rest.len();
+        ((1..=self.level).contains(&level) && (rest.is_empty() || rest.starts_with(' ')))
             || self.version(line).is_some()
     }
 }
@@ -107,7 +108,9 @@ pub fn insert_version_section(
     let heading_line = heading.render(version, date);
     let section = format!("{heading_line}{line_ending}{line_ending}{notes}{line_ending}");
     if contents.is_empty() {
-        return Ok(format!("# Changelog{line_ending}{line_ending}{section}"));
+        let changelog = format!("# Changelog{line_ending}{line_ending}{section}");
+        ensure_readable(&changelog, heading, version, notes)?;
+        return Ok(changelog);
     }
 
     // Without a recognized version heading, take the first level-2 heading of any format,
@@ -132,7 +135,24 @@ pub fn insert_version_section(
         &blank_line
     };
 
-    Ok(format!("{before}{separator}{section}{after}"))
+    let changelog = format!("{before}{separator}{section}{after}");
+    ensure_readable(&changelog, heading, version, notes)?;
+    Ok(changelog)
+}
+
+/// Publishers read the section back with the same heading, so a section that reads back as
+/// something else, for example because the notes contain headings of the heading's level, must
+/// fail before the release commit exists.
+fn ensure_readable(
+    changelog: &str,
+    heading: &ChangelogHeading,
+    version: &Version,
+    notes: &str,
+) -> Result<(), ChangelogError> {
+    if read_version_section(changelog, heading, version)? != notes {
+        return Err(ChangelogError::UnreadableSection(version.clone()));
+    }
+    Ok(())
 }
 
 pub fn read_version_section<'a>(
@@ -219,6 +239,7 @@ pub enum ChangelogError {
     MissingVersion(Version),
     InvalidDate(String),
     InvalidHeading(String),
+    UnreadableSection(Version),
 }
 
 impl fmt::Display for ChangelogError {
@@ -230,6 +251,10 @@ impl fmt::Display for ChangelogError {
             Self::MissingVersion(version) => {
                 write!(formatter, "changelog does not contain version {version}")
             }
+            Self::UnreadableSection(version) => write!(
+                formatter,
+                "the changelog section of {version} does not read back as the written notes; changelog.template must not use headings of changelog.heading's level or higher"
+            ),
             Self::InvalidDate(date) => write!(formatter, "invalid changelog date {date:?}"),
             Self::InvalidHeading(format) => write!(
                 formatter,

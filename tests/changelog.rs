@@ -341,3 +341,42 @@ fn rejects_dates_that_headings_cannot_find_again() {
         ));
     }
 }
+
+#[test]
+fn refuses_notes_that_do_not_read_back_under_the_heading() {
+    let heading = ChangelogHeading::parse("### v{version} ({date})").unwrap();
+
+    assert!(matches!(
+        insert_version_section(
+            None,
+            &heading,
+            &Version::new(1, 0, 0),
+            "2026-11-04",
+            "### Features\n\n- new feature\n",
+        )
+        .unwrap_err(),
+        ChangelogError::UnreadableSection(version) if version == Version::new(1, 0, 0)
+    ));
+}
+
+#[test]
+fn ends_a_section_at_a_higher_level_heading() {
+    let heading = ChangelogHeading::parse("### v{version}").unwrap();
+    let changelog = insert_version_section(
+        Some("# Changelog\n\n## Older history\n\nWritten by hand.\n"),
+        &heading,
+        &Version::new(1, 0, 0),
+        "2026-11-04",
+        "- first\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        changelog,
+        "# Changelog\n\n### v1.0.0\n\n- first\n\n## Older history\n\nWritten by hand.\n"
+    );
+    assert_eq!(
+        read_version_section(&changelog, &heading, &Version::new(1, 0, 0)).unwrap(),
+        "- first\n"
+    );
+}

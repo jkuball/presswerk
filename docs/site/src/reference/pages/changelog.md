@@ -37,8 +37,13 @@ changelog written by another tool in that format keeps it:
 …
 ```
 
+Only lines that match the whole format count: with the default, a hand-written `## [1.0.0]` without
+a date is not a version heading.
+
 `prepare` refuses a version that already has a heading. Publishers read the section under the
-release version's heading, up to the next heading of the same level or the next version heading.
+release version's heading, up to the next heading of the same or a higher level, or the next version
+heading. `prepare` checks that the new section reads back as the rendered notes, so
+`changelog.template` must not use headings of the heading's level or higher.
 
 ## Template
 
