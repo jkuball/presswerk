@@ -557,7 +557,7 @@
             type = changelogHeading;
             default = "## [{version}] - {date}";
             example = "## v{version} ({date})";
-            description = "Version heading of a changelog section, a plain replacement template, not MiniJinja: one line that starts with `#`, with `{version}` exactly once and `{date}` at most once; other text is literal and trailing whitespace is ignored. `{date}` is the release date as `YYYY-MM-DD`, and only such a date matches it in existing headings. The same format renders new headings and finds existing ones, for the duplicate check, the insertion point, and the section that publishers use as release notes.";
+            description = "Version heading of a changelog section, in which `{version}` stands for the release version and `{date}` for the release date: one line that starts with `#`, with `{version}` exactly once and `{date}` at most once; other text is literal and trailing whitespace is ignored. `{date}` is the release date as `YYYY-MM-DD`, and only such a date matches it in existing headings. The same format renders new headings and finds existing ones, for the duplicate check, the insertion point, and the section that publishers use as release notes.";
           };
         };
 

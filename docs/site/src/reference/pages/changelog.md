@@ -14,7 +14,8 @@ It defaults to `CHANGELOG.md`.
 ## Heading
 
 [`changelog.heading`](/reference/options/#changelog.heading) is the version heading of a section.
-It is a plain replacement template, not MiniJinja, and defaults to `## [{version}] - {date}`:
+`{version}` stands for the release version and `{date}` for the release date. It defaults to
+`## [{version}] - {date}`:
 
 ```nix presswerk-module
 {
