@@ -496,6 +496,7 @@ fn rejects_unsupported_date_formats() {
         "## {version} {date:%H:%M}",
         "## {version} {date:%d.%m.}",
         "## {version} {date:%Q}",
+        "## {version} ({date:%Y-%m-%d%n})",
         "## {version} {date:%}",
         "## {version} {date:}",
         "## {version} {date:%Y",

@@ -178,7 +178,7 @@ struct DateFormat {
 }
 
 impl DateFormat {
-    /// The format, if `time` accepts it and reads back the full date it writes.
+    /// The format, if `time` accepts it, writes one line, and reads back the full date it writes.
     fn parse(format: &str) -> Option<Self> {
         if format.is_empty() || format.contains(['{', '}']) {
             return None;
@@ -189,7 +189,9 @@ impl DateFormat {
         };
         let sample = time::Date::from_calendar_date(2026, time::Month::November, 5).ok()?;
         let rendered = date_format.render(sample)?;
-        (date_format.parse_date(&rendered)? == sample).then_some(date_format)
+        // The heading is one line, also after directives such as `%n` expand.
+        (!rendered.contains(['\r', '\n']) && date_format.parse_date(&rendered)? == sample)
+            .then_some(date_format)
     }
 
     fn render(&self, date: time::Date) -> Option<String> {
