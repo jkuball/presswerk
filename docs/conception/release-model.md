@@ -313,7 +313,7 @@ Fresh repositories require no special adoption flow. An already released reposit
 last release as the baseline: the commit of that release has no Presswerk declaration, so
 `prepare` stops and names the command `prepare --trust-predecessor TAG=SHA`. With it, the tag is
 rendered from the current declaration's `tag.format` and must exist on the remote, point to the
-given commit, and be an ancestor; the committed version must match it. The old release's
+given commit, and be an ancestor; the currently committed version must match it. The old release's
 publishers are not checked, because another tool published them. The trust is recorded in the
 `Presswerk-Trusted-Predecessor` trailer of the release commit, so `publish` verifies the same
 predecessor; from the next release on, the predecessor is an ordinary Presswerk release.

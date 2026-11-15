@@ -9,12 +9,9 @@ A project that already has releases does not start from the implicit `0.0.0` bas
 its last release becomes the baseline: you trust it once, and Presswerk makes its first release on
 top of it. From then on, every release is a Presswerk release.
 
-This needs the last release to be clean:
-
-- its tag exists on the remote and points to the release commit, and
-- the version files at that commit contain its version.
-
-If the project has a committed version without a tag, create the tag by hand first.
+This needs a tag for the last release on the remote, and version files that still contain the
+version of that release. If the project has a committed version without a tag, create the tag by
+hand first.
 
 ## 1. Add the declaration
 
@@ -72,11 +69,12 @@ Once you have confirmed that the release is complete, run that command:
 $ nix run --inputs-from . presswerk -- prepare --trust-predecessor v0.38.2=1a2b3c4…
 ```
 
-Presswerk checks that the tag exists on the remote, points to that commit, is an ancestor of
-`HEAD`, and that its version matches the version files. A lightweight tag is accepted here,
-although Presswerk's own tags are annotated. It does not check the old release's
-artifacts, because another tool published them. The release commit records the trust in a
-`Presswerk-Trusted-Predecessor` trailer, so `publish` verifies the same predecessor.
+Presswerk checks that the tag exists on the remote, points to that commit, and is an ancestor of
+`HEAD`, and that the version files committed today contain the tag's version. A lightweight tag is
+accepted here, although Presswerk's own tags are annotated. Presswerk reads nothing else from the
+old release: that it is complete, including the artifacts another tool published, is your word.
+The release commit records the trust in a `Presswerk-Trusted-Predecessor` trailer, so `publish`
+verifies the same predecessor.
 
 Run it wherever you usually run `prepare`: locally, then push the release commit, or once in CI
 with the flag added to the `prepare` step for a single run. `prepare` creates no release commit if
