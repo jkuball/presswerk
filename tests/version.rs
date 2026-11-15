@@ -368,7 +368,7 @@ fn resolves_the_workspace_members_that_inherit_the_version() {
     let files = Files(BTreeMap::from([
         (
             "rust/Cargo.toml",
-            "[workspace]\nmembers = [\"crates/*\", \"./tools/cli/\", \"crates/*\"]\nexclude = [\"crates/old\"]\n\n[workspace.package]\nversion = \"1.2.3\"\n\n[package]\nname = \"root\"\nversion.workspace = true\n",
+            "[workspace]\nmembers = [\"crates/*\", \"./tools/cli/\", \"crates/*\"]\nexclude = [\"crates/old\", \"tools\"]\n\n[workspace.package]\nversion = \"1.2.3\"\n\n[package]\nname = \"root\"\nversion.workspace = true\n",
         ),
         (
             "rust/crates/a/Cargo.toml",

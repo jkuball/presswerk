@@ -428,19 +428,20 @@ pub fn cargo_workspace_packages(
             Some(all) => all,
             None => tree_directories.insert(tree.directories()?),
         };
+        // Like Cargo, `exclude` only removes glob matches, never a member listed literally.
         let mut matched: Vec<String> = all
             .iter()
-            .filter(|directory| pattern.matches_with(directory, options))
+            .filter(|directory| {
+                pattern.matches_with(directory, options)
+                    && !excluded.iter().any(|excluded| {
+                        *directory == excluded || directory.starts_with(&format!("{excluded}/"))
+                    })
+            })
             .cloned()
             .collect();
         matched.sort();
         directories.extend(matched);
     }
-    directories.retain(|directory| {
-        !excluded
-            .iter()
-            .any(|excluded| directory == excluded || directory.starts_with(&format!("{excluded}/")))
-    });
 
     let mut packages = Vec::new();
     if let Some(name) = inherited_package(manifest, &document)? {

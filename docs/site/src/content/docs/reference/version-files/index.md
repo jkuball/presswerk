@@ -48,7 +48,7 @@ For a workspace whose members inherit one version,
 [`versionFiles.cargoWorkspace`](/reference/options/#versionFiles.cargoWorkspace) declares one
 entry per workspace. Its name is only a label. The flake reads `workspace.package.version` from the
 workspace root's `Cargo.toml`. Presswerk writes that field, resolves `workspace.members`
-(including globs, minus `workspace.exclude`), and writes the `Cargo.lock` package entry of every
+(including globs, whose matches `workspace.exclude` removes), and writes the `Cargo.lock` package entry of every
 member with `version.workspace = true`, including a root package. It checks that all of them carry
 the same version. Presswerk does not add the members that Cargo adds implicitly through path
 dependencies; list them in `workspace.members`. Unless `cargoLock` says otherwise, the
