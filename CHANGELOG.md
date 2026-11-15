@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.16.0] - 2026-11-15
+
+### ✨ Introduce new features
+
+- (changelog): Remove the unreleased section when its notes move into a release
+- (changelog): Leave unreleased notes untouched when the template does not use them
+- (changelog): Move hand-written unreleased notes into the new section
+
+### ✅ Add, update, or pass tests
+
+- (changelog): Keep comment lines of code blocks in unreleased notes
+- (changelog): Cover an unreleased heading without version headings
+
 ## [0.15.0] - 2026-11-15
 
 ### ✨ Introduce new features
