@@ -25,6 +25,7 @@ let
     version = "1.2.3"
   '';
   packageJsonFixture = builtins.toFile "package.json" ''{ "nested": { "version": "1.2.3" } }'';
+  packageLockFixture = builtins.toFile "package-lock.json" ''{ "version": "1.2.3", "packages": { "": { "version": "1.2.3" }, "a.b": { "version": "1.2.3" } } }'';
   versionFixture = builtins.toFile "VERSION" "1.2.3\n";
   fixtureRoot = builtins.dirOf cargoTomlFixture;
   cargoToml = builtins.baseNameOf cargoTomlFixture;
@@ -218,6 +219,42 @@ in
         version = "1.2.3";
         kinds = [ [ "toml" ] [ "json" ] [ "plain" ] ];
       };
+    };
+
+    "test quoted key segments select empty and dotted keys" = {
+      expr =
+        let
+          release = mkRelease {
+            sourceRoot = fixtureRoot;
+            versionFiles.json = {
+              root.path = builtins.baseNameOf packageLockFixture;
+              root.key = ''packages."".version'';
+              dotted.path = builtins.baseNameOf packageLockFixture;
+              dotted.key = ''packages."a.b".version'';
+            };
+          };
+        in
+        {
+          inherit (release) version;
+          keys = map (file: file.json) release.versionFiles;
+        };
+      expected = {
+        version = "1.2.3";
+        keys = [ ''packages."a.b".version'' ''packages."".version'' ];
+      };
+    };
+
+    "test malformed keys are rejected" = {
+      expr = map
+        (key: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.json.package = {
+            path = builtins.baseNameOf packageLockFixture;
+            inherit key;
+          };
+        }).version)
+        [ ''packages."".version'' ''packages."a.version'' "packages..version" ''pack"ages.version'' ''packages.""x.version'' ];
+      expected = [ true false false false false ];
     };
 
     "test a disagreeing JSON file fails" = {

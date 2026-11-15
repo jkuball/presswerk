@@ -170,19 +170,15 @@ impl VersionFile {
         match self {
             Self::Toml(file) => {
                 validate_relative_path(&file.path)?;
-                if file.toml.is_empty() {
-                    return Err(DeclarationError::Invalid(
-                        "TOML key selector must not be empty".into(),
-                    ));
-                }
+                key_segments(&file.toml).map_err(|error| {
+                    DeclarationError::Invalid(format!("TOML key selector {error}"))
+                })?;
             }
             Self::Json(file) => {
                 validate_relative_path(&file.path)?;
-                if file.json.is_empty() {
-                    return Err(DeclarationError::Invalid(
-                        "JSON key selector must not be empty".into(),
-                    ));
-                }
+                key_segments(&file.json).map_err(|error| {
+                    DeclarationError::Invalid(format!("JSON key selector {error}"))
+                })?;
             }
             Self::Plain(file) => validate_relative_path(&file.path)?,
             Self::Regex(file) => {
@@ -215,6 +211,45 @@ pub struct TomlVersionFile {
 pub struct JsonVersionFile {
     pub path: String,
     pub json: String,
+}
+
+/// The segments of a dotted TOML or JSON key. A segment is double-quoted (it may then be empty or
+/// contain dots, but never a quote) or unquoted (non-empty, without dots or quotes). The flake
+/// parses keys the same way.
+pub fn key_segments(key: &str) -> Result<Vec<&str>, String> {
+    if key.is_empty() {
+        return Err("must not be empty".into());
+    }
+    let mut segments = Vec::new();
+    let mut rest = key;
+    loop {
+        let after = if let Some(quoted) = rest.strip_prefix('"') {
+            let end = quoted
+                .find('"')
+                .ok_or_else(|| format!("{key:?} has an unclosed quote"))?;
+            segments.push(&quoted[..end]);
+            &quoted[end + 1..]
+        } else {
+            let end = rest.find('.').unwrap_or(rest.len());
+            let segment = &rest[..end];
+            if segment.is_empty() {
+                return Err(format!(
+                    "{key:?} has an empty segment; write an empty key as \"\""
+                ));
+            }
+            if segment.contains('"') {
+                return Err(format!("{key:?} has a quote inside an unquoted segment"));
+            }
+            segments.push(segment);
+            &rest[end..]
+        };
+        if after.is_empty() {
+            return Ok(segments);
+        }
+        rest = after
+            .strip_prefix('.')
+            .ok_or_else(|| format!("{key:?} has characters after a quoted segment"))?;
+    }
 }
 
 /// A file that contains nothing but the version, optionally followed by a line break.
@@ -1020,6 +1055,45 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("must not be empty")
+        );
+    }
+
+    #[test]
+    fn parses_quoted_key_segments() {
+        assert_eq!(key_segments("version").unwrap(), ["version"]);
+        assert_eq!(
+            key_segments(r#"packages."".version"#).unwrap(),
+            ["packages", "", "version"]
+        );
+        assert_eq!(
+            key_segments(r#"packages."a.b".version"#).unwrap(),
+            ["packages", "a.b", "version"]
+        );
+        assert_eq!(key_segments(r#""""#).unwrap(), [""]);
+
+        for (key, error) in [
+            ("", "must not be empty"),
+            ("a..b", "has an empty segment"),
+            (".a", "has an empty segment"),
+            ("a.", "has an empty segment"),
+            (r#"a."b"#, "has an unclosed quote"),
+            (r#"a"b"#, "has a quote inside an unquoted segment"),
+            (r#""a"b"#, "has characters after a quoted segment"),
+        ] {
+            assert!(
+                key_segments(key).unwrap_err().contains(error),
+                "{key:?} should fail with {error:?}"
+            );
+        }
+
+        let unbalanced = declaration(|value| {
+            value["versionFiles"][0]["toml"] = json!(r#"packages."a.version"#);
+        });
+        assert!(
+            ReleaseDeclaration::from_json(&unbalanced)
+                .unwrap_err()
+                .to_string()
+                .contains(r#"TOML key selector "packages.\"a.version" has an unclosed quote"#)
         );
     }
 

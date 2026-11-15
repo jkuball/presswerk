@@ -8,6 +8,15 @@
       conventionalCatalog = builtins.fromJSON (builtins.readFile ./conventional/catalog.json);
       variationSelector = builtins.fromJSON ''"\uFE0F"'';
       normalizedEmoji = emoji: builtins.replaceStrings [ variationSelector ] [ "" ] emoji;
+      # A segment of a TOML or JSON key: double-quoted (may be empty or contain dots, never a quote)
+      # or unquoted (non-empty, no dots or quotes). The CLI parses keys the same way.
+      keySegment = ''"[^"]*"|[^."]+'';
+      keySegments = key:
+        map
+          (match:
+            let segment = builtins.head match;
+            in if lib.hasPrefix "\"" segment then builtins.substring 1 (builtins.stringLength segment - 2) segment else segment)
+          (builtins.filter builtins.isList (builtins.split "(${keySegment})" key));
       # Every commit analyzer lives under `analyzer` and has an `enable` option; a release enables
       # exactly one of them. A disabled analyzer's settings are ignored.
       analyzerNames = [ "gitmoji" "conventional" ];
@@ -100,9 +109,14 @@
           };
 
           key = mkOption {
-            type = types.strMatching "[^.]+([.][^.]+)*";
+            type = types.strMatching "(${keySegment})([.](${keySegment}))*" // {
+              description = "dotted key whose segments are unquoted (non-empty, no dots or quotes) or double-quoted (no quotes)";
+            };
             example = "project.version";
-            description = "Dotted key of the version string in the ${format} file.";
+            description = ''
+              Dotted key of the version string in the ${format} file. Quote a segment that is empty or
+              contains a dot, such as `packages."".version`; a quoted segment cannot contain `"`.
+            '';
           };
         };
       };
@@ -684,7 +698,7 @@
                 name: file:
                   lib.mkDefinition {
                     file = "versionFiles.${kind}.${name} (${file.path})";
-                    value = lib.getAttrFromPath (lib.splitString "." file.key) (parse (read file.path));
+                    value = lib.getAttrFromPath (keySegments file.key) (parse (read file.path));
                   }
               )
               config.versionFiles.${kind};

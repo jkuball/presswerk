@@ -62,6 +62,24 @@ versionFiles.json.package = {
 };
 ```
 
+Quote a key segment that is empty or contains a dot, as TOML does for its own keys. npm's
+`package-lock.json` repeats the root package version under the empty key in `packages`:
+
+```nix presswerk-module
+versionFiles.json.package-lock = {
+  path = "package-lock.json";
+  key = "version";
+};
+versionFiles.json.package-lock-root = {
+  path = "package-lock.json";
+  key = ''packages."".version'';
+};
+```
+
+A quoted segment such as `"a.b"` can contain any character except `"`; there are no escape
+sequences. Unquoted segments cannot be empty or contain `.` or `"`. The flake and the CLI reject
+any other key.
+
 ## Plain
 
 [`versionFiles.plain`](/reference/options/#versionFiles.plain) declares a file that contains

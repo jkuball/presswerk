@@ -1,6 +1,6 @@
 use crate::declaration::{
     BadgeVersionFile, CargoLockVersionFile, JsonVersionFile, PlainVersionFile, RegexVersionFile,
-    TomlVersionFile, VersionFile,
+    TomlVersionFile, VersionFile, key_segments,
 };
 use jsonc_parser::ast::Value as JsonValue;
 use jsonc_parser::{CollectOptions, ParseOptions, parse_to_ast};
@@ -76,7 +76,11 @@ impl VersionFileWriter for TomlVersionFile {
 
     fn read_version(&self, contents: &str) -> Result<Version, VersionFileError> {
         let document = parse_toml(&self.path, contents)?;
-        let item = find_item(document.as_item(), &self.toml).ok_or_else(|| {
+        let item = find_item(
+            document.as_item(),
+            segments(&self.path, "TOML", &self.toml)?,
+        )
+        .ok_or_else(|| {
             VersionFileError::Invalid(format!(
                 "{} does not contain TOML key {}",
                 self.path, self.toml
@@ -95,7 +99,11 @@ impl VersionFileWriter for TomlVersionFile {
 
     fn write_version(&self, contents: &str, version: &Version) -> Result<String, VersionFileError> {
         let document = parse_toml(&self.path, contents)?;
-        let item = find_item(document.as_item(), &self.toml).ok_or_else(|| {
+        let item = find_item(
+            document.as_item(),
+            segments(&self.path, "TOML", &self.toml)?,
+        )
+        .ok_or_else(|| {
             VersionFileError::Invalid(format!(
                 "{} does not contain TOML key {}",
                 self.path, self.toml
@@ -123,7 +131,7 @@ impl JsonVersionFile {
             VersionFileError::Invalid(format!("could not parse {}: {error}", self.path))
         })?;
         let mut value = parsed.value.as_ref();
-        for key in self.json.split('.') {
+        for key in segments(&self.path, "JSON", &self.json)? {
             value = match value {
                 Some(JsonValue::Object(object)) => object.get(key).map(|property| &property.value),
                 _ => None,
@@ -359,8 +367,13 @@ fn parse_version(path: &str, version: &str) -> Result<Version, VersionFileError>
     })
 }
 
-fn find_item<'a>(mut item: &'a Item, selector: &str) -> Option<&'a Item> {
-    for key in selector.split('.') {
+fn segments<'a>(path: &str, format: &str, key: &'a str) -> Result<Vec<&'a str>, VersionFileError> {
+    key_segments(key)
+        .map_err(|error| VersionFileError::Invalid(format!("{format} key for {path} {error}")))
+}
+
+fn find_item<'a>(mut item: &'a Item, segments: Vec<&str>) -> Option<&'a Item> {
+    for key in segments {
         item = item.as_table_like()?.get(key)?;
     }
     Some(item)
