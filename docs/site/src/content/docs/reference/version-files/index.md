@@ -62,8 +62,9 @@ versionFiles.json.package = {
 };
 ```
 
-`key` is a TOML dotted key, for JSON files too, and the flake and the CLI parse it as TOML. Bare
-segments consist of `A-Za-z0-9_-`; quote any other segment with `"…"` (escapes allowed) or `'…'`,
+`key` follows the [TOML 1.0 dotted-key syntax](https://toml.io/en/v1.0.0#keys), for JSON files
+too, and the flake and the CLI parse it as TOML. Bare segments consist of `A-Za-z0-9_-`; quote any
+other segment with `"…"` (TOML 1.0 escapes allowed) or `'…'`,
 such as `dependencies."@scope/pkg".version`, `a.'x.y'.b`, or `"q\"z"`. npm's `package-lock.json`
 repeats the root package version under the empty key in `packages`:
 
