@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.15.0] - 2026-11-15
+
+### ✨ Introduce new features
+
+- (changelog): Declare a strftime date format in the heading
+- (changelog): Declare the version heading format
+
+### 🐛 Fix a bug
+
+- (changelog): Reject date formats that break the heading line
+- (changelog): Refuse headings that split into more than one version and date
+- (changelog): Do not take inline code for a code fence
+- (changelog): Ignore heading lines inside fenced code blocks
+- (changelog): Refuse sections that do not read back under the heading
+- (changelog): Find headings with ISO dates and without trailing whitespace
+
+### 📝 Add or update documentation
+
+- (changelog): Describe the heading placeholders without contrasting MiniJinja
+- (changelog): Note that headings with other date formats are not recognized
+
 ## [0.14.0] - 2026-11-15
 
 ### ✨ Introduce new features
