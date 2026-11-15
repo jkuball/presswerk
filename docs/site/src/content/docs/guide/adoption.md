@@ -48,7 +48,7 @@ Lock the flake and commit the declaration with your other changes:
 ```console
 $ nix flake lock
 $ git add flake.nix flake.lock
-$ git commit -m "👷 Release with Presswerk"
+$ git commit -m "👷 Adopt Presswerk"
 ```
 
 Use a subject that does not select a version level, such as 👷 with Gitmoji or `ci:` with
