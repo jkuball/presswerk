@@ -20,6 +20,14 @@ let
     version = "2.0.0"
   '';
   cargoLockFixture = builtins.toFile "Cargo.lock" "";
+  workspaceTomlFixture = builtins.toFile "Workspace.toml" ''
+    [workspace]
+    members = [ "crates/*" ]
+
+    [workspace.package]
+    version = "1.2.3"
+  '';
+  workspaceToml = builtins.baseNameOf workspaceTomlFixture;
   pyprojectFixture = builtins.toFile "pyproject.toml" ''
     [project]
     version = "1.2.3"
@@ -187,6 +195,53 @@ in
         versionFiles.cargo.first.cargoToml = cargoToml;
         versionFiles.cargo.second.cargoToml = otherToml;
       });
+      expected = false;
+    };
+
+    "test Cargo workspaces read the workspace version and normalize both writers" = {
+      expr =
+        let
+          release = mkRelease {
+            sourceRoot = fixtureRoot;
+            versionFiles.cargoWorkspace = {
+              default.cargoToml = workspaceToml;
+              backend = {
+                cargoToml = workspaceToml;
+                cargoLock = "backend/Cargo.lock";
+              };
+            };
+          };
+        in
+        { inherit (release) version versionFiles; };
+      expected = {
+        version = "1.2.3";
+        versionFiles = [
+          {
+            path = workspaceToml;
+            toml = "workspace.package.version";
+          }
+          {
+            path = "backend/Cargo.lock";
+            cargoWorkspace = workspaceToml;
+          }
+          {
+            path = workspaceToml;
+            toml = "workspace.package.version";
+          }
+          {
+            path = "Cargo.lock";
+            cargoWorkspace = workspaceToml;
+          }
+        ];
+      };
+    };
+
+    "test a disagreeing Cargo workspace fails" = {
+      expr = succeeds (mkRelease {
+        sourceRoot = fixtureRoot;
+        versionFiles.cargo.example.cargoToml = otherToml;
+        versionFiles.cargoWorkspace.default.cargoToml = workspaceToml;
+      }).version;
       expected = false;
     };
 

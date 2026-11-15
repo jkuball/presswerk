@@ -1,13 +1,13 @@
 use crate::analysis::{Analysis, Analyzer, CommitRange, render_release_notes};
-use crate::declaration::{Publishers, ReleaseDeclaration, Tag, VersionFile};
+use crate::declaration::{Publishers, ReleaseDeclaration, Tag};
 use crate::evaluation::{EvaluatedReleaseDeclaration, evaluate_release_declaration};
 use crate::publication::{VerifiedPredecessor, verify_predecessor_with_trust};
 use crate::release_commit::{
     ReleaseFile, TrustedPredecessor, create_release_commit, release_subject,
 };
-use crate::version::VersionFileWriter;
+use crate::version::{SourceTree, VersionFileError, VersionFileWriter};
 use anyhow::{Context, Result, bail};
-use git2::{ErrorCode, ObjectType, Oid, Repository, StatusOptions};
+use git2::{ErrorCode, ObjectType, Oid, Repository, StatusOptions, TreeWalkMode, TreeWalkResult};
 use semver::Version;
 use std::fmt::Write as _;
 use std::fs;
@@ -103,12 +103,16 @@ pub fn build_release_plan(
     if declaration.version_files.is_empty() {
         bail!("release declaration must contain at least one version file");
     }
-    ensure_version_files_match(
-        &repository,
-        &tree,
-        &declaration.version_files,
-        &declaration.version,
-    )?;
+    let source_tree = GitSourceTree {
+        repository: &repository,
+        tree: &tree,
+    };
+    let writers = declaration
+        .version_files
+        .iter()
+        .map(|file| file.writer(&source_tree))
+        .collect::<Result<Vec<_>, _>>()?;
+    ensure_version_files_match(&repository, &tree, &writers, &declaration.version)?;
 
     ensure_no_higher_reachable_release(&repository, evaluated.commit, &declaration)?;
     let previous_release =
@@ -135,7 +139,7 @@ pub fn build_release_plan(
 
     if let Some(next_version) = &next_version {
         let mut written_files: Vec<(&str, String)> = Vec::new();
-        for writer in &declaration.version_files {
+        for writer in &writers {
             let (contents, current) = if writer.reads_version() {
                 let contents = read_required_text(&repository, &tree, writer.path())?;
                 let current = writer.read_version(&contents)?;
@@ -435,7 +439,7 @@ fn is_ancestor(repository: &Repository, ancestor: Oid, target: Oid) -> Result<bo
 fn ensure_version_files_match(
     repository: &Repository,
     tree: &git2::Tree<'_>,
-    version_files: &[VersionFile],
+    version_files: &[Box<dyn VersionFileWriter + '_>],
     expected: &Version,
 ) -> Result<()> {
     let actual = read_version(repository, tree, version_files)?;
@@ -450,7 +454,7 @@ fn ensure_version_files_match(
 fn read_version(
     repository: &Repository,
     tree: &git2::Tree<'_>,
-    version_files: &[VersionFile],
+    version_files: &[Box<dyn VersionFileWriter + '_>],
 ) -> Result<Version> {
     let mut sources = version_files.iter().filter(|file| file.reads_version());
     let Some(first) = sources.next() else {
@@ -472,6 +476,38 @@ fn read_version(
         }
     }
     Ok(expected)
+}
+
+/// The files of the candidate commit, for version files that read beyond their own file.
+struct GitSourceTree<'a> {
+    repository: &'a Repository,
+    tree: &'a git2::Tree<'a>,
+}
+
+impl SourceTree for GitSourceTree<'_> {
+    fn read(&self, path: &str) -> Result<Option<String>, VersionFileError> {
+        read_optional_text(self.repository, self.tree, path)
+            .map_err(|error| VersionFileError::Invalid(format!("{error:#}")))
+    }
+
+    fn directories(&self) -> Result<Vec<String>, VersionFileError> {
+        let mut directories = Vec::new();
+        self.tree
+            .walk(TreeWalkMode::PreOrder, |root, entry| {
+                if entry.kind() == Some(ObjectType::Tree)
+                    && let Ok(name) = entry.name()
+                {
+                    directories.push(format!("{root}{name}"));
+                }
+                TreeWalkResult::Ok
+            })
+            .map_err(|error| {
+                VersionFileError::Invalid(format!(
+                    "could not list the commit's directories: {error}"
+                ))
+            })?;
+        Ok(directories)
+    }
 }
 
 fn read_required_text(

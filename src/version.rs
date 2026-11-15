@@ -2,6 +2,7 @@ use crate::declaration::{
     BadgeVersionFile, CargoLockVersionFile, JsonVersionFile, PlainVersionFile, RegexVersionFile,
     TomlVersionFile, VersionFile, key_segments,
 };
+use glob::{MatchOptions, Pattern};
 use jsonc_parser::ast::Value as JsonValue;
 use jsonc_parser::{CollectOptions, ParseOptions, parse_to_ast};
 use semver::Version;
@@ -23,49 +24,52 @@ pub trait VersionFileWriter {
     fn write_version(&self, contents: &str, version: &Version) -> Result<String, VersionFileError>;
 }
 
-impl VersionFileWriter for VersionFile {
+/// The files of the commit that version files are read from, for writers that look beyond their
+/// own file.
+pub trait SourceTree {
+    /// The contents of a repository-relative file, or `None` if the commit does not contain it.
+    fn read(&self, path: &str) -> Result<Option<String>, VersionFileError>;
+
+    /// Every directory of the commit as a repository-relative path without a trailing slash.
+    fn directories(&self) -> Result<Vec<String>, VersionFileError>;
+}
+
+impl VersionFile {
+    /// The writer for this file. A Cargo workspace first resolves its members in `tree`.
+    pub fn writer(
+        &self,
+        tree: &dyn SourceTree,
+    ) -> Result<Box<dyn VersionFileWriter + '_>, VersionFileError> {
+        Ok(match self {
+            Self::Toml(file) => Box::new(file),
+            Self::Json(file) => Box::new(file),
+            Self::Plain(file) => Box::new(file),
+            Self::Regex(file) => Box::new(file),
+            Self::CargoLock(file) => Box::new(file),
+            Self::CargoWorkspace(file) => Box::new(CargoWorkspaceLock {
+                path: file.path.clone(),
+                packages: cargo_workspace_packages(&file.cargo_workspace, tree)?,
+            }),
+            Self::Badge(file) => Box::new(file),
+        })
+    }
+}
+
+impl<T: VersionFileWriter + ?Sized> VersionFileWriter for &T {
     fn path(&self) -> &str {
-        match self {
-            Self::Toml(file) => file.path(),
-            Self::Json(file) => file.path(),
-            Self::Plain(file) => file.path(),
-            Self::Regex(file) => file.path(),
-            Self::CargoLock(file) => file.path(),
-            Self::Badge(file) => file.path(),
-        }
+        (**self).path()
     }
 
     fn reads_version(&self) -> bool {
-        match self {
-            Self::Toml(file) => file.reads_version(),
-            Self::Json(file) => file.reads_version(),
-            Self::Plain(file) => file.reads_version(),
-            Self::Regex(file) => file.reads_version(),
-            Self::CargoLock(file) => file.reads_version(),
-            Self::Badge(file) => file.reads_version(),
-        }
+        (**self).reads_version()
     }
 
     fn read_version(&self, contents: &str) -> Result<Version, VersionFileError> {
-        match self {
-            Self::Toml(file) => file.read_version(contents),
-            Self::Json(file) => file.read_version(contents),
-            Self::Plain(file) => file.read_version(contents),
-            Self::Regex(file) => file.read_version(contents),
-            Self::CargoLock(file) => file.read_version(contents),
-            Self::Badge(file) => file.read_version(contents),
-        }
+        (**self).read_version(contents)
     }
 
     fn write_version(&self, contents: &str, version: &Version) -> Result<String, VersionFileError> {
-        match self {
-            Self::Toml(file) => file.write_version(contents, version),
-            Self::Json(file) => file.write_version(contents, version),
-            Self::Plain(file) => file.write_version(contents, version),
-            Self::Regex(file) => file.write_version(contents, version),
-            Self::CargoLock(file) => file.write_version(contents, version),
-            Self::Badge(file) => file.write_version(contents, version),
-        }
+        (**self).write_version(contents, version)
     }
 }
 
@@ -284,6 +288,230 @@ impl VersionFileWriter for CargoLockVersionFile {
         }
         replace_string(&self.path, contents, item, version)
     }
+}
+
+/// The package entries in `Cargo.lock` of the workspace members that inherit the workspace
+/// version. They must all carry the same version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CargoWorkspaceLock {
+    pub path: String,
+    pub packages: Vec<String>,
+}
+
+impl CargoWorkspaceLock {
+    /// The version items of all packages, each with its package name.
+    fn versions<'a>(&self, document: &'a Item) -> Result<Vec<(&str, &'a Item)>, VersionFileError> {
+        self.packages
+            .iter()
+            .map(|name| {
+                let package = cargo_package(document, &self.path, name)?;
+                let item = package
+                    .get("version")
+                    .filter(|item| item.is_str())
+                    .ok_or_else(|| {
+                        VersionFileError::Invalid(format!(
+                            "package {name} in {} has no string version",
+                            self.path
+                        ))
+                    })?;
+                Ok((name.as_str(), item))
+            })
+            .collect()
+    }
+}
+
+impl VersionFileWriter for CargoWorkspaceLock {
+    fn path(&self) -> &str {
+        &self.path
+    }
+
+    fn read_version(&self, contents: &str) -> Result<Version, VersionFileError> {
+        let document = parse_toml(&self.path, contents)?;
+        let mut expected: Option<(&str, Version)> = None;
+        for (name, item) in self.versions(document.as_item())? {
+            let version = parse_version(&self.path, item.as_str().unwrap_or_default())?;
+            match &expected {
+                None => expected = Some((name, version)),
+                Some((first, first_version)) if *first_version != version => {
+                    return Err(VersionFileError::Invalid(format!(
+                        "workspace members disagree in {}: {first} has {first_version}, but {name} has {version}",
+                        self.path
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
+        expected.map(|(_, version)| version).ok_or_else(|| {
+            VersionFileError::Invalid(format!("{} has no workspace members to read", self.path))
+        })
+    }
+
+    fn write_version(&self, contents: &str, version: &Version) -> Result<String, VersionFileError> {
+        let document = parse_toml(&self.path, contents)?;
+        let mut spans = self
+            .versions(document.as_item())?
+            .into_iter()
+            .map(|(_, item)| {
+                item.as_value().and_then(Value::span).ok_or_else(|| {
+                    VersionFileError::Invalid(format!("could not locate version in {}", self.path))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // Replace from the end so that earlier spans stay valid.
+        spans.sort_by_key(|span| std::cmp::Reverse(span.start));
+        let replacement = Value::from(version.to_string()).to_string();
+        let mut written = contents.to_owned();
+        for span in spans {
+            written.replace_range(span, &replacement);
+        }
+        Ok(written)
+    }
+}
+
+/// The names of the members of the workspace in `manifest` that inherit the workspace version,
+/// including the root package. Members come from `workspace.members`, whose globs match
+/// directories, minus the directories under a `workspace.exclude` entry.
+pub fn cargo_workspace_packages(
+    manifest: &str,
+    tree: &dyn SourceTree,
+) -> Result<Vec<String>, VersionFileError> {
+    let contents = tree.read(manifest)?.ok_or_else(|| {
+        VersionFileError::Invalid(format!("commit does not contain required file {manifest}"))
+    })?;
+    let document = parse_toml(manifest, &contents)?;
+    let workspace = document
+        .get("workspace")
+        .and_then(Item::as_table_like)
+        .ok_or_else(|| VersionFileError::Invalid(format!("{manifest} has no [workspace] table")))?;
+    let root = manifest.rsplit_once('/').map_or("", |(root, _)| root);
+    let paths = |key: &str| -> Result<Vec<String>, VersionFileError> {
+        let Some(item) = workspace.get(key) else {
+            return Ok(Vec::new());
+        };
+        let invalid = || {
+            VersionFileError::Invalid(format!(
+                "workspace.{key} in {manifest} must be a list of strings"
+            ))
+        };
+        item.as_array()
+            .ok_or_else(invalid)?
+            .iter()
+            .map(|entry| {
+                let entry = entry.as_str().ok_or_else(invalid)?;
+                join_path(root, entry).ok_or_else(|| {
+                    VersionFileError::Invalid(format!(
+                        "workspace.{key} entry {entry:?} in {manifest} leaves the repository"
+                    ))
+                })
+            })
+            .collect()
+    };
+    let excluded = paths("exclude")?;
+
+    let mut directories = Vec::new();
+    let mut tree_directories = None;
+    for member in paths("members")? {
+        if !member.contains(['*', '?', '[']) {
+            directories.push(member);
+            continue;
+        }
+        let pattern = Pattern::new(&member).map_err(|error| {
+            VersionFileError::Invalid(format!(
+                "invalid workspace member pattern {member:?} in {manifest}: {error}"
+            ))
+        })?;
+        let options = MatchOptions {
+            require_literal_separator: true,
+            ..MatchOptions::new()
+        };
+        let all = match &tree_directories {
+            Some(all) => all,
+            None => tree_directories.insert(tree.directories()?),
+        };
+        let mut matched: Vec<String> = all
+            .iter()
+            .filter(|directory| pattern.matches_with(directory, options))
+            .cloned()
+            .collect();
+        matched.sort();
+        directories.extend(matched);
+    }
+    directories.retain(|directory| {
+        !excluded
+            .iter()
+            .any(|excluded| directory == excluded || directory.starts_with(&format!("{excluded}/")))
+    });
+
+    let mut packages = Vec::new();
+    if let Some(name) = inherited_package(manifest, &document)? {
+        packages.push(name);
+    }
+    for directory in directories {
+        let path = if directory.is_empty() {
+            "Cargo.toml".to_owned()
+        } else {
+            format!("{directory}/Cargo.toml")
+        };
+        if path == manifest {
+            continue;
+        }
+        let contents = tree.read(&path)?.ok_or_else(|| {
+            VersionFileError::Invalid(format!(
+                "workspace member {directory} of {manifest} has no Cargo.toml"
+            ))
+        })?;
+        if let Some(name) = inherited_package(&path, &parse_toml(&path, &contents)?)?
+            && !packages.contains(&name)
+        {
+            packages.push(name);
+        }
+    }
+    if packages.is_empty() {
+        return Err(VersionFileError::Invalid(format!(
+            "no package of the workspace in {manifest} inherits workspace.package.version"
+        )));
+    }
+    Ok(packages)
+}
+
+/// The package name of a manifest whose version is `version.workspace = true`.
+fn inherited_package(
+    path: &str,
+    document: &Document<&str>,
+) -> Result<Option<String>, VersionFileError> {
+    let Some(package) = document.get("package").and_then(Item::as_table_like) else {
+        return Ok(None);
+    };
+    let inherits = package
+        .get("version")
+        .and_then(Item::as_table_like)
+        .and_then(|version| version.get("workspace"))
+        .and_then(Item::as_bool)
+        == Some(true);
+    if !inherits {
+        return Ok(None);
+    }
+    package
+        .get("name")
+        .and_then(Item::as_str)
+        .map(|name| Some(name.to_owned()))
+        .ok_or_else(|| VersionFileError::Invalid(format!("{path} has no string package.name")))
+}
+
+/// `path` relative to the repository-relative directory `root`, normalized, or `None` if it leaves
+/// the repository.
+fn join_path(root: &str, path: &str) -> Option<String> {
+    let mut components: Vec<&str> = root.split('/').filter(|part| !part.is_empty()).collect();
+    for component in path.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop()?;
+            }
+            component => components.push(component),
+        }
+    }
+    Some(components.join("/"))
 }
 
 impl VersionFileWriter for BadgeVersionFile {

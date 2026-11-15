@@ -162,6 +162,7 @@ pub enum VersionFile {
     Plain(PlainVersionFile),
     Regex(RegexVersionFile),
     CargoLock(CargoLockVersionFile),
+    CargoWorkspace(CargoWorkspaceVersionFile),
     Badge(BadgeVersionFile),
 }
 
@@ -192,6 +193,10 @@ impl VersionFile {
                         "Cargo.lock package name must not be empty".into(),
                     ));
                 }
+            }
+            Self::CargoWorkspace(file) => {
+                validate_relative_path(&file.path)?;
+                validate_relative_path(&file.cargo_workspace)?;
             }
             Self::Badge(file) => validate_relative_path(&file.path)?,
         }
@@ -269,6 +274,15 @@ impl RegexVersionFile {
 pub struct CargoLockVersionFile {
     pub path: String,
     pub cargo_lock: String,
+}
+
+/// The `Cargo.lock` of a Cargo workspace whose manifest `cargo_workspace` declares the members.
+/// Every member that inherits `workspace.package.version` has its package entry written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CargoWorkspaceVersionFile {
+    pub path: String,
+    pub cargo_workspace: String,
 }
 
 /// A version badge, generated from scratch on every release and never read.
@@ -1090,6 +1104,29 @@ mod tests {
             value["versionFiles"][0] = json!({ "path": "badge.svg", "badge": { "style": "flat" } });
         });
         assert!(ReleaseDeclaration::from_json(&unknown).is_err());
+    }
+
+    #[test]
+    fn decodes_cargo_workspace_version_files() {
+        let workspace = declaration(|value| {
+            value["versionFiles"][1] =
+                json!({ "path": "rust/Cargo.lock", "cargoWorkspace": "rust/Cargo.toml" });
+        });
+        assert_eq!(
+            ReleaseDeclaration::from_json(&workspace)
+                .unwrap()
+                .version_files[1],
+            VersionFile::CargoWorkspace(CargoWorkspaceVersionFile {
+                path: "rust/Cargo.lock".into(),
+                cargo_workspace: "rust/Cargo.toml".into(),
+            })
+        );
+
+        let outside = declaration(|value| {
+            value["versionFiles"][1] =
+                json!({ "path": "Cargo.lock", "cargoWorkspace": "../Cargo.toml" });
+        });
+        assert!(ReleaseDeclaration::from_json(&outside).is_err());
     }
 
     #[test]

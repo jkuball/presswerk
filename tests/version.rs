@@ -2,8 +2,12 @@ use presswerk::declaration::{
     CargoLockVersionFile, JsonVersionFile, PlainOptions, PlainVersionFile, RegexVersionFile,
     TomlVersionFile,
 };
-use presswerk::version::{VersionFileWriter, check_consistent_versions};
+use presswerk::version::{
+    CargoWorkspaceLock, SourceTree, VersionFileError, VersionFileWriter, cargo_workspace_packages,
+    check_consistent_versions,
+};
 use semver::Version;
+use std::collections::BTreeMap;
 
 #[test]
 fn writes_and_reads_a_toml_version_without_reformatting_the_file() {
@@ -329,4 +333,142 @@ fn a_regex_must_match_exactly_once() {
                 .contains(message)
         );
     }
+}
+
+/// A commit made of the given files.
+struct Files(BTreeMap<&'static str, &'static str>);
+
+impl SourceTree for Files {
+    fn read(&self, path: &str) -> Result<Option<String>, VersionFileError> {
+        Ok(self.0.get(path).map(|contents| (*contents).to_owned()))
+    }
+
+    fn directories(&self) -> Result<Vec<String>, VersionFileError> {
+        let mut directories: Vec<String> = self
+            .0
+            .keys()
+            .flat_map(|path| {
+                let parts: Vec<&str> = path.split('/').collect();
+                (1..parts.len()).map(move |end| parts[..end].join("/"))
+            })
+            .collect();
+        directories.sort();
+        directories.dedup();
+        Ok(directories)
+    }
+}
+
+fn member(name: &str, version: &str) -> String {
+    format!("[package]\nname = \"{name}\"\n{version}\n")
+}
+
+#[test]
+fn resolves_the_workspace_members_that_inherit_the_version() {
+    let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
+    let files = Files(BTreeMap::from([
+        (
+            "rust/Cargo.toml",
+            "[workspace]\nmembers = [\"crates/*\", \"./tools/cli/\", \"crates/*\"]\nexclude = [\"crates/old\"]\n\n[workspace.package]\nversion = \"1.2.3\"\n\n[package]\nname = \"root\"\nversion.workspace = true\n",
+        ),
+        (
+            "rust/crates/a/Cargo.toml",
+            leak(member("a", "version.workspace = true")),
+        ),
+        (
+            "rust/crates/b/Cargo.toml",
+            leak(member("b", "version = { workspace = true }")),
+        ),
+        (
+            "rust/crates/own/Cargo.toml",
+            leak(member("own", "version = \"9.0.0\"")),
+        ),
+        (
+            "rust/crates/old/Cargo.toml",
+            leak(member("old", "version.workspace = true")),
+        ),
+        (
+            "rust/crates/a/nested/Cargo.toml",
+            leak(member("nested", "version.workspace = true")),
+        ),
+        (
+            "rust/tools/cli/Cargo.toml",
+            leak(member("cli", "version.workspace = true")),
+        ),
+    ]));
+
+    assert_eq!(
+        cargo_workspace_packages("rust/Cargo.toml", &files).unwrap(),
+        ["root", "a", "b", "cli"]
+    );
+}
+
+#[test]
+fn rejects_workspaces_without_inheriting_members_or_with_missing_manifests() {
+    let own_versions = Files(BTreeMap::from([
+        ("Cargo.toml", "[workspace]\nmembers = [\"a\"]\n"),
+        (
+            "a/Cargo.toml",
+            "[package]\nname = \"a\"\nversion = \"1.0.0\"\n",
+        ),
+    ]));
+    assert!(
+        cargo_workspace_packages("Cargo.toml", &own_versions)
+            .unwrap_err()
+            .to_string()
+            .contains("inherits workspace.package.version")
+    );
+
+    let missing = Files(BTreeMap::from([(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"a\"]\n",
+    )]));
+    assert!(
+        cargo_workspace_packages("Cargo.toml", &missing)
+            .unwrap_err()
+            .to_string()
+            .contains("workspace member a of Cargo.toml has no Cargo.toml")
+    );
+
+    let crate_manifest = Files(BTreeMap::from([(
+        "Cargo.toml",
+        "[package]\nname = \"a\"\nversion = \"1.0.0\"\n",
+    )]));
+    assert!(
+        cargo_workspace_packages("Cargo.toml", &crate_manifest)
+            .unwrap_err()
+            .to_string()
+            .contains("has no [workspace] table")
+    );
+}
+
+#[test]
+fn writes_and_reads_every_workspace_member_in_cargo_lock() {
+    let writer = CargoWorkspaceLock {
+        path: "Cargo.lock".into(),
+        packages: vec!["a".into(), "b".into()],
+    };
+    let contents = "version = 4\n\n[[package]]\nname = \"a\"\nversion = \"1.2.3\"\n\n[[package]]\nname = \"dependency\"\nversion = \"1.2.3\"\n\n[[package]]\nname = \"b\"\nversion = \"1.2.3\"\ndependencies = [\n \"a\",\n]\n";
+
+    let written = writer
+        .write_version(contents, &Version::new(1, 10, 0))
+        .unwrap();
+
+    assert_eq!(
+        written,
+        contents.replacen("\"1.2.3\"", "\"1.10.0\"", 1).replace(
+            "name = \"b\"\nversion = \"1.2.3\"",
+            "name = \"b\"\nversion = \"1.10.0\""
+        )
+    );
+    assert_eq!(
+        writer.read_version(&written).unwrap(),
+        Version::new(1, 10, 0)
+    );
+    assert!(
+        writer
+            .read_version(contents.replacen("1.2.3", "1.2.4", 1).as_str())
+            .unwrap_err()
+            .to_string()
+            .contains("workspace members disagree in Cargo.lock: a has 1.2.4, but b has 1.2.3")
+    );
 }

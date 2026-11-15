@@ -4,9 +4,10 @@ use anyhow::bail;
 use git2::Oid;
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::declaration::{
-    Analyzer, BadgeOptions, BadgeVersionFile, Changelog, Compression, ConventionalAnalyzer,
-    GithubReleasePublisher, GitmojiAnalyzer, JsonVersionFile, OciHelmPublisher, OciImagePublisher,
-    Publishers, ReleaseDeclaration, Tag, Token, TomlVersionFile, Username, VersionFile,
+    Analyzer, BadgeOptions, BadgeVersionFile, CargoWorkspaceVersionFile, Changelog, Compression,
+    ConventionalAnalyzer, GithubReleasePublisher, GitmojiAnalyzer, JsonVersionFile,
+    OciHelmPublisher, OciImagePublisher, Publishers, ReleaseDeclaration, Tag, Token,
+    TomlVersionFile, Username, VersionFile,
 };
 use presswerk::evaluation::EvaluatedReleaseDeclaration;
 use presswerk::preparation::{build_release_plan, is_worktree_dirty, prepare_release, render_plan};
@@ -828,5 +829,57 @@ fn conventional_commits_plan_notes_and_a_conventional_release_commit() {
     assert_eq!(
         repository.git(["show", "--format=%s", "--no-patch", &release.to_string()]),
         "chore(release): v0.1.0"
+    );
+}
+
+#[test]
+fn prepares_a_cargo_workspace_release() {
+    let repository = GitRepo::new();
+    repository.write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"0.1.0\"\n",
+    );
+    repository.write(
+        "crates/a/Cargo.toml",
+        "[package]\nname = \"a\"\nversion.workspace = true\n",
+    );
+    repository.write(
+        "crates/b/Cargo.toml",
+        "[package]\nname = \"b\"\nversion = \"3.0.0\"\n",
+    );
+    let lock = "version = 4\n\n[[package]]\nname = \"a\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"b\"\nversion = \"3.0.0\"\n";
+    repository.write("Cargo.lock", lock);
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.1.0");
+    evaluated.declaration.version_files = vec![
+        VersionFile::Toml(TomlVersionFile {
+            path: "Cargo.toml".into(),
+            toml: "workspace.package.version".into(),
+        }),
+        VersionFile::CargoWorkspace(CargoWorkspaceVersionFile {
+            path: "Cargo.lock".into(),
+            cargo_workspace: "Cargo.toml".into(),
+        }),
+    ];
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+    assert!(render_plan(&plan).contains("Cargo.lock  0.1.0 -> 0.2.0"));
+
+    let release = prepare_release(&plan).unwrap().unwrap();
+    assert_eq!(
+        repository.git(["show", &format!("{release}:Cargo.lock")]),
+        lock.replacen("0.1.0", "0.2.0", 1).trim_end()
+    );
+    assert!(
+        repository
+            .git(["show", &format!("{release}:Cargo.toml")])
+            .contains("version = \"0.2.0\"")
     );
 }
