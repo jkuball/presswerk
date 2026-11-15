@@ -74,6 +74,8 @@ impl ReleaseDeclaration {
                 "version": "1.2.3",
                 "groups": [{
                     "title": "Features",
+                    "level": "minor",
+                    "rank": 1,
                     "commits": [{
                         "text": "Add search",
                         "message": "Add search",
@@ -1104,7 +1106,7 @@ mod tests {
     fn validates_templates_with_their_documented_context() {
         let valid = declaration(|value| {
             value["changelog"]["template"] = json!(
-                "{{ version }}{% for group in groups %}{{ group.title }}{% for commit in group.commits %}{{ commit.text }}{{ commit.message }}{{ commit.scope }}{{ commit.breaking }}{{ commit.id }}{% endfor %}{% endfor %}"
+                "{{ version }}{% for group in groups|sort(attribute=\"rank\") %}{{ group.title }}{{ group.level }}{{ group.rank }}{% for commit in group.commits %}{{ commit.text }}{{ commit.message }}{{ commit.scope }}{{ commit.breaking }}{{ commit.id }}{% endfor %}{% endfor %}"
             );
             value["publishers"]["github-release"]["default"]["body"] =
                 json!("{{ notes }} {{ version }} {{ tag }}");

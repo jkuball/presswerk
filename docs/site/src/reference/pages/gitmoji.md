@@ -41,6 +41,10 @@ For a release with these commits, newest first:
 ```md
 ## [0.3.0] - 2026-11-10
 
+### ✨ Introduce new features
+
+- (cli): Add search
+
 ### 🐛 Fix a bug
 
 - Fix tag lookup
@@ -49,14 +53,10 @@ For a release with these commits, newest first:
 ### 📝 Add or update documentation
 
 - Document search
-
-### ✨ Introduce new features
-
-- (cli): Add search
 ```
 
-Groups with more commits come first, and groups of equal size follow the order of their shortcodes.
-To change how the section looks, see
+Groups follow their highest effective level, from `major` to `null`; groups of the same level are
+ordered by size and then by shortcode. To change how the section looks, see
 [`changelog.template`](/reference/changelog/#template).
 
 ## Version levels

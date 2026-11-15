@@ -22,12 +22,18 @@ The context is the same for every commit analyzer:
 - `version`: the version being prepared, as a string.
 - `groups`: the ordered release-note groups.
   - `title`: the group heading.
+  - `level`: the group's highest effective level: `"major"`, `"minor"`, `"patch"`, or `none`
+    (`null`). A breaking commit counts as `"major"`.
+  - `rank`: the numeric level order: `0` for major, `1` for minor, `2` for patch, and `3` for
+    none.
   - `commits`: the ordered commits in the group.
     - `text`: the analyzer's ready-to-display line, without the list marker.
     - `message`: the parsed commit description without its intention or scope.
     - `scope`: the parsed scope as a string, or `none`.
     - `breaking`: whether the commit is a breaking change.
     - `id`: the full Git object ID.
+
+Sort groups by level with `{% for group in groups|sort(attribute="rank") %}`.
 
 For example:
 
