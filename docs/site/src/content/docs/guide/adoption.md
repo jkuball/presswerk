@@ -10,8 +10,14 @@ its last release becomes the baseline: you trust it once, and Presswerk makes it
 top of it. From then on, every release is a Presswerk release.
 
 This needs a tag for the last release on the remote, and version files that still contain the
-version of that release. If the project has a committed version without a tag, create the tag by
-hand first.
+version of that release. If your project does not match that yet:
+
+- **Never released, but the version is not `0.0.0`**, for example a default from `cargo init` or
+  `npm init`: reset the version to `0.0.0`. The project is then fresh and needs no adoption.
+- **Released only to a registry, without Git tags**: tag the commit of the last release by hand,
+  then trust it as described below.
+- **Tags in another format**: set `tag.format` to that format, or tag the last release in
+  Presswerk's format.
 
 ## 1. Add the declaration
 
