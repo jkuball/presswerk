@@ -101,3 +101,41 @@ fn rejects_duplicate_versions_when_reading() {
         ChangelogError::DuplicateVersion(found) if found == version
     ));
 }
+
+#[test]
+fn inserts_before_the_first_level_two_heading_of_another_format() {
+    let old = "# CHANGELOG\n\nIntro.\n\n## v0.38.2 (2026-11-10)\n\n- old fix\n\n## v0.38.1 (2026-11-01)\n\n- older fix\n";
+
+    let changelog = insert_version_section(
+        Some(old),
+        &Version::new(0, 39, 0),
+        "2026-11-20",
+        "- new feature\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        changelog,
+        "# CHANGELOG\n\nIntro.\n\n## [0.39.0] - 2026-11-20\n\n- new feature\n\n## v0.38.2 (2026-11-10)\n\n- old fix\n\n## v0.38.1 (2026-11-01)\n\n- older fix\n"
+    );
+    assert_eq!(
+        read_version_section(&changelog, &Version::new(0, 39, 0)).unwrap(),
+        "- new feature\n"
+    );
+}
+
+#[test]
+fn appends_when_the_changelog_has_no_level_two_heading() {
+    let changelog = insert_version_section(
+        Some("# Changelog\n\nNothing yet.\n"),
+        &Version::new(1, 0, 0),
+        "2026-11-20",
+        "First.\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        changelog,
+        "# Changelog\n\nNothing yet.\n\n## [1.0.0] - 2026-11-20\n\nFirst.\n\n"
+    );
+}

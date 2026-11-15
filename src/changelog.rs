@@ -23,9 +23,17 @@ pub fn insert_version_section(
         return Ok(format!("# Changelog{line_ending}{line_ending}{section}"));
     }
 
+    // Without a recognized version heading, take the first level-2 heading of any format,
+    // so changelogs written by other tools get the new section above their history.
     let insertion = version_headings(contents)
         .next()
-        .map_or(contents.len(), |(start, _, _)| start);
+        .map(|(start, _, _)| start)
+        .or_else(|| {
+            lines_with_offsets(contents)
+                .find(|(_, _, line)| is_level_two_heading(line))
+                .map(|(start, _, _)| start)
+        })
+        .unwrap_or(contents.len());
     let before = &contents[..insertion];
     let after = &contents[insertion..];
     let blank_line = format!("{line_ending}{line_ending}");
@@ -48,7 +56,7 @@ pub fn read_version_section<'a>(
         .ok_or_else(|| ChangelogError::MissingVersion(version.clone()))?;
     let body_start = heading_end + line_ending_prefix_len(&contents[heading_end..]);
     let body_end = lines_with_offsets(contents)
-        .find(|(start, _, line)| *start >= body_start && line.starts_with("## "))
+        .find(|(start, _, line)| *start >= body_start && is_level_two_heading(line))
         .map_or(contents.len(), |(start, _, _)| start);
 
     let body = &contents[body_start..body_end];
@@ -93,6 +101,10 @@ fn line_ending_prefix_len(contents: &str) -> usize {
     } else {
         0
     }
+}
+
+fn is_level_two_heading(line: &str) -> bool {
+    line.starts_with("## ")
 }
 
 fn version_headings(contents: &str) -> impl Iterator<Item = (usize, usize, Version)> + '_ {
