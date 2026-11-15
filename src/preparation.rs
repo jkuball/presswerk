@@ -177,6 +177,7 @@ pub fn build_release_plan(
         let changelog = read_optional_text(&repository, &tree, &declaration.changelog.path)?;
         let changelog = crate::changelog::insert_version_section(
             changelog.as_deref(),
+            &declaration.changelog.heading()?,
             next_version,
             date,
             &notes,

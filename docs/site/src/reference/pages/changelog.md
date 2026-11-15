@@ -1,15 +1,65 @@
 `prepare` writes one version section into the declared changelog and commits it with the version
 files. Publishers use that section as the release notes.
 
-The new section goes above the newest version section. When the changelog has no version heading
-Presswerk recognizes, such as one written by another tool, the section goes above its first level-2
-heading of any format, or at the end when it has none. A missing changelog is created with a
-`# Changelog` title.
+The new section goes above the newest version section. When the changelog has no heading in the
+declared [heading](#heading) format, such as one written by another tool, the section goes above its
+first level-2 heading of any format, or at the end when it has none. A missing changelog is created
+with a `# Changelog` title.
 
 ## Path
 
 [`changelog.path`](/reference/options/#changelog.path) is the repository-relative changelog file.
 It defaults to `CHANGELOG.md`.
+
+## Heading
+
+[`changelog.heading`](/reference/options/#changelog.heading) is the version heading of a section.
+`{version}` stands for the release version and `{date}` for the release date. It defaults to
+`## [{version}] - {date}`:
+
+```nix presswerk-module
+{
+  changelog.heading = "## v{version} ({date})";
+}
+```
+
+The heading is one line that starts with `#`. It contains `{version}` exactly once and `{date}` at
+most once; other text is literal, and trailing whitespace is ignored. The same format renders new
+headings and finds existing ones, so a changelog written by another tool in that format keeps it:
+
+```markdown
+# CHANGELOG
+
+## v0.39.0 (2026-11-20)
+…
+
+## v0.38.2 (2026-11-10)
+…
+```
+
+`{date:<format>}` writes the date in a strftime format, as the Rust `time` crate supports it, with
+English month names. Plain `{date}` means `{date:%Y-%m-%d}`:
+
+```nix presswerk-module
+{
+  changelog.heading = "## {version} ({date:%B %e, %Y})"; # ## 1.4.0 (November  5, 2026)
+}
+```
+
+The format must write a full date that Presswerk can read back, so `%d.%m.` without a year or an
+unknown directive fails declaration validation. An existing heading matches only when its date
+parses in the declared format as a valid calendar date, so `## {version}-{date}` tells `1.2.3-rc.1`
+from the date. A heading that splits into more than one valid version and date, such as
+`1.2.329.2.2028` for `{version}{date:%-d.%-m.%Y}`, is an error; put literal text between `{version}`
+and `{date}` then. Older headings with another date format are not recognized; without any recognized
+heading, the new section goes above the first level-2 heading, as described above. Only lines that
+match the whole format count: with the default, a hand-written `## [1.0.0]` without a date is not a
+version heading. Lines inside fenced code blocks are never headings.
+
+`prepare` refuses a version that already has a heading. Publishers read the section under the
+release version's heading, up to the next heading of the same or a higher level, or the next version
+heading. `prepare` checks that the new section reads back as the rendered notes, so
+`changelog.template` must not use headings of the heading's level or higher.
 
 ## Template
 

@@ -1,5 +1,5 @@
 use crate::analysis::{Analysis, Analyzer, CommitRange, GitCliffAnalyzer};
-use crate::changelog::read_version_section;
+use crate::changelog::{ChangelogHeading, read_version_section};
 use crate::classification::{CommitClassification, classify_commit};
 use crate::declaration::{
     DeclarationError, GithubReleasePublisher as GithubReleaseDeclaration,
@@ -1180,7 +1180,10 @@ pub fn publish_to_remote(
         .render(&declaration.version)
         .map_err(|error| PublicationError::new(error.to_string()))?;
     let changelog = read_text_at(repository_path, commit, &declaration.changelog.path)?;
-    let notes = read_version_section(&changelog, &declaration.version)
+    let notes = declaration
+        .changelog
+        .heading()
+        .and_then(|heading| read_version_section(&changelog, &heading, &declaration.version))
         .map_err(|error| PublicationError::new(error.to_string()))?
         .to_owned();
     let release = Release {
@@ -1339,8 +1342,9 @@ pub fn validate_new_release(
     stable_base: Option<&Version>,
     analysis: &Analysis,
     changelog: &str,
+    heading: &ChangelogHeading,
 ) -> Result<(), PublicationError> {
-    read_version_section(changelog, version)
+    read_version_section(changelog, heading, version)
         .map_err(|error| PublicationError::new(error.to_string()))?;
     if !is_valid_successor(parent_version, version) {
         return Err(PublicationError::new(format!(
@@ -1466,6 +1470,10 @@ fn validate_candidate(
         stable_base.as_ref().map(|(version, _)| version),
         &analysis,
         changelog,
+        &declaration
+            .changelog
+            .heading()
+            .map_err(|error| PublicationError::new(error.to_string()))?,
     )
 }
 
