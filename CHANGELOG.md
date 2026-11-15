@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.9.0] - 2026-11-15
+
+### 🐛 Fix a bug
+
+- (docs): Preserve OCI publisher routes
+- (publish): Recheck registry tag collisions
+- (helm): Validate the packaged chart root
+- (helm): Reject release-time registry tag collisions
+
+### 📝 Add or update documentation
+
+- (docs): Rename OCI publisher pages
+- (helm): Refine version file guidance
+- (helm): Keep chart guidance together
+- (helm): Clarify the chart archive option
+
+### 💥 Introduce breaking changes
+
+- (publishers): Rename OCI publisher types
+
+### ♻️ Refactor code
+
+- (helm): Reuse OCI publication primitives
+
+### ✨ Introduce new features
+
+- (helm): Publish packaged charts to OCI registries
+
+### ✅ Add, update, or pass tests
+
+- (publish): Keep collision regression sandboxed
+
 ## [0.8.2] - 2026-11-14
 
 ### 🐛 Fix a bug
