@@ -133,7 +133,7 @@ impl JsonVersionFile {
         let mut value = parsed.value.as_ref();
         for key in segments(&self.path, "JSON", &self.json)? {
             value = match value {
-                Some(JsonValue::Object(object)) => object.get(key).map(|property| &property.value),
+                Some(JsonValue::Object(object)) => object.get(&key).map(|property| &property.value),
                 _ => None,
             };
         }
@@ -367,13 +367,13 @@ fn parse_version(path: &str, version: &str) -> Result<Version, VersionFileError>
     })
 }
 
-fn segments<'a>(path: &str, format: &str, key: &'a str) -> Result<Vec<&'a str>, VersionFileError> {
+fn segments(path: &str, format: &str, key: &str) -> Result<Vec<String>, VersionFileError> {
     key_segments(key)
         .map_err(|error| VersionFileError::Invalid(format!("{format} key for {path} {error}")))
 }
 
-fn find_item<'a>(mut item: &'a Item, segments: Vec<&str>) -> Option<&'a Item> {
-    for key in segments {
+fn find_item(mut item: &Item, segments: Vec<String>) -> Option<&Item> {
+    for key in &segments {
         item = item.as_table_like()?.get(key)?;
     }
     Some(item)

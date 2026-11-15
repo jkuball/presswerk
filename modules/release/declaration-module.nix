@@ -8,15 +8,21 @@
       conventionalCatalog = builtins.fromJSON (builtins.readFile ./conventional/catalog.json);
       variationSelector = builtins.fromJSON ''"\uFE0F"'';
       normalizedEmoji = emoji: builtins.replaceStrings [ variationSelector ] [ "" ] emoji;
-      # A segment of a TOML or JSON key: double-quoted (may be empty or contain dots, never a quote)
-      # or unquoted (non-empty, no dots or quotes). The CLI parses keys the same way.
-      keySegment = ''"[^"]*"|[^."]+'';
-      keySegments = key:
-        map
-          (match:
-            let segment = builtins.head match;
-            in if lib.hasPrefix "\"" segment then builtins.substring 1 (builtins.stringLength segment - 2) segment else segment)
-          (builtins.filter builtins.isList (builtins.split "(${keySegment})" key));
+      # The segments of a TOML dotted key, which also selects JSON keys. TOML parses it, as the CLI
+      # does: the key must be one dotted key, so a newline or a value smuggled in with `=` fails.
+      keySegments = option: key:
+        let
+          invalid = throw "${option} ${builtins.toJSON key} is not a TOML dotted key";
+          walk = leaf: value:
+            if builtins.isAttrs value && builtins.length (builtins.attrNames value) == 1 then
+              let name = builtins.head (builtins.attrNames value); in [ name ] ++ walk leaf value.${name}
+            else if value == leaf then [ ]
+            else invalid;
+          parse = leaf: walk leaf (builtins.addErrorContext "while parsing ${option} as a TOML dotted key"
+            (builtins.fromTOML "${key} = ${toString leaf}"));
+          segments = parse 0;
+        in
+        if lib.hasInfix "\n" key || lib.hasInfix "\r" key || parse 1 != segments then invalid else segments;
       # Every commit analyzer lives under `analyzer` and has an `enable` option; a release enables
       # exactly one of them. A disabled analyzer's settings are ignored.
       analyzerNames = [ "gitmoji" "conventional" ];
@@ -109,13 +115,12 @@
           };
 
           key = mkOption {
-            type = types.strMatching "(${keySegment})([.](${keySegment}))*" // {
-              description = "dotted key whose segments are unquoted (non-empty, no dots or quotes) or double-quoted (no quotes)";
-            };
+            type = types.str;
             example = "project.version";
             description = ''
-              Dotted key of the version string in the ${format} file. Quote a segment that is empty or
-              contains a dot, such as `packages."".version`; a quoted segment cannot contain `"`.
+              TOML dotted key of the version string in the ${format} file. Bare segments consist of
+              `A-Za-z0-9_-`; quote any other segment as in TOML, such as `packages."".version`,
+              `dependencies."@scope/pkg".version`, or `a.'x.y'.b`.
             '';
           };
         };
@@ -698,7 +703,7 @@
                 name: file:
                   lib.mkDefinition {
                     file = "versionFiles.${kind}.${name} (${file.path})";
-                    value = lib.getAttrFromPath (keySegments file.key) (parse (read file.path));
+                    value = lib.getAttrFromPath (keySegments "versionFiles.${kind}.${name}.key" file.key) (parse (read file.path));
                   }
               )
               config.versionFiles.${kind};

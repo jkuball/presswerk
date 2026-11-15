@@ -236,7 +236,7 @@ fn rejects_a_malformed_key() {
             .read_version("{}")
             .unwrap_err()
             .to_string()
-            .contains("has an unclosed quote")
+            .contains("is not a TOML dotted key")
     );
 }
 

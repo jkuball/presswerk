@@ -213,43 +213,12 @@ pub struct JsonVersionFile {
     pub json: String,
 }
 
-/// The segments of a dotted TOML or JSON key. A segment is double-quoted (it may then be empty or
-/// contain dots, but never a quote) or unquoted (non-empty, without dots or quotes). The flake
-/// parses keys the same way.
-pub fn key_segments(key: &str) -> Result<Vec<&str>, String> {
-    if key.is_empty() {
-        return Err("must not be empty".into());
-    }
-    let mut segments = Vec::new();
-    let mut rest = key;
-    loop {
-        let after = if let Some(quoted) = rest.strip_prefix('"') {
-            let end = quoted
-                .find('"')
-                .ok_or_else(|| format!("{key:?} has an unclosed quote"))?;
-            segments.push(&quoted[..end]);
-            &quoted[end + 1..]
-        } else {
-            let end = rest.find('.').unwrap_or(rest.len());
-            let segment = &rest[..end];
-            if segment.is_empty() {
-                return Err(format!(
-                    "{key:?} has an empty segment; write an empty key as \"\""
-                ));
-            }
-            if segment.contains('"') {
-                return Err(format!("{key:?} has a quote inside an unquoted segment"));
-            }
-            segments.push(segment);
-            &rest[end..]
-        };
-        if after.is_empty() {
-            return Ok(segments);
-        }
-        rest = after
-            .strip_prefix('.')
-            .ok_or_else(|| format!("{key:?} has characters after a quoted segment"))?;
-    }
+/// The segments of a TOML dotted key, which also selects JSON keys. The flake parses keys as TOML,
+/// too.
+pub fn key_segments(key: &str) -> Result<Vec<String>, String> {
+    toml_edit::Key::parse(key)
+        .map(|keys| keys.iter().map(|key| key.get().to_owned()).collect())
+        .map_err(|error| format!("{key:?} is not a TOML dotted key: {}", error.message()))
 }
 
 /// A file that contains nothing but the version, optionally followed by a line break.
@@ -1054,35 +1023,36 @@ mod tests {
             ReleaseDeclaration::from_json(&empty)
                 .unwrap_err()
                 .to_string()
-                .contains("must not be empty")
+                .contains("TOML key selector \"\" is not a TOML dotted key")
         );
     }
 
     #[test]
-    fn parses_quoted_key_segments() {
-        assert_eq!(key_segments("version").unwrap(), ["version"]);
-        assert_eq!(
-            key_segments(r#"packages."".version"#).unwrap(),
-            ["packages", "", "version"]
-        );
-        assert_eq!(
-            key_segments(r#"packages."a.b".version"#).unwrap(),
-            ["packages", "a.b", "version"]
-        );
-        assert_eq!(key_segments(r#""""#).unwrap(), [""]);
-
-        for (key, error) in [
-            ("", "must not be empty"),
-            ("a..b", "has an empty segment"),
-            (".a", "has an empty segment"),
-            ("a.", "has an empty segment"),
-            (r#"a."b"#, "has an unclosed quote"),
-            (r#"a"b"#, "has a quote inside an unquoted segment"),
-            (r#""a"b"#, "has characters after a quoted segment"),
+    fn parses_keys_as_toml_dotted_keys() {
+        // The same inputs as the nix-unit test "test keys parse as TOML dotted keys".
+        for (key, segments) in [
+            ("version", &["version"][..]),
+            (r#"packages."".version"#, &["packages", "", "version"]),
+            (r#"packages."a.b".version"#, &["packages", "a.b", "version"]),
+            ("a.'x.y'.b", &["a", "x.y", "b"]),
+            (r#""q\"z""#, &["q\"z"]),
+            (
+                r#"dependencies."@scope/pkg".version"#,
+                &["dependencies", "@scope/pkg", "version"],
+            ),
+            (" a . b ", &["a", "b"]),
+            (r#""\u00e9""#, &["é"]),
+        ] {
+            assert_eq!(key_segments(key).unwrap(), segments, "{key:?}");
+        }
+        for key in [
+            "", "a..b", "a.", "a = 1\nb", "a = 0 #", "@scope", "\"a", "a b", "[a]\nb", "a#",
         ] {
             assert!(
-                key_segments(key).unwrap_err().contains(error),
-                "{key:?} should fail with {error:?}"
+                key_segments(key)
+                    .unwrap_err()
+                    .contains("is not a TOML dotted key"),
+                "{key:?}"
             );
         }
 
@@ -1093,7 +1063,7 @@ mod tests {
             ReleaseDeclaration::from_json(&unbalanced)
                 .unwrap_err()
                 .to_string()
-                .contains(r#"TOML key selector "packages.\"a.version" has an unclosed quote"#)
+                .contains(r#"TOML key selector "packages.\"a.version" is not a TOML dotted key"#)
         );
     }
 

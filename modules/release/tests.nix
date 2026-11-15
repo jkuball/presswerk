@@ -25,7 +25,36 @@ let
     version = "1.2.3"
   '';
   packageJsonFixture = builtins.toFile "package.json" ''{ "nested": { "version": "1.2.3" } }'';
-  packageLockFixture = builtins.toFile "package-lock.json" ''{ "version": "1.2.3", "packages": { "": { "version": "1.2.3" }, "a.b": { "version": "1.2.3" } } }'';
+  # Holds a version under every key of the TOML dotted-key test inputs.
+  packageLockFixture = builtins.toFile "package-lock.json" (builtins.toJSON {
+    version = "1.2.3";
+    packages = { "".version = "1.2.3"; "a.b".version = "1.2.3"; };
+    a = { "x.y".b = "1.2.3"; b = "1.2.3"; };
+    "q\"z" = "1.2.3";
+    dependencies."@scope/pkg".version = "1.2.3";
+    "é" = "1.2.3";
+  });
+  # The same inputs as the Rust test `parses_keys_as_toml_dotted_keys`.
+  validKeys = [ "version" ''packages."".version'' ''packages."a.b".version'' "a.'x.y'.b" ''"q\"z"'' ''dependencies."@scope/pkg".version'' " a . b " ''"\u00e9"'' ];
+  malformedKeys = {
+    empty = "";
+    empty-segment = "a..b";
+    trailing-dot = "a.";
+    second-line = "a = 1\nb";
+    smuggled-value = "a = 0 #";
+    bare-at = "@scope";
+    unclosed-quote = ''"a'';
+    space = "a b";
+    table-header = "[a]\nb";
+    comment = "a#";
+  };
+  releaseWithKey = key: mkRelease {
+    sourceRoot = fixtureRoot;
+    versionFiles.json.package = {
+      path = builtins.baseNameOf packageLockFixture;
+      inherit key;
+    };
+  };
   versionFixture = builtins.toFile "VERSION" "1.2.3\n";
   fixtureRoot = builtins.dirOf cargoTomlFixture;
   cargoToml = builtins.baseNameOf cargoTomlFixture;
@@ -221,17 +250,17 @@ in
       };
     };
 
-    "test quoted key segments select empty and dotted keys" = {
+    "test keys parse as TOML dotted keys" = {
       expr =
         let
           release = mkRelease {
             sourceRoot = fixtureRoot;
-            versionFiles.json = {
-              root.path = builtins.baseNameOf packageLockFixture;
-              root.key = ''packages."".version'';
-              dotted.path = builtins.baseNameOf packageLockFixture;
-              dotted.key = ''packages."a.b".version'';
-            };
+            versionFiles.json = lib.listToAttrs (lib.imap0
+              (index: key: lib.nameValuePair "key${toString index}" {
+                path = builtins.baseNameOf packageLockFixture;
+                inherit key;
+              })
+              validKeys);
           };
         in
         {
@@ -240,21 +269,8 @@ in
         };
       expected = {
         version = "1.2.3";
-        keys = [ ''packages."a.b".version'' ''packages."".version'' ];
+        keys = validKeys;
       };
-    };
-
-    "test malformed keys are rejected" = {
-      expr = map
-        (key: succeeds (mkRelease {
-          sourceRoot = fixtureRoot;
-          versionFiles.json.package = {
-            path = builtins.baseNameOf packageLockFixture;
-            inherit key;
-          };
-        }).version)
-        [ ''packages."".version'' ''packages."a.version'' "packages..version" ''pack"ages.version'' ''packages.""x.version'' ];
-      expected = [ true false false false false ];
     };
 
     "test a disagreeing JSON file fails" = {
@@ -1118,7 +1134,15 @@ in
         versionMatches = true;
       };
     };
-  };
+  }
+  # Keys that are not valid TOML fail in fromTOML, which tryEval cannot catch; the rest throw.
+  // lib.mapAttrs'
+    (name: key: lib.nameValuePair "test malformed key is rejected: ${name}" {
+      expr = (releaseWithKey key).version;
+      expectedError.msg =
+        if builtins.elem name [ "second-line" "smuggled-value" "table-header" ] then "is not a TOML dotted key" else "parsing TOML";
+    })
+    malformedKeys;
 
   perSystem = {
     # nix-unit re-evaluates the full root flake in a network-disabled build sandbox,
