@@ -20,8 +20,7 @@ It must not contain credentials such as `user:token@`, a query, or a fragment. L
 such as `localhost:5000/charts/project` are reached over plain HTTP, every other registry over
 HTTPS.
 
-`chart` is the `.tgz` archive written by `helm package`. It must be a file in a flake output.
-`publish` fetches it from the local Nix store or a substituter without building it.
+`chart` is the `.tgz` archive written by `helm package`.
 
 `presswerk plan` shows the one chart tag:
 
