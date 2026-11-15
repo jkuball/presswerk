@@ -134,6 +134,7 @@ pub fn build_release_plan(
     let mut release_files = Vec::new();
 
     if let Some(next_version) = &next_version {
+        let mut written_files: Vec<(&str, String)> = Vec::new();
         for writer in &declaration.version_files {
             let (contents, current) = if writer.reads_version() {
                 let contents = read_required_text(&repository, &tree, writer.path())?;
@@ -143,14 +144,31 @@ pub fn build_release_plan(
                 let contents = read_optional_text(&repository, &tree, writer.path())?;
                 (contents.unwrap_or_default(), declaration.version.clone())
             };
-            let written = writer.write_version(&contents, next_version)?;
+            // Several selectors may write one file, such as both versions in package-lock.json;
+            // each later writer edits what the earlier ones wrote.
+            let earlier = written_files
+                .iter_mut()
+                .find(|(path, _): &&mut (&str, String)| *path == writer.path());
+            let written = writer.write_version(
+                earlier.as_ref().map_or(&contents, |(_, written)| written),
+                next_version,
+            )?;
             version_files.push(VersionFileChange {
                 path: writer.path().into(),
                 current,
                 next: next_version.clone(),
             });
-            release_files.push(ReleaseFile::new(writer.path(), written));
+            match earlier {
+                Some((_, contents)) => *contents = written,
+                None => written_files.push((writer.path(), written)),
+            }
         }
+
+        release_files.extend(
+            written_files
+                .into_iter()
+                .map(|(path, contents)| ReleaseFile::new(path, contents)),
+        );
 
         let changelog = read_optional_text(&repository, &tree, &declaration.changelog.path)?;
         let changelog = crate::changelog::insert_version_section(
