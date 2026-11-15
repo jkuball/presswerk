@@ -1,6 +1,11 @@
 `prepare` writes one version section into the declared changelog and commits it with the version
 files. Publishers use that section as the release notes.
 
+The new section goes above the newest version section. When the changelog has no version heading
+Presswerk recognizes, such as one written by another tool, the section goes above its first level-2
+heading of any format, or at the end when it has none. A missing changelog is created with a
+`# Changelog` title.
+
 ## Path
 
 [`changelog.path`](/reference/options/#changelog.path) is the repository-relative changelog file.
