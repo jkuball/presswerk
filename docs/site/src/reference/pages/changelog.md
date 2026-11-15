@@ -115,7 +115,8 @@ The context is the same for every commit analyzer:
 - `version`: the version being prepared, as a string.
 - `unreleased`: the trimmed text under the [unreleased heading](#unreleased-notes), or an empty
   string, so templates use `{% if unreleased %}`. The built-in template puts it before the groups
-  and leaves out "No recorded changes." when there is text.
+  and leaves out "No recorded changes." when there is text. A template that does not use
+  `unreleased` leaves the unreleased section untouched.
 - `groups`: the release-note groups, ordered by level (`rank`), then by descending size, then by
   name.
   - `title`: the group heading.

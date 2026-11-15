@@ -12,7 +12,7 @@ fn creates_a_keep_a_changelog_file_and_reads_the_frozen_notes() {
     let changelog = insert_version_section(
         None,
         &ChangelogHeading::default(),
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &version,
         "2026-11-04",
         notes,
@@ -38,7 +38,7 @@ fn inserts_the_newest_version_without_changing_older_sections() {
     let changelog = insert_version_section(
         Some(old),
         &ChangelogHeading::default(),
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &version,
         "2026-11-04",
         "### Features\n\n- new feature\n",
@@ -72,7 +72,7 @@ fn moves_unreleased_text_into_the_new_section_and_keeps_the_heading() {
     let changelog = insert_version_section(
         Some(contents),
         &heading,
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &Version::new(1, 1, 0),
         "2026-11-04",
         &format!("{unreleased}\n"),
@@ -109,7 +109,7 @@ fn reads_unreleased_text_only_above_the_first_version_heading() {
         insert_version_section(
             Some(custom),
             &heading,
-            "## Upcoming",
+            Some("## Upcoming"),
             &Version::new(1, 0, 0),
             "2026-11-04",
             "Soon.\n",
@@ -125,7 +125,7 @@ fn reads_unreleased_text_only_above_the_first_version_heading() {
         insert_version_section(
             Some(first),
             &heading,
-            DEFAULT_UNRELEASED_HEADING,
+            Some(DEFAULT_UNRELEASED_HEADING),
             &Version::new(0, 1, 0),
             "2026-11-04",
             "First notes.\n",
@@ -142,7 +142,7 @@ fn round_trips_crlf_notes_without_changing_their_bytes() {
     let old = insert_version_section(
         None,
         &ChangelogHeading::default(),
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &old_version,
         "2026-10-01",
         old_notes,
@@ -154,7 +154,7 @@ fn round_trips_crlf_notes_without_changing_their_bytes() {
     let changelog = insert_version_section(
         Some(&old),
         &ChangelogHeading::default(),
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &new_version,
         "2026-11-04",
         new_notes,
@@ -178,7 +178,7 @@ fn rejects_duplicate_and_missing_versions() {
     let changelog = insert_version_section(
         None,
         &ChangelogHeading::default(),
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &version,
         "2026-11-04",
         "First.",
@@ -186,7 +186,7 @@ fn rejects_duplicate_and_missing_versions() {
     .unwrap();
 
     assert!(matches!(
-        insert_version_section(Some(&changelog), &ChangelogHeading::default(), DEFAULT_UNRELEASED_HEADING, &version, "2026-11-04", "Again.")
+        insert_version_section(Some(&changelog), &ChangelogHeading::default(), Some(DEFAULT_UNRELEASED_HEADING), &version, "2026-11-04", "Again.")
             .unwrap_err(),
         ChangelogError::DuplicateVersion(found) if found == version
     ));
@@ -202,7 +202,7 @@ fn rejects_duplicate_versions_when_reading() {
     let changelog = insert_version_section(
         None,
         &ChangelogHeading::default(),
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &version,
         "2026-11-04",
         "First.\n",
@@ -223,7 +223,7 @@ fn inserts_before_the_first_level_two_heading_of_another_format() {
     let changelog = insert_version_section(
         Some(old),
         &ChangelogHeading::default(),
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &Version::new(0, 39, 0),
         "2026-11-20",
         "- new feature\n",
@@ -250,7 +250,7 @@ fn appends_when_the_changelog_has_no_level_two_heading() {
     let changelog = insert_version_section(
         Some("# Changelog\n\nNothing yet.\n"),
         &ChangelogHeading::default(),
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &Version::new(1, 0, 0),
         "2026-11-20",
         "First.\n",
@@ -271,7 +271,7 @@ fn renders_and_finds_headings_in_a_declared_format() {
     let changelog = insert_version_section(
         Some(old),
         &heading,
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &Version::new(0, 39, 0),
         "2026-11-20",
         "### Feature\n\n- new feature\n",
@@ -289,7 +289,7 @@ fn renders_and_finds_headings_in_a_declared_format() {
         insert_version_section(
             Some(&changelog),
             &heading,
-            DEFAULT_UNRELEASED_HEADING,
+            Some(DEFAULT_UNRELEASED_HEADING),
             &Version::new(0, 38, 1),
             "2026-11-21",
             "Again.\n",
@@ -317,7 +317,7 @@ fn finds_headings_with_the_date_first_or_without_a_date() {
     let changelog = insert_version_section(
         Some("# Changelog\n\n### 1.0.0\n\nFirst.\n"),
         &without_date,
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &Version::new(1, 1, 0),
         "2026-11-20",
         "#### Features\n\n- second\n",
@@ -371,7 +371,7 @@ fn round_trips_headings_with_trailing_space_and_adjacent_or_hyphenated_dates() {
         let changelog = insert_version_section(
             None,
             &heading,
-            DEFAULT_UNRELEASED_HEADING,
+            Some(DEFAULT_UNRELEASED_HEADING),
             &prerelease,
             "2026-11-04",
             "Candidate.\n",
@@ -386,7 +386,7 @@ fn round_trips_headings_with_trailing_space_and_adjacent_or_hyphenated_dates() {
         let changelog = insert_version_section(
             Some(&changelog),
             &heading,
-            DEFAULT_UNRELEASED_HEADING,
+            Some(DEFAULT_UNRELEASED_HEADING),
             &stable,
             "2026-11-05",
             "Stable.\n",
@@ -412,7 +412,7 @@ fn rejects_dates_that_headings_cannot_find_again() {
             insert_version_section(
                 None,
                 &ChangelogHeading::default(),
-                DEFAULT_UNRELEASED_HEADING,
+                Some(DEFAULT_UNRELEASED_HEADING),
                 &Version::new(1, 0, 0),
                 date,
                 "Notes.\n",
@@ -431,7 +431,7 @@ fn refuses_notes_that_do_not_read_back_under_the_heading() {
         insert_version_section(
             None,
             &heading,
-            DEFAULT_UNRELEASED_HEADING,
+            Some(DEFAULT_UNRELEASED_HEADING),
             &Version::new(1, 0, 0),
             "2026-11-04",
             "### Features\n\n- new feature\n",
@@ -447,7 +447,7 @@ fn ends_a_section_at_a_higher_level_heading() {
     let changelog = insert_version_section(
         Some("# Changelog\n\n## Older history\n\nWritten by hand.\n"),
         &heading,
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &Version::new(1, 0, 0),
         "2026-11-04",
         "- first\n",
@@ -472,7 +472,7 @@ fn ignores_headings_inside_fenced_code_blocks() {
     let changelog = insert_version_section(
         Some("# Changelog\n\n```\n## [Example]\n```\n\n## v0.1.0 (2026-01-01)\n\nOld.\n"),
         &heading,
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &Version::new(1, 0, 0),
         "2026-11-04",
         notes,
@@ -532,7 +532,7 @@ fn renders_and_finds_headings_with_a_declared_date_format() {
         let changelog = insert_version_section(
             None,
             &heading,
-            DEFAULT_UNRELEASED_HEADING,
+            Some(DEFAULT_UNRELEASED_HEADING),
             &prerelease,
             "2026-11-04",
             "Candidate.\n",
@@ -541,7 +541,7 @@ fn renders_and_finds_headings_with_a_declared_date_format() {
         let changelog = insert_version_section(
             Some(&changelog),
             &heading,
-            DEFAULT_UNRELEASED_HEADING,
+            Some(DEFAULT_UNRELEASED_HEADING),
             &stable,
             "2026-11-05",
             "Stable.\n",
@@ -611,7 +611,7 @@ fn refuses_headings_that_split_into_more_than_one_version_and_date() {
     let error = insert_version_section(
         None,
         &heading,
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &Version::new(1, 2, 3),
         "2028-02-29",
         "Leap.\n",
@@ -648,7 +648,7 @@ fn keeps_comment_lines_of_code_blocks_in_the_unreleased_text() {
     let changelog = insert_version_section(
         Some(&contents),
         &heading,
-        DEFAULT_UNRELEASED_HEADING,
+        Some(DEFAULT_UNRELEASED_HEADING),
         &Version::new(1, 1, 0),
         "2026-11-04",
         &format!("{text}\n"),
@@ -659,5 +659,25 @@ fn keeps_comment_lines_of_code_blocks_in_the_unreleased_text() {
         format!(
             "# Changelog\n\n## [Unreleased]\n\n## [1.1.0] - 2026-11-04\n\n{text}\n\n## [1.0.0] - 2026-01-01\n\nFirst.\n"
         )
+    );
+}
+
+#[test]
+fn leaves_the_unreleased_section_untouched_without_an_unreleased_heading() {
+    let contents = "# Changelog\n\n## [Unreleased]\n\nManual notes.\n\n## [1.0.0] - 2026-01-01\n\nFirst release.\n";
+
+    let changelog = insert_version_section(
+        Some(contents),
+        &ChangelogHeading::default(),
+        None,
+        &Version::new(1, 1, 0),
+        "2026-11-04",
+        "Next release.\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        changelog,
+        "# Changelog\n\n## [Unreleased]\n\nManual notes.\n\n## [1.1.0] - 2026-11-04\n\nNext release.\n\n## [1.0.0] - 2026-01-01\n\nFirst release.\n"
     );
 }

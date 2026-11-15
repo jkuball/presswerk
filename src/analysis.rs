@@ -822,6 +822,14 @@ fn note_group(commit: &AnalyzedCommit) -> (&str, String) {
     }
 }
 
+/// Whether a changelog template uses the `unreleased` variable; only then does `prepare` move
+/// the hand-written unreleased text into the new section.
+pub fn template_uses_unreleased(template: &str) -> bool {
+    Environment::new()
+        .template_from_str(template)
+        .is_ok_and(|template| template.undeclared_variables(false).contains("unreleased"))
+}
+
 pub fn render_release_notes(
     analysis: &Analysis,
     version: &Version,
@@ -1136,6 +1144,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(notes, "No recorded changes.\n");
+    }
+
+    #[test]
+    fn detects_templates_that_use_unreleased() {
+        assert!(template_uses_unreleased(
+            declaration::DEFAULT_CHANGELOG_TEMPLATE
+        ));
+        assert!(template_uses_unreleased(
+            "{% if unreleased %}Notes{% endif %}"
+        ));
+        assert!(!template_uses_unreleased("{{ version }}"));
     }
 
     #[test]

@@ -232,6 +232,34 @@ fn moves_unreleased_text_into_the_prepared_section() {
 }
 
 #[test]
+fn a_template_without_unreleased_leaves_the_unreleased_section_untouched() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.0.0");
+    repository.write(
+        "CHANGELOG.md",
+        "# Changelog\n\n## [Unreleased]\n\nRead the migration notes.\n",
+    );
+    repository.commit("✨ Add migration");
+    let mut evaluated = evaluated(&repository, "0.0.0");
+    evaluated.declaration.changelog.template = "Release {{ version }}".into();
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+    assert_eq!(plan.notes, "Release 0.1.0");
+
+    let release = prepare_release(&plan).unwrap().unwrap();
+    let changelog = repository.git(["show", &format!("{release}:CHANGELOG.md")]);
+    assert!(changelog.starts_with("# Changelog\n\n## [0.1.0] - 2026-11-05\n\nRelease 0.1.0\n"));
+    assert!(changelog.ends_with("## [Unreleased]\n\nRead the migration notes."));
+}
+
+#[test]
 fn plans_the_first_release_from_the_implicit_zero_baseline() {
     let repository = GitRepo::new();
     write_version(&repository, "0.0.0");

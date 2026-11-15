@@ -272,7 +272,7 @@ fn unreleased_section(
 pub fn insert_version_section(
     contents: Option<&str>,
     heading: &ChangelogHeading,
-    unreleased_heading: &str,
+    unreleased_heading: Option<&str>,
     version: &Version,
     date: &str,
     notes: &str,
@@ -296,12 +296,13 @@ pub fn insert_version_section(
         return Ok(changelog);
     }
 
-    // The unreleased heading stays with an empty body; its text has moved into the notes.
+    // The unreleased heading stays with an empty body; its text has moved into the notes. Without
+    // `unreleased_heading`, the template does not use the text and the section stays untouched.
     // Without one, the section goes above the newest version heading or, without a recognized
     // version heading, above the first level-2 heading of any format, so changelogs written by
     // other tools get the new section above their history.
-    let (before, after) = if let Some((body_start, body_end)) =
-        unreleased_section(contents, heading, unreleased_heading)
+    let (before, after) = if let Some((body_start, body_end)) = unreleased_heading
+        .and_then(|unreleased_heading| unreleased_section(contents, heading, unreleased_heading))
     {
         (&contents[..body_start], &contents[body_end..])
     } else {
