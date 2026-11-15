@@ -252,7 +252,9 @@ fn heading_lines(contents: &str) -> impl Iterator<Item = (usize, usize, &str)> {
 }
 
 /// A code fence line: up to three spaces of indentation, then at least three backticks or
-/// tildes. Returns the marker, the run length, and the rest of the line.
+/// tildes, where a backtick fence has no backtick in the rest of the line, so inline code such
+/// as ```` ```presswerk plan``` ```` does not open one. Returns the marker, the run length, and
+/// the rest of the line.
 fn code_fence(line: &str) -> Option<(u8, usize, &str)> {
     let unindented = line.trim_start_matches(' ');
     if line.len() - unindented.len() > 3 {
@@ -266,7 +268,8 @@ fn code_fence(line: &str) -> Option<(u8, usize, &str)> {
         .bytes()
         .take_while(|byte| *byte == marker)
         .count();
-    (length >= 3).then(|| (marker, length, &unindented[length..]))
+    let rest = &unindented[length..];
+    (length >= 3 && !(marker == b'`' && rest.contains('`'))).then_some((marker, length, rest))
 }
 
 #[derive(Debug, PartialEq, Eq)]

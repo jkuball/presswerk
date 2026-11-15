@@ -407,3 +407,18 @@ fn ignores_headings_inside_fenced_code_blocks() {
         ChangelogError::MissingVersion(_)
     ));
 }
+
+#[test]
+fn does_not_take_inline_code_for_a_code_fence() {
+    let heading = ChangelogHeading::default();
+    let changelog = "# Changelog\n\n## [1.0.0] - 2026-11-04\n\n```presswerk plan``` now prints more.\n\n## [0.9.0] - 2026-10-01\n\nOlder.\n";
+
+    assert_eq!(
+        read_version_section(changelog, &heading, &Version::new(1, 0, 0)).unwrap(),
+        "```presswerk plan``` now prints more.\n"
+    );
+    assert_eq!(
+        read_version_section(changelog, &heading, &Version::new(0, 9, 0)).unwrap(),
+        "Older."
+    );
+}
