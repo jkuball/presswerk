@@ -49,7 +49,9 @@ English month names. Plain `{date}` means `{date:%Y-%m-%d}`:
 The format must write a full date that Presswerk can read back, so `%d.%m.` without a year or an
 unknown directive fails declaration validation. An existing heading matches only when its date
 parses in the declared format as a valid calendar date, so `## {version}-{date}` tells `1.2.3-rc.1`
-from the date. Older headings with another date format are not recognized; without any recognized
+from the date. A heading that splits into more than one valid version and date, such as
+`1.2.329.2.2028` for `{version}{date:%-d.%-m.%Y}`, is an error; put literal text between `{version}`
+and `{date}` then. Older headings with another date format are not recognized; without any recognized
 heading, the new section goes above the first level-2 heading, as described above. Only lines that
 match the whole format count: with the default, a hand-written `## [1.0.0]` without a date is not a
 version heading. Lines inside fenced code blocks are never headings.

@@ -107,38 +107,52 @@ impl ChangelogHeading {
     }
 
     /// The version of a heading line in this format, if the line is one. The date part must parse
-    /// in the declared date format, which keeps formats such as `{version}-{date}` unambiguous.
-    fn version(&self, line: &str) -> Option<Version> {
-        let rest = line
+    /// in the declared date format. A line that splits into more than one valid version and date
+    /// is an error, never a silent pick.
+    fn classify(&self, line: &str) -> Result<Option<Version>, ChangelogError> {
+        let Some(rest) = line
             .trim_end()
-            .strip_prefix(self.prefix.as_str())?
-            .strip_suffix(self.suffix.as_str())?;
-        let split_points = || {
-            rest.char_indices()
-                .map(|(index, _)| index)
-                .chain([rest.len()])
+            .strip_prefix(self.prefix.as_str())
+            .and_then(|rest| rest.strip_suffix(self.suffix.as_str()))
+        else {
+            return Ok(None);
         };
-        match &self.date {
-            None => rest.parse().ok(),
-            // The shortest date that parses wins, so the version keeps a prerelease such as
-            // `1.2.3-rc.1` in `{version}-{date}`.
-            Some((date_format, DatePosition::BeforeVersion)) => split_points().find_map(|index| {
-                date_format.parse_date(&rest[..index])?;
-                rest[index..]
-                    .strip_prefix(self.middle.as_str())?
-                    .parse()
-                    .ok()
-            }),
-            Some((date_format, DatePosition::AfterVersion)) => {
-                split_points().rev().find_map(|index| {
-                    date_format.parse_date(&rest[index..])?;
-                    rest[..index]
-                        .strip_suffix(self.middle.as_str())?
-                        .parse()
-                        .ok()
-                })
-            }
+        let Some((date_format, position)) = &self.date else {
+            return Ok(rest.parse().ok());
+        };
+        let mut candidates = rest
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain([rest.len()])
+            .filter_map(|index| {
+                let (version, date) = match position {
+                    DatePosition::BeforeVersion => (
+                        rest[index..].strip_prefix(self.middle.as_str())?,
+                        &rest[..index],
+                    ),
+                    DatePosition::AfterVersion => (
+                        rest[..index].strip_suffix(self.middle.as_str())?,
+                        &rest[index..],
+                    ),
+                };
+                date_format.parse_date(date)?;
+                version.parse::<Version>().ok()
+            });
+        let version = candidates.next();
+        if candidates.next().is_some() {
+            return Err(ChangelogError::AmbiguousHeading(line.trim_end().into()));
         }
+        Ok(version)
+    }
+
+    /// The version of a heading line; ambiguous lines were rejected by [`Self::check`] first.
+    fn version(&self, line: &str) -> Option<Version> {
+        self.classify(line).ok().flatten()
+    }
+
+    /// Fails on the first heading line that splits into more than one version and date.
+    fn check(&self, contents: &str) -> Result<(), ChangelogError> {
+        heading_lines(contents).try_for_each(|(_, _, line)| self.classify(line).map(|_| ()))
     }
 
     /// Whether a line is a heading of the declared level or a higher one, which ends a section.
@@ -220,6 +234,7 @@ pub fn insert_version_section(
     let date = parse_release_date(date).ok_or_else(|| ChangelogError::InvalidDate(date.into()))?;
 
     let contents = contents.unwrap_or("");
+    heading.check(contents)?;
     if find_version_heading(contents, heading, version)?.is_some() {
         return Err(ChangelogError::DuplicateVersion(version.clone()));
     }
@@ -282,6 +297,7 @@ pub fn read_version_section<'a>(
     heading: &ChangelogHeading,
     version: &Version,
 ) -> Result<&'a str, ChangelogError> {
+    heading.check(contents)?;
     let (_, heading_end) = find_version_heading(contents, heading, version)?
         .ok_or_else(|| ChangelogError::MissingVersion(version.clone()))?;
     let body_start = heading_end + line_ending_prefix_len(&contents[heading_end..]);
@@ -400,6 +416,7 @@ pub enum ChangelogError {
     MissingVersion(Version),
     InvalidDate(String),
     InvalidHeading(String),
+    AmbiguousHeading(String),
     UnreadableSection(Version),
 }
 
@@ -415,6 +432,10 @@ impl fmt::Display for ChangelogError {
             Self::UnreadableSection(version) => write!(
                 formatter,
                 "the changelog section of {version} does not read back as the written notes; changelog.template must not use headings of changelog.heading's level or higher"
+            ),
+            Self::AmbiguousHeading(line) => write!(
+                formatter,
+                "changelog heading {line:?} matches changelog.heading with more than one version and date; put literal text between {{version}} and {{date}}"
             ),
             Self::InvalidDate(date) => write!(formatter, "invalid changelog date {date:?}"),
             Self::InvalidHeading(format) => write!(

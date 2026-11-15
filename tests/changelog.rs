@@ -511,3 +511,32 @@ fn rejects_unsupported_date_formats() {
         );
     }
 }
+
+#[test]
+fn refuses_headings_that_split_into_more_than_one_version_and_date() {
+    let heading = ChangelogHeading::parse("## {version}{date:%-d.%-m.%Y}").unwrap();
+
+    let error = insert_version_section(
+        None,
+        &heading,
+        &Version::new(1, 2, 3),
+        "2028-02-29",
+        "Leap.\n",
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        ChangelogError::AmbiguousHeading("## 1.2.329.2.2028".into())
+    );
+    assert!(error.to_string().contains("literal text between"));
+    assert!(matches!(
+        read_version_section(
+            "## 1.2.329.2.2028\n\nLeap.\n",
+            &heading,
+            &Version::new(1, 2, 32)
+        )
+        .unwrap_err(),
+        ChangelogError::AmbiguousHeading(_)
+    ));
+}
