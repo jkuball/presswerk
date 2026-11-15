@@ -1,6 +1,7 @@
 mod support;
 
 use presswerk::analysis::{Analysis, Bump};
+use presswerk::changelog::ChangelogHeading;
 use presswerk::declaration::{
     Compression, OciHelmPublisher, OciImagePublisher, ReleaseDeclaration, Token, Username,
 };
@@ -241,7 +242,17 @@ fn validates_successors_changelog_and_the_analyzed_minimum() {
     };
     let changelog = "# Changelog\n\n## [1.3.0-rc.1] - 2026-11-05\n\nCandidate notes.\n";
 
-    validate_new_release(&candidate, &parent, Some(&parent), &analysis, changelog).unwrap();
+    let heading = ChangelogHeading::default();
+
+    validate_new_release(
+        &candidate,
+        &parent,
+        Some(&parent),
+        &analysis,
+        changelog,
+        &heading,
+    )
+    .unwrap();
 
     let too_small = Version::new(1, 2, 4);
     assert!(
@@ -251,6 +262,7 @@ fn validates_successors_changelog_and_the_analyzed_minimum() {
             Some(&parent),
             &analysis,
             "## [1.2.4] - 2026-11-05\n\nFix.\n",
+            &heading,
         )
         .unwrap_err()
         .to_string()
@@ -263,6 +275,7 @@ fn validates_successors_changelog_and_the_analyzed_minimum() {
             Some(&parent),
             &analysis,
             "## [1.4.0] - 2026-11-05\n\nJump.\n",
+            &heading,
         )
         .unwrap_err()
         .to_string()
@@ -275,6 +288,7 @@ fn validates_successors_changelog_and_the_analyzed_minimum() {
             Some(&parent),
             &analysis,
             "# Changelog\n",
+            &heading,
         )
         .unwrap_err()
         .to_string()

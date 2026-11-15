@@ -1,15 +1,43 @@
 `prepare` writes one version section into the declared changelog and commits it with the version
 files. Publishers use that section as the release notes.
 
-The new section goes above the newest version section. When the changelog has no version heading
-Presswerk recognizes, such as one written by another tool, the section goes above its first level-2
-heading of any format, or at the end when it has none. A missing changelog is created with a
-`# Changelog` title.
+The new section goes above the newest version section. When the changelog has no heading in the
+declared [heading](#heading) format, such as one written by another tool, the section goes above its
+first level-2 heading of any format, or at the end when it has none. A missing changelog is created
+with a `# Changelog` title.
 
 ## Path
 
 [`changelog.path`](/reference/options/#changelog.path) is the repository-relative changelog file.
 It defaults to `CHANGELOG.md`.
+
+## Heading
+
+[`changelog.heading`](/reference/options/#changelog.heading) is the version heading of a section.
+It is a plain replacement template, not MiniJinja, and defaults to `## [{version}] - {date}`:
+
+```nix presswerk-module
+{
+  changelog.heading = "## v{version} ({date})";
+}
+```
+
+The heading is one line that starts with `#`. It contains `{version}` exactly once and `{date}` at
+most once; other text is literal. The same format renders new headings and finds existing ones, so a
+changelog written by another tool in that format keeps it:
+
+```markdown
+# CHANGELOG
+
+## v0.39.0 (2026-11-20)
+…
+
+## v0.38.2 (2026-11-10)
+…
+```
+
+`prepare` refuses a version that already has a heading. Publishers read the section under the
+release version's heading, up to the next heading of the same level or the next version heading.
 
 ## Template
 

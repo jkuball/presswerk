@@ -38,6 +38,7 @@ fn declaration(version: &str) -> ReleaseDeclaration {
         changelog: Changelog {
             path: "CHANGELOG.md".into(),
             template: presswerk::declaration::DEFAULT_CHANGELOG_TEMPLATE.into(),
+            heading: presswerk::changelog::DEFAULT_HEADING.into(),
         },
         publishers: Publishers {
             github_release: BTreeMap::from([(

@@ -101,6 +101,7 @@ in
         changelog = {
           path = "CHANGELOG.md";
           template = defaultChangelogTemplate;
+          heading = "## [{version}] - {date}";
         };
         publishers.github-release.default = {
           apiUrl = "https://api.github.com";
@@ -138,6 +139,7 @@ in
         changelog = {
           path = "docs/NEWS.md";
           template = defaultChangelogTemplate;
+          heading = "## [{version}] - {date}";
         };
       };
     };
@@ -974,6 +976,34 @@ in
           "v{version}}"
         ];
       expected = [
+        false
+        false
+        false
+        false
+      ];
+    };
+
+    "test changelog headings are validated" = {
+      expr = map
+        (
+          heading:
+          succeeds (mkRelease {
+            inherit sourceRoot;
+            version = "1.2.3";
+            changelog.heading = heading;
+          })
+        )
+        [
+          "## v{version} ({date})"
+          "### {version}"
+          "v{version}"
+          "## {version} {version}"
+          "## {version} {date} {date}"
+          "## {version}\n{date}"
+        ];
+      expected = [
+        true
+        true
         false
         false
         false

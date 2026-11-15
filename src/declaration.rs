@@ -1,4 +1,5 @@
 use crate::analysis::Bump;
+use crate::changelog::{ChangelogError, ChangelogHeading, DEFAULT_HEADING};
 use minijinja::{Environment, UndefinedBehavior, value::Serde};
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -67,6 +68,9 @@ impl ReleaseDeclaration {
         self.tag.validate()?;
         self.analyzer.validate()?;
         validate_relative_path(&self.changelog.path)?;
+        self.changelog
+            .heading()
+            .map_err(|error| DeclarationError::Invalid(error.to_string()))?;
         validate_template(
             &self.changelog.template,
             "changelog.template",
@@ -473,6 +477,19 @@ pub struct Changelog {
     pub path: String,
     #[serde(default = "default_changelog_template")]
     pub template: String,
+    #[serde(default = "default_changelog_heading")]
+    pub heading: String,
+}
+
+impl Changelog {
+    /// The declared version heading; validation has already accepted its format.
+    pub fn heading(&self) -> Result<ChangelogHeading, ChangelogError> {
+        ChangelogHeading::parse(&self.heading)
+    }
+}
+
+fn default_changelog_heading() -> String {
+    DEFAULT_HEADING.into()
 }
 
 fn default_changelog_template() -> String {
@@ -821,6 +838,7 @@ mod tests {
             Changelog {
                 path: "CHANGELOG.md".into(),
                 template: DEFAULT_CHANGELOG_TEMPLATE.into(),
+                heading: DEFAULT_HEADING.into(),
             }
         );
         assert_eq!(
@@ -1133,6 +1151,28 @@ mod tests {
             let error = ReleaseDeclaration::from_json(&invalid).unwrap_err();
             assert!(error.to_string().contains("MiniJinja template"), "{error}");
         }
+    }
+
+    #[test]
+    fn validates_the_changelog_heading() {
+        let declared = declaration(|value| {
+            value["changelog"]["heading"] = json!("## v{version} ({date})");
+        });
+        assert_eq!(
+            ReleaseDeclaration::from_json(&declared)
+                .unwrap()
+                .changelog
+                .heading,
+            "## v{version} ({date})"
+        );
+
+        let invalid = declaration(|value| value["changelog"]["heading"] = json!("v{version}"));
+        assert!(
+            ReleaseDeclaration::from_json(&invalid)
+                .unwrap_err()
+                .to_string()
+                .contains("changelog.heading")
+        );
     }
 
     #[test]
