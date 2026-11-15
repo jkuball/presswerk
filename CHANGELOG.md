@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.14.0] - 2026-11-15
+
+### ✨ Introduce new features
+
+- (version): Default a Cargo workspace's lock file to its manifest's directory
+- (version): Add Cargo workspace version files
+
+### 🐛 Fix a bug
+
+- (version): Keep literal Cargo workspace members that an exclude covers
+
+### 📝 Add or update documentation
+
+- (version): Rewrap the Cargo workspace docs
+
+### ✅ Add, update, or pass tests
+
+- (version): Prepare a Cargo workspace and an own-version member in one lock file
+
 ## [0.13.0] - 2026-11-15
 
 ### ✨ Introduce new features
