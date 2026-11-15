@@ -23,7 +23,8 @@ It is a plain replacement template, not MiniJinja, and defaults to `## [{version
 ```
 
 The heading is one line that starts with `#`. It contains `{version}` exactly once and `{date}` at
-most once; other text is literal. The same format renders new headings and finds existing ones, so a
+most once; other text is literal, and trailing whitespace is ignored. `{date}` is the release date
+as `YYYY-MM-DD`, and only such a date matches it when Presswerk looks for headings. The same format renders new headings and finds existing ones, so a
 changelog written by another tool in that format keeps it:
 
 ```markdown

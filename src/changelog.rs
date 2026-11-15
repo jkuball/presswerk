@@ -26,7 +26,8 @@ impl ChangelogHeading {
         }
         let level = format.len() - format.trim_start_matches('#').len();
         Ok(Self {
-            format: format.into(),
+            // Trailing whitespace is not part of a heading; found lines are trimmed as well.
+            format: format.trim_end().into(),
             level,
         })
     }
@@ -39,23 +40,26 @@ impl ChangelogHeading {
             .join(&version.to_string())
     }
 
-    /// The version of a heading line in this format, if the line is one.
+    /// The version of a heading line in this format, if the line is one. `{date}` matches the
+    /// ISO date that `prepare` writes, which keeps formats such as `{version}-{date}` unambiguous.
     fn version(&self, line: &str) -> Option<Version> {
         let line = line.trim_end();
         let (before, after) = self.format.split_once(VERSION_PLACEHOLDER)?;
-        if let Some((prefix, middle)) = before.split_once(DATE_PLACEHOLDER) {
+        let version = if let Some((prefix, middle)) = before.split_once(DATE_PLACEHOLDER) {
             let rest = line.strip_prefix(prefix)?.strip_suffix(after)?;
-            split_candidates(rest, middle)
-                .filter(|(date, _)| !date.is_empty())
-                .find_map(|(_, version)| version.parse().ok())
+            let (date, rest) = (rest.get(..ISO_DATE_LEN)?, rest.get(ISO_DATE_LEN..)?);
+            is_iso_date(date).then_some(())?;
+            rest.strip_prefix(middle)?
         } else if let Some((middle, suffix)) = after.split_once(DATE_PLACEHOLDER) {
             let rest = line.strip_prefix(before)?.strip_suffix(suffix)?;
-            split_candidates(rest, middle)
-                .filter(|(_, date)| !date.is_empty())
-                .find_map(|(version, _)| version.parse().ok())
+            let split = rest.len().checked_sub(ISO_DATE_LEN)?;
+            let (rest, date) = (rest.get(..split)?, rest.get(split..)?);
+            is_iso_date(date).then_some(())?;
+            rest.strip_suffix(middle)?
         } else {
-            line.strip_prefix(before)?.strip_suffix(after)?.parse().ok()
-        }
+            line.strip_prefix(before)?.strip_suffix(after)?
+        };
+        version.parse().ok()
     }
 
     /// Whether a line is a heading of the declared level, which ends a section.
@@ -72,14 +76,15 @@ impl Default for ChangelogHeading {
     }
 }
 
-/// Every way to split `text` around one occurrence of a non-empty `separator`.
-fn split_candidates<'a>(
-    text: &'a str,
-    separator: &'a str,
-) -> impl Iterator<Item = (&'a str, &'a str)> + 'a {
-    text.match_indices(separator)
-        .filter(move |_| !separator.is_empty())
-        .map(move |(index, _)| (&text[..index], &text[index + separator.len()..]))
+const ISO_DATE_LEN: usize = "YYYY-MM-DD".len();
+
+/// Whether `date` has the shape of an ISO calendar date, `YYYY-MM-DD`.
+fn is_iso_date(date: &str) -> bool {
+    date.len() == ISO_DATE_LEN
+        && date.bytes().enumerate().all(|(index, byte)| match index {
+            4 | 7 => byte == b'-',
+            _ => byte.is_ascii_digit(),
+        })
 }
 
 pub fn insert_version_section(
@@ -89,7 +94,7 @@ pub fn insert_version_section(
     date: &str,
     notes: &str,
 ) -> Result<String, ChangelogError> {
-    if date.is_empty() || date.contains(['\r', '\n']) {
+    if !is_iso_date(date) {
         return Err(ChangelogError::InvalidDate(date.into()));
     }
 

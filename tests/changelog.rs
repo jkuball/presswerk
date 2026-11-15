@@ -283,3 +283,61 @@ fn rejects_invalid_heading_formats() {
         ));
     }
 }
+
+#[test]
+fn round_trips_headings_with_trailing_space_and_adjacent_or_hyphenated_dates() {
+    let prerelease = Version::parse("1.2.3-rc.1").unwrap();
+    let stable = Version::new(1, 2, 3);
+    for format in [
+        "## {version} ",
+        "## {version}-{date}",
+        "## {version}{date}",
+        "## {date}{version}",
+    ] {
+        let heading = ChangelogHeading::parse(format).unwrap();
+        let changelog =
+            insert_version_section(None, &heading, &prerelease, "2026-11-04", "Candidate.\n")
+                .unwrap();
+        assert_eq!(
+            read_version_section(&changelog, &heading, &prerelease).unwrap(),
+            "Candidate.\n",
+            "{format}"
+        );
+
+        let changelog = insert_version_section(
+            Some(&changelog),
+            &heading,
+            &stable,
+            "2026-11-05",
+            "Stable.\n",
+        )
+        .unwrap();
+        assert_eq!(
+            read_version_section(&changelog, &heading, &stable).unwrap(),
+            "Stable.\n",
+            "{format}"
+        );
+        assert_eq!(
+            read_version_section(&changelog, &heading, &prerelease).unwrap(),
+            "Candidate.\n",
+            "{format}"
+        );
+    }
+}
+
+#[test]
+fn rejects_dates_that_headings_cannot_find_again() {
+    for date in ["", "today", "2026-11-4", "2026-11-04\n"] {
+        assert!(matches!(
+            insert_version_section(
+                None,
+                &ChangelogHeading::default(),
+                &Version::new(1, 0, 0),
+                date,
+                "Notes.\n",
+            )
+            .unwrap_err(),
+            ChangelogError::InvalidDate(_)
+        ));
+    }
+}
