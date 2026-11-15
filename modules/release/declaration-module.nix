@@ -24,17 +24,17 @@
           (oci.tags ++ oci.aliases);
       registryPublishers =
         lib.mapAttrs'
-          (name: oci: lib.nameValuePair "oci.${name}" {
+          (name: oci: lib.nameValuePair "oci-image.${name}" {
             inherit (oci) repository;
             tags = renderOciTags oci;
           })
-          config.publishers.oci
+          config.publishers.oci-image
         // lib.mapAttrs'
-          (name: helm: lib.nameValuePair "helm.${name}" {
+          (name: helm: lib.nameValuePair "oci-helm.${name}" {
             inherit (helm) repository;
             tags = [ "1.2.3" ];
           })
-          config.publishers.helm;
+          config.publishers.oci-helm;
       sharedRegistryTags = lib.concatLists (lib.mapAttrsToList
         (name: publisher: lib.concatLists (lib.mapAttrsToList
           (other: otherPublisher:
@@ -330,7 +330,7 @@
           template: builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "0.0.0" "0" "0" "0" ] template) != null
         ) // { description = "OCI tag, optionally containing {version}, {major}, {minor}, or {patch}"; };
 
-      ociModule = { config, ... }: {
+      ociImageModule = { config, ... }: {
         options = registryPublisherOptions "images" // {
           platforms = mkOption {
             type = types.attrsOf artifactFile;
@@ -384,7 +384,7 @@
         };
       };
 
-      helmModule = {
+      ociHelmModule = {
         options = registryPublisherOptions "chart" // {
           chart = mkOption {
             type = artifactFile;
@@ -395,6 +395,16 @@
       };
     in
     {
+      imports = [
+        (lib.doRename {
+          from = [ "publishers" "oci" ];
+          to = [ "publishers" "oci-image" ];
+          visible = false;
+          warn = false;
+          use = lib.id;
+        })
+      ];
+
       options = {
         sourceRoot = mkOption {
           type = types.path;
@@ -521,8 +531,8 @@
           description = "GitHub Release publishers.";
         };
 
-        publishers.oci = mkOption {
-          type = types.attrsOf (types.submodule ociModule);
+        publishers.oci-image = mkOption {
+          type = types.attrsOf (types.submodule ociImageModule);
           default = { };
           example = lib.literalExpression ''
             {
@@ -540,8 +550,8 @@
           description = "OCI image publishers.";
         };
 
-        publishers.helm = mkOption {
-          type = types.attrsOf (types.submodule helmModule);
+        publishers.oci-helm = mkOption {
+          type = types.attrsOf (types.submodule ociHelmModule);
           default = { };
           example = lib.literalExpression ''
             {
@@ -554,7 +564,7 @@
               };
             }
           '';
-          description = "Helm chart publishers.";
+          description = "OCI Helm publishers.";
         };
 
         assertions = mkOption {
@@ -580,38 +590,38 @@
             (name: oci: [
               {
                 assertion = oci.platforms != { };
-                message = "publishers.oci.${name}.platforms must contain at least one image";
+                message = "publishers.oci-image.${name}.platforms must contain at least one image";
               }
               {
                 assertion = oci.tags != [ ] && lib.all (lib.hasInfix "{version}") oci.tags;
-                message = "publishers.oci.${name}.tags must contain {version} in every tag, and at least one tag, so every release has a tag of its own; declare tags that follow other versions under aliases";
+                message = "publishers.oci-image.${name}.tags must contain {version} in every tag, and at least one tag, so every release has a tag of its own; declare tags that follow other versions under aliases";
               }
               {
                 assertion = !lib.any (lib.hasInfix "{version}") oci.aliases;
-                message = "publishers.oci.${name}.aliases must not contain {version}, which names a single version; declare such tags under tags";
+                message = "publishers.oci-image.${name}.aliases must not contain {version}, which names a single version; declare such tags under tags";
               }
               {
                 assertion = oci.compression.gzip.enable != oci.compression.zstd.enable;
-                message = "publishers.oci.${name}.compression needs exactly one of gzip and zstd enabled";
+                message = "publishers.oci-image.${name}.compression needs exactly one of gzip and zstd enabled";
               }
               {
                 assertion = (oci.username.secret == null) != (oci.username.value == null);
-                message = "publishers.oci.${name}.username needs exactly one of secret and value";
+                message = "publishers.oci-image.${name}.username needs exactly one of secret and value";
               }
               {
                 assertion = lib.allUnique (renderOciTags oci);
-                message = "publishers.oci.${name}.tags and aliases must not render to the same tag";
+                message = "publishers.oci-image.${name}.tags and aliases must not render to the same tag";
               }
             ])
-            config.publishers.oci)
+            config.publishers.oci-image)
         ++ lib.concatLists (lib.mapAttrsToList
           (name: helm: [
             {
               assertion = (helm.username.secret == null) != (helm.username.value == null);
-              message = "publishers.helm.${name}.username needs exactly one of secret and value";
+              message = "publishers.oci-helm.${name}.username needs exactly one of secret and value";
             }
           ])
-          config.publishers.helm)
+          config.publishers.oci-helm)
         ++ [
           {
             assertion = sharedRegistryTags == [ ];

@@ -313,14 +313,14 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
     }
     if let (Some(tag), Some(version)) = (&plan.next_tag, &plan.next_version) {
         output.push_str("\npublishers\n");
-        if plan.publishers.oci.is_empty()
-            && plan.publishers.helm.is_empty()
+        if plan.publishers.oci_image.is_empty()
+            && plan.publishers.oci_helm.is_empty()
             && plan.publishers.github_release.is_empty()
         {
             output.push_str("  none\n");
         }
-        for (name, publisher) in &plan.publishers.oci {
-            let _ = writeln!(output, "  oci.{name}  {}", publisher.repository);
+        for (name, publisher) in &plan.publishers.oci_image {
+            let _ = writeln!(output, "  oci-image.{name}  {}", publisher.repository);
             // Store paths are left out: the release commit's images get their own paths.
             for platform in publisher.platforms.keys() {
                 let _ = writeln!(output, "    image    {platform}");
@@ -335,8 +335,8 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
                 let _ = writeln!(output, "    {kind:<8} {}", tag.name());
             }
         }
-        for (name, publisher) in &plan.publishers.helm {
-            let _ = writeln!(output, "  helm.{name}  {}", publisher.repository);
+        for (name, publisher) in &plan.publishers.oci_helm {
+            let _ = writeln!(output, "  oci-helm.{name}  {}", publisher.repository);
             let _ = writeln!(
                 output,
                 "    tag      {}:{}",

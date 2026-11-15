@@ -1,4 +1,4 @@
-//! The OCI publisher: pushes images built with Nix to an OCI registry under the release's tags.
+//! The OCI image publisher: pushes images built with Nix to an OCI registry under the release's tags.
 //!
 //! Images come as Docker image archives, the output of `dockerTools.buildImage` and
 //! `buildLayeredImage` (a tarball, possibly compressed) or `streamLayeredImage` (an executable
@@ -228,7 +228,8 @@ fn is_valid_tag(tag: &str) -> bool {
 pub fn validate_tag_templates(tags: &[String], aliases: &[String]) -> Result<(), String> {
     if tags.is_empty() {
         return Err(
-            "an OCI publisher needs at least one tag, so every release has a tag of its own".into(),
+            "an OCI image publisher needs at least one tag, so every release has a tag of its own"
+                .into(),
         );
     }
     if let Some(tag) = tags.iter().find(|tag| !tag.contains(VERSION_PLACEHOLDER)) {
@@ -1289,7 +1290,7 @@ pub enum TagState {
 
 /// Pushes one image index per release and points every tag at it.
 #[derive(Debug)]
-pub struct OciPublisher {
+pub struct OciImagePublisher {
     registry: RegistryClient,
     repository: String,
     tags: Vec<String>,
@@ -1306,10 +1307,10 @@ struct RemoteIndex {
     bytes: Vec<u8>,
 }
 
-impl OciPublisher {
+impl OciImagePublisher {
     /// Build the publisher from its declaration; its images must already be fetched.
     pub fn from_declaration(
-        declaration: &crate::declaration::OciPublisher,
+        declaration: &crate::declaration::OciImagePublisher,
     ) -> Result<Self, PublicationError> {
         let credentials =
             Credentials::from_environment(&declaration.username, &declaration.password.secret)?;
@@ -1608,7 +1609,7 @@ pub(crate) fn annotated_version(manifest: &[u8]) -> Option<Version> {
     Version::parse(annotated.annotations.get(VERSION_ANNOTATION)?).ok()
 }
 
-impl Publisher for OciPublisher {
+impl Publisher for OciImagePublisher {
     fn state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
         let inspection = self.inspect(release)?;
         if let Some(conflict) = inspection.conflict() {

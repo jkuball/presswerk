@@ -73,25 +73,25 @@ impl ReleaseDeclaration {
             }
             publisher.validate()?;
         }
-        for (name, publisher) in &self.publishers.oci {
+        for (name, publisher) in &self.publishers.oci_image {
             if name.is_empty() {
                 return Err(DeclarationError::Invalid(
-                    "OCI publisher names must not be empty".into(),
+                    "OCI image publisher names must not be empty".into(),
                 ));
             }
             publisher
                 .validate()
-                .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?;
+                .map_err(|error| DeclarationError::Invalid(format!("oci-image.{name}: {error}")))?;
         }
-        for (name, publisher) in &self.publishers.helm {
+        for (name, publisher) in &self.publishers.oci_helm {
             if name.is_empty() {
                 return Err(DeclarationError::Invalid(
-                    "Helm publisher names must not be empty".into(),
+                    "OCI Helm publisher names must not be empty".into(),
                 ));
             }
             publisher
                 .validate()
-                .map_err(|error| DeclarationError::Invalid(format!("helm.{name}: {error}")))?;
+                .map_err(|error| DeclarationError::Invalid(format!("oci-helm.{name}: {error}")))?;
         }
         self.validate_publisher_tags(&Version::new(1, 2, 3))
     }
@@ -111,21 +111,21 @@ impl ReleaseDeclaration {
             }
             Ok(())
         };
-        for (name, publisher) in &self.publishers.oci {
+        for (name, publisher) in &self.publishers.oci_image {
             for tag in crate::oci::render_tags(&publisher.tags, &publisher.aliases, version)
-                .map_err(|error| DeclarationError::Invalid(format!("oci.{name}: {error}")))?
+                .map_err(|error| DeclarationError::Invalid(format!("oci-image.{name}: {error}")))?
             {
                 register(
-                    format!("oci.{name}"),
+                    format!("oci-image.{name}"),
                     &publisher.repository,
                     tag.name().into(),
                 )?;
             }
         }
-        for (name, publisher) in &self.publishers.helm {
+        for (name, publisher) in &self.publishers.oci_helm {
             let tag = crate::helm::validate_tag(version)
-                .map_err(|error| DeclarationError::Invalid(format!("helm.{name}: {error}")))?;
-            register(format!("helm.{name}"), &publisher.repository, tag)?;
+                .map_err(|error| DeclarationError::Invalid(format!("oci-helm.{name}: {error}")))?;
+            register(format!("oci-helm.{name}"), &publisher.repository, tag)?;
         }
 
         Ok(())
@@ -456,18 +456,18 @@ pub struct Changelog {
 pub struct Publishers {
     #[serde(rename = "github-release")]
     pub github_release: BTreeMap<String, GithubReleasePublisher>,
-    /// Missing in declarations written before the OCI publisher existed.
-    #[serde(default)]
-    pub oci: BTreeMap<String, OciPublisher>,
-    /// Missing in declarations written before the Helm publisher existed.
-    #[serde(default)]
-    pub helm: BTreeMap<String, HelmPublisher>,
+    /// Missing in declarations written before the OCI image publisher existed.
+    #[serde(rename = "oci-image", alias = "oci", default)]
+    pub oci_image: BTreeMap<String, OciImagePublisher>,
+    /// Missing in declarations written before the OCI Helm publisher existed.
+    #[serde(rename = "oci-helm", default)]
+    pub oci_helm: BTreeMap<String, OciHelmPublisher>,
 }
 
 /// A packaged Helm chart pushed to an OCI registry under its release version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct HelmPublisher {
+pub struct OciHelmPublisher {
     /// Full registry repository path, ending in the chart name.
     pub repository: String,
     /// Chart archive written by `helm package`, as a path in the Nix store.
@@ -479,7 +479,7 @@ pub struct HelmPublisher {
     pub password: Token,
 }
 
-impl HelmPublisher {
+impl OciHelmPublisher {
     fn validate(&self) -> Result<(), String> {
         crate::oci::RepositoryReference::parse(&self.repository)?;
         if !self.chart.starts_with('/') {
@@ -495,7 +495,7 @@ impl HelmPublisher {
 /// Container images pushed to an OCI registry under tags rendered from the version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct OciPublisher {
+pub struct OciImagePublisher {
     /// Registry host and repository path, such as `ghcr.io/owner/project`.
     pub repository: String,
     /// The image for each platform, such as `linux/amd64`, each a path in the Nix store.
@@ -541,11 +541,11 @@ pub enum Username {
     Value(String),
 }
 
-impl OciPublisher {
+impl OciImagePublisher {
     fn validate(&self) -> Result<(), String> {
         crate::oci::RepositoryReference::parse(&self.repository)?;
         if self.platforms.is_empty() {
-            return Err("an OCI publisher needs at least one image".into());
+            return Err("an OCI image publisher needs at least one image".into());
         }
         for (platform, path) in &self.platforms {
             crate::oci::Platform::parse(platform)?;
@@ -931,8 +931,8 @@ mod tests {
         let empty = declaration(|value| value["publishers"]["github-release"] = json!({}));
         let declaration = ReleaseDeclaration::from_json(&empty).unwrap();
         assert!(declaration.publishers.github_release.is_empty());
-        assert!(declaration.publishers.oci.is_empty());
-        assert!(declaration.publishers.helm.is_empty());
+        assert!(declaration.publishers.oci_image.is_empty());
+        assert!(declaration.publishers.oci_helm.is_empty());
     }
 
     #[test]
@@ -1151,10 +1151,10 @@ mod tests {
     }
 
     #[test]
-    fn decodes_and_validates_helm_publishers() {
+    fn decodes_and_validates_oci_helm_publishers() {
         let with = |repository: &str, chart: &str| {
             declaration(|value| {
-                value["publishers"]["helm"] = json!({
+                value["publishers"]["oci-helm"] = json!({
                     "default": {
                         "repository": repository,
                         "chart": chart,
@@ -1170,7 +1170,7 @@ mod tests {
             "/nix/store/abc-project-1.2.3.tgz",
         ))
         .unwrap();
-        let publisher = &decoded.publishers.helm["default"];
+        let publisher = &decoded.publishers.oci_helm["default"];
         assert!(publisher.public);
         assert_eq!(publisher.chart, "/nix/store/abc-project-1.2.3.tgz");
 
@@ -1194,9 +1194,47 @@ mod tests {
     }
 
     #[test]
-    fn helm_and_oci_publishers_do_not_share_the_release_tag() {
+    fn legacy_oci_declarations_decode_but_mixed_names_do_not() {
+        let publishers = json!({
+            "default": {
+                "repository": "ghcr.io/owner/project",
+                "platforms": { "linux/amd64": "/nix/store/abc-image.tar.gz" },
+                "tags": ["{version}"],
+                "aliases": [],
+                "username": { "secret": "REGISTRY_USERNAME" },
+                "password": { "secret": "REGISTRY_TOKEN" }
+            }
+        });
+        let legacy = declaration(|value| value["publishers"]["oci"] = publishers.clone());
+        let decoded = ReleaseDeclaration::from_json(&legacy).unwrap();
+        assert!(decoded.publishers.oci_image.contains_key("default"));
+        let normalized = serde_json::to_value(decoded).unwrap();
+        assert!(normalized["publishers"].get("oci").is_none());
+        assert!(normalized["publishers"].get("oci-image").is_some());
+
+        let mixed = declaration(|value| {
+            value["publishers"]["oci"] = publishers.clone();
+            value["publishers"]["oci-image"] = publishers;
+        });
+        assert!(matches!(
+            ReleaseDeclaration::from_json(&mixed).unwrap_err(),
+            DeclarationError::IncompatibleUnstableSchema(_)
+        ));
+    }
+
+    #[test]
+    fn legacy_helm_declarations_do_not_decode() {
+        let declaration = declaration(|value| value["publishers"]["helm"] = json!({}));
+        assert!(matches!(
+            ReleaseDeclaration::from_json(&declaration).unwrap_err(),
+            DeclarationError::IncompatibleUnstableSchema(_)
+        ));
+    }
+
+    #[test]
+    fn oci_helm_and_oci_image_publishers_do_not_share_the_release_tag() {
         let json = declaration(|value| {
-            value["publishers"]["helm"] = json!({
+            value["publishers"]["oci-helm"] = json!({
                 "default": {
                     "repository": "ghcr.io/owner/charts/project",
                     "chart": "/nix/store/abc-project.tgz",
@@ -1204,7 +1242,7 @@ mod tests {
                     "password": { "secret": "REGISTRY_TOKEN" }
                 }
             });
-            value["publishers"]["oci"] = json!({
+            value["publishers"]["oci-image"] = json!({
                 "default": {
                     "repository": "ghcr.io/owner/charts/project",
                     "platforms": { "linux/amd64": "/nix/store/abc-image.tar.gz" },
@@ -1219,12 +1257,15 @@ mod tests {
         let error = ReleaseDeclaration::from_json(&json)
             .unwrap_err()
             .to_string();
-        assert!(error.contains("oci.default and helm.default"), "{error}");
+        assert!(
+            error.contains("oci-image.default and oci-helm.default"),
+            "{error}"
+        );
         assert!(error.contains("both render 1.2.3"), "{error}");
     }
 
     #[test]
-    fn oci_publishers_of_one_repository_share_no_image_tag() {
+    fn oci_image_publishers_of_one_repository_share_no_image_tag() {
         let oci = |repository: &str, tags: Value, aliases: Value| {
             json!({
                 "repository": repository,
@@ -1242,7 +1283,7 @@ mod tests {
                 json!(["latest"]),
             );
             declaration(|value| {
-                value["publishers"]["oci"] = json!({ "default": default, "debug": debug });
+                value["publishers"]["oci-image"] = json!({ "default": default, "debug": debug });
             })
         };
         assert!(
@@ -1269,8 +1310,9 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(
-            error.contains("oci.debug and oci.default both push to ghcr.io/owner/project")
-                && error.contains("both render latest"),
+            error.contains(
+                "oci-image.debug and oci-image.default both push to ghcr.io/owner/project"
+            ) && error.contains("both render latest"),
             "{error}"
         );
     }

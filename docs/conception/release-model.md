@@ -217,7 +217,7 @@ lookup is:
    release is [pending](#pending-releases); a tag pointing elsewhere is a conflict;
 1. verify that the previous release is fully published: its tag must point to the release
    commit on the remote, and every publisher it declared must report its own completion signal.
-   A GitHub Release must exist and be published, not missing or a draft; an OCI publisher's
+   A GitHub Release must exist and be published, not missing or a draft; an OCI image publisher's
    version tags must point to an image index annotated with the version. A release without
    publishers is complete with its tag alone. A network or authentication error must not be
    mistaken for a complete release. The tag format and destinations come from

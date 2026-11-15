@@ -3,8 +3,8 @@ use crate::changelog::read_version_section;
 use crate::classification::{CommitClassification, classify_commit};
 use crate::declaration::{
     DeclarationError, GithubReleasePublisher as GithubReleaseDeclaration,
-    HelmPublisher as HelmDeclaration, OciPublisher as OciDeclaration, ReleaseDeclaration,
-    UNSTABLE_SCHEMA_VERSION,
+    OciHelmPublisher as OciHelmDeclaration, OciImagePublisher as OciImageDeclaration,
+    ReleaseDeclaration, UNSTABLE_SCHEMA_VERSION,
 };
 use crate::evaluation::{EvaluationError, evaluate_release_declaration};
 use crate::release_commit::TrustedPredecessor;
@@ -1118,18 +1118,18 @@ pub fn publish_to_remote(
         });
     let images = declaration
         .publishers
-        .oci
+        .oci_image
         .iter()
         .flat_map(|(name, publisher)| {
             publisher.platforms.iter().map(move |(platform, path)| {
-                (format!("oci.{name} image {platform}"), path.as_str())
+                (format!("oci-image.{name} image {platform}"), path.as_str())
             })
         });
     let charts = declaration
         .publishers
-        .helm
+        .oci_helm
         .iter()
-        .map(|(name, publisher)| (format!("helm.{name} chart"), publisher.chart.as_str()));
+        .map(|(name, publisher)| (format!("oci-helm.{name} chart"), publisher.chart.as_str()));
     crate::artifacts::fetch(images.chain(charts).chain(assets))
         .map_err(|error| PublicationError::new(error.to_string()))?;
 
@@ -1155,18 +1155,18 @@ pub fn publish_to_remote(
     // The forge release comes last, so it never announces a release whose images are missing.
     let mut publishers: Vec<Box<dyn Publisher>> = Vec::new();
     let mut publisher_names = Vec::new();
-    for (name, publisher) in &declaration.publishers.oci {
-        publishers.push(Box::new(crate::oci::OciPublisher::from_declaration(
+    for (name, publisher) in &declaration.publishers.oci_image {
+        publishers.push(Box::new(crate::oci::OciImagePublisher::from_declaration(
             publisher,
         )?));
-        publisher_names.push(format!("oci.{name}"));
+        publisher_names.push(format!("oci-image.{name}"));
     }
-    for (name, publisher) in &declaration.publishers.helm {
-        publishers.push(Box::new(crate::helm::HelmPublisher::from_declaration(
+    for (name, publisher) in &declaration.publishers.oci_helm {
+        publishers.push(Box::new(crate::helm::OciHelmPublisher::from_declaration(
             publisher,
             &release.version,
         )?));
-        publisher_names.push(format!("helm.{name}"));
+        publisher_names.push(format!("oci-helm.{name}"));
     }
     for (name, publisher) in &declaration.publishers.github_release {
         publishers.push(Box::new(GithubPublisher::from_declaration(publisher)?));
@@ -1512,7 +1512,7 @@ fn registry_manifest(
 
 #[allow(clippy::too_many_arguments)]
 ///
-/// `release_state` reads a GitHub Release by tag; `oci_manifest` reads the manifest an OCI tag
+/// `release_state` reads a GitHub Release by tag; `oci_image_manifest` reads the manifest an OCI tag
 /// points to, or `None` if the registry has no such tag.
 pub fn verify_predecessor_with<E, F, O>(
     repository_path: &Path,
@@ -1523,7 +1523,7 @@ pub fn verify_predecessor_with<E, F, O>(
     trusted_predecessor: Option<&TrustedPredecessor>,
     evaluate_declaration: E,
     release_state: F,
-    oci_manifest: O,
+    oci_image_manifest: O,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError>
 where
     E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
@@ -1532,7 +1532,7 @@ where
         &str,
         &Version,
     ) -> Result<GithubReleaseState, PublicationError>,
-    O: FnMut(&OciDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
+    O: FnMut(&OciImageDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
 {
     verify_predecessor_with_mode(
         repository_path,
@@ -1544,10 +1544,10 @@ where
         true,
         evaluate_declaration,
         release_state,
-        oci_manifest,
+        oci_image_manifest,
         |publisher, _| {
             Err(PublicationError::new(format!(
-                "no Helm manifest reader was provided for {}",
+                "no OCI Helm manifest reader was provided for {}",
                 publisher.repository
             )))
         },
@@ -1556,7 +1556,7 @@ where
 
 /// Verify a predecessor while supplying readers for every built-in publisher.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_predecessor_with_helm<E, F, O, H>(
+pub fn verify_predecessor_with_oci_helm<E, F, O, H>(
     repository_path: &Path,
     candidate: Oid,
     previous_version: &Version,
@@ -1565,8 +1565,8 @@ pub fn verify_predecessor_with_helm<E, F, O, H>(
     trusted_predecessor: Option<&TrustedPredecessor>,
     evaluate_declaration: E,
     release_state: F,
-    oci_manifest: O,
-    helm_manifest: H,
+    oci_image_manifest: O,
+    oci_helm_manifest: H,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError>
 where
     E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
@@ -1575,8 +1575,8 @@ where
         &str,
         &Version,
     ) -> Result<GithubReleaseState, PublicationError>,
-    O: FnMut(&OciDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
-    H: FnMut(&HelmDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
+    O: FnMut(&OciImageDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
+    H: FnMut(&OciHelmDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
 {
     verify_predecessor_with_mode(
         repository_path,
@@ -1588,8 +1588,8 @@ where
         true,
         evaluate_declaration,
         release_state,
-        oci_manifest,
-        helm_manifest,
+        oci_image_manifest,
+        oci_helm_manifest,
     )
 }
 
@@ -1604,8 +1604,8 @@ fn verify_predecessor_with_mode<E, F, O, H>(
     verify_completion: bool,
     mut evaluate_declaration: E,
     mut release_state: F,
-    mut oci_manifest: O,
-    mut helm_manifest: H,
+    mut oci_image_manifest: O,
+    mut oci_helm_manifest: H,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError>
 where
     E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
@@ -1614,8 +1614,8 @@ where
         &str,
         &Version,
     ) -> Result<GithubReleaseState, PublicationError>,
-    O: FnMut(&OciDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
-    H: FnMut(&HelmDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
+    O: FnMut(&OciImageDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
+    H: FnMut(&OciHelmDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
 {
     let repository = Repository::open(repository_path).map_err(|error| {
         PublicationError::new(format!("could not open Git repository: {error}"))
@@ -1731,14 +1731,14 @@ where
         }
     }
     // Only version tags count: aliases are best effort and may point to another release.
-    for (name, publisher) in &previous_declaration.publishers.oci {
+    for (name, publisher) in &previous_declaration.publishers.oci_image {
         let tags = crate::oci::render_tags(&publisher.tags, &publisher.aliases, previous_version)
-            .map_err(|error| PublicationError::new(format!("oci.{name}: {error}")))?;
+            .map_err(|error| PublicationError::new(format!("oci-image.{name}: {error}")))?;
         for tag in tags {
             let crate::oci::OciTag::Version(tag) = tag else {
                 continue;
             };
-            let found = match oci_manifest(publisher, &tag)? {
+            let found = match oci_image_manifest(publisher, &tag)? {
                 None => "the tag is missing".to_owned(),
                 Some(manifest) => match crate::oci::annotated_version(&manifest) {
                     Some(version) if version == *previous_version => continue,
@@ -1748,14 +1748,14 @@ where
                 },
             };
             return Err(PublicationError::new(format!(
-                "previous OCI release {}:{tag} (oci.{name}) is incomplete: {found}, expected version {previous_version}",
+                "previous OCI image release {}:{tag} (oci-image.{name}) is incomplete: {found}, expected version {previous_version}",
                 publisher.repository
             )));
         }
     }
-    for (name, publisher) in &previous_declaration.publishers.helm {
+    for (name, publisher) in &previous_declaration.publishers.oci_helm {
         let tag = crate::helm::tag(previous_version);
-        let found = match helm_manifest(publisher, &tag)? {
+        let found = match oci_helm_manifest(publisher, &tag)? {
             None => "the tag is missing".to_owned(),
             Some(manifest)
                 if crate::helm::is_release_manifest(
@@ -1769,7 +1769,7 @@ where
             Some(_) => "the tag does not point to this release's Helm chart".to_owned(),
         };
         return Err(PublicationError::new(format!(
-            "previous Helm release {}:{tag} (helm.{name}) is incomplete: {found}, expected version {previous_version} from {}",
+            "previous OCI Helm release {}:{tag} (oci-helm.{name}) is incomplete: {found}, expected version {previous_version} from {}",
             publisher.repository, publisher.chart
         )));
     }
@@ -1966,7 +1966,7 @@ mod tests {
               "changelog": { "path": "CHANGELOG.md" },
               "publishers": {
                 "github-release": {},
-                "oci": {
+                "oci-image": {
                   "image": {
                     "repository": "ghcr.io/owner/project",
                     "platforms": {
@@ -1978,7 +1978,7 @@ mod tests {
                     "password": { "secret": "REGISTRY_TOKEN" }
                   }
                 },
-                "helm": {
+                "oci-helm": {
                   "chart": {
                     "repository": "ghcr.io/owner/project",
                     "chart": "/nix/store/00000000000000000000000000000000-chart.tgz",
@@ -1995,7 +1995,10 @@ mod tests {
             .unwrap_err()
             .to_string();
 
-        assert!(error.contains("oci.image and helm.chart"), "{error}");
+        assert!(
+            error.contains("oci-image.image and oci-helm.chart"),
+            "{error}"
+        );
         assert!(error.contains("both render 0.1.0"), "{error}");
     }
 }

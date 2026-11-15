@@ -1,11 +1,11 @@
 import cliPage from './pages/cli.md?raw';
 import declarationSchemaPage from './pages/declaration-schema.md?raw';
 import githubReleasePage from './pages/github-release.md?raw';
-import helmPage from './pages/helm.md?raw';
+import ociHelmPage from './pages/oci-helm.md?raw';
 import analyzersPage from './pages/analyzers.md?raw';
 import conventionalCommitsPage from './pages/conventional-commits.md?raw';
 import gitmojiPage from './pages/gitmoji.md?raw';
-import ociPage from './pages/oci.md?raw';
+import ociImagePage from './pages/oci-image.md?raw';
 import publishersPage from './pages/publishers.md?raw';
 import type { CliArgument, CliCommand, Literal, ReferenceData, ReleaseOption } from './data';
 
@@ -168,21 +168,21 @@ export const referencePages: ReferencePage[] = [
       }),
   },
   {
-    slug: 'reference/publishers/helm',
-    title: 'Helm publisher',
-    description: 'The Helm publisher: packaged charts, OCI artifact format, retry behavior, credentials, and options.',
+    slug: 'reference/publishers/oci-helm',
+    title: 'OCI Helm publisher',
+    description: 'The OCI Helm publisher: packaged charts, OCI artifact format, retry behavior, credentials, and options.',
     markdown: ({ options }, base, target) =>
-      fill(helmPage, base, {
-        options: optionList(options, 'publishers.helm.', 3, target),
+      fill(ociHelmPage, base, {
+        options: optionList(options, 'publishers.oci-helm.', 3, target),
       }),
   },
   {
-    slug: 'reference/publishers/oci',
-    title: 'OCI publisher',
-    description: 'The OCI publisher for container images: images, tags and aliases, behavior, credentials, and options.',
+    slug: 'reference/publishers/oci-image',
+    title: 'OCI image publisher',
+    description: 'The OCI image publisher for container images: images, tags and aliases, behavior, credentials, and options.',
     markdown: ({ options }, base, target) =>
-      fill(ociPage, base, {
-        options: optionList(options, 'publishers.oci.', 3, target),
+      fill(ociImagePage, base, {
+        options: optionList(options, 'publishers.oci-image.', 3, target),
       }),
   },
   {

@@ -177,14 +177,14 @@ in
           reference/options
           reference/publishers
           reference/publishers/github-release
-          reference/publishers/helm
-          reference/publishers/oci
+          reference/publishers/oci-helm
+          reference/publishers/oci-image
           reference/version-files
         "
         for page in $pages; do
           test -s "$site/$page.md" || { echo "missing Markdown page $page.md" >&2; exit 1; }
         done
-        for page in options declaration-schema cli publishers publishers/github-release publishers/helm publishers/oci analyzers analyzers/gitmoji analyzers/conventional-commits; do
+        for page in options declaration-schema cli publishers publishers/github-release publishers/oci-helm publishers/oci-image analyzers analyzers/gitmoji analyzers/conventional-commits; do
           test -s "$site/reference/$page/index.html" || { echo "missing reference page $page" >&2; exit 1; }
         done
         test -s "$site/llms.txt"
@@ -199,9 +199,10 @@ in
         grep -q 'id="tag.format"' "$site/reference/options/index.html"
         # Release options in Nix examples link to the options reference, filtered to the option.
         grep -q 'href="/reference/options/?filter=versionFiles.cargo" class="pw-code-link"' "$site/index.html"
-        grep -q 'href="/reference/options/?filter=publishers.oci.%3Cname%3E.platforms" class="pw-code-link"' "$site/reference/publishers/oci/index.html"
-        grep -q 'href="/reference/options/?filter=publishers.helm.%3Cname%3E.chart" class="pw-code-link"' "$site/reference/publishers/helm/index.html"
+        grep -q 'href="/reference/options/?filter=publishers.oci-image.%3Cname%3E.platforms" class="pw-code-link"' "$site/reference/publishers/oci-image/index.html"
+        grep -q 'href="/reference/options/?filter=publishers.oci-helm.%3Cname%3E.chart" class="pw-code-link"' "$site/reference/publishers/oci-helm/index.html"
         grep -q 'id="publishers.github-release.name.token.secret"' "$site/reference/options/index.html"
+        ! grep -q 'id="publishers.oci"' "$site/reference/options/index.html"
         grep -q '^# Reproducible releases for Nix flakes$' "$site/index.md"
         grep -q '^# Walkthrough: release automatically from GitHub Actions$' "$site/guide/walkthrough.md"
         grep -Fq '](/reference/options.md#versionFiles.cargo)' "$site/reference/version-files.md"

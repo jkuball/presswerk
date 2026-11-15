@@ -213,8 +213,8 @@ for named instances such as `services.nginx.virtualHosts.<name>`. There are no t
 and one implementation can be used several times:
 
 ```nix
-publishers.oci.ghcr     = { registry = "ghcr.io/jkuball"; /* ... */ };
-publishers.oci.internal = { registry = "registry.corp.example"; /* ... */ };
+publishers.oci-image.ghcr     = { registry = "ghcr.io/jkuball"; /* ... */ };
+publishers.oci-image.internal = { registry = "registry.corp.example"; /* ... */ };
 ```
 
 Each publisher points at what it publishes directly, as Nix values in its own typed options.
@@ -305,9 +305,9 @@ a warning otherwise.
       changelog = config.presswerk.default.changelogs.default;
     };
 
-    publishers.oci.api    = { /* image per system */ };
-    publishers.oci.worker = { /* image per system */ };
-    publishers.helm.shop  = { /* chart */ };
+    publishers.oci-image.api     = { /* image per system */ };
+    publishers.oci-image.worker  = { /* image per system */ };
+    publishers.oci-helm.shop     = { /* chart */ };
   };
 }
 ```

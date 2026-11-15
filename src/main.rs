@@ -102,7 +102,7 @@ fn run() -> Result<()> {
                 };
                 let mut rows = vec![["tag".into(), report.tag.clone(), tag_status.into()]];
                 for (name, step, artifacts) in &report.publisher_steps {
-                    let registry = name.starts_with("oci.") || name.starts_with("helm.");
+                    let registry = name.starts_with("oci-image.") || name.starts_with("oci-helm.");
                     let status = match step {
                         PublisherStep::Published => "published",
                         PublisherStep::DraftCompleted => "draft completed",

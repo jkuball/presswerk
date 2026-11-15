@@ -87,18 +87,18 @@ in
         };
       changelog.path = releaseConfig.changelog.path;
       publishers.github-release = releaseConfig.publishers.github-release;
-      publishers.oci = lib.mapAttrs
+      publishers.oci-image = lib.mapAttrs
         (_name: oci: oci // {
           compression =
             if oci.compression.zstd.enable then { zstd.level = oci.compression.zstd.level; }
             else { gzip.level = oci.compression.gzip.level; };
           username = lib.filterAttrs (_source: value: value != null) oci.username;
         })
-        releaseConfig.publishers.oci;
-      publishers.helm = lib.mapAttrs
+        releaseConfig.publishers.oci-image;
+      publishers.oci-helm = lib.mapAttrs
         (_name: helm: helm // {
           username = lib.filterAttrs (_source: value: value != null) helm.username;
         })
-        releaseConfig.publishers.helm;
+        releaseConfig.publishers.oci-helm;
     };
 }

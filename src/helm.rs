@@ -1,4 +1,4 @@
-//! The Helm publisher: pushes a packaged chart as one OCI manifest under its release version.
+//! The OCI Helm publisher: pushes a packaged chart as one OCI manifest under its release version.
 
 use crate::oci::{
     Blob, BlobData, Credentials, Descriptor, MANIFEST_MEDIA_TYPE, Manifest, ORIGIN_ANNOTATION,
@@ -223,16 +223,16 @@ pub(crate) fn is_release_manifest(manifest: &[u8], version: &Version, origin: &s
     identity(manifest).is_some_and(|found| found == (version.clone(), origin.into()))
 }
 
-pub struct HelmPublisher {
+pub struct OciHelmPublisher {
     registry: RegistryClient,
     repository: String,
     chart: ChartPackage,
 }
 
-impl HelmPublisher {
+impl OciHelmPublisher {
     /// Build the publisher from its declaration; its chart must already be fetched.
     pub fn from_declaration(
-        declaration: &crate::declaration::HelmPublisher,
+        declaration: &crate::declaration::OciHelmPublisher,
         release_version: &Version,
     ) -> Result<Self, PublicationError> {
         let credentials =
@@ -275,12 +275,12 @@ impl HelmPublisher {
             PublisherState::Missing => Ok(true),
             PublisherState::Published => Ok(false),
             PublisherState::Conflicting(message) => Err(PublicationError::new(message)),
-            _ => unreachable!("Helm publisher state"),
+            _ => unreachable!("OCI Helm publisher state"),
         }
     }
 }
 
-impl Publisher for HelmPublisher {
+impl Publisher for OciHelmPublisher {
     fn state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
         let tag = validate_tag(&release.version).map_err(PublicationError::new)?;
         Ok(match self.registry.manifest(&tag)? {
@@ -425,8 +425,8 @@ mod tests {
             Self { repository, state }
         }
 
-        fn publisher(&self, chart: &Path, version: &Version) -> HelmPublisher {
-            HelmPublisher::new(
+        fn publisher(&self, chart: &Path, version: &Version) -> OciHelmPublisher {
+            OciHelmPublisher::new(
                 RegistryClient::new(&self.repository, None).unwrap(),
                 &self.repository,
                 &chart.to_string_lossy(),
@@ -552,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn pushes_one_helm_manifest_and_a_retry_writes_nothing() {
+    fn pushes_one_oci_helm_manifest_and_a_retry_writes_nothing() {
         let directory = tempfile::tempdir().unwrap();
         let chart = chart(directory.path(), "project", "1.2.3");
         let registry = MockRegistry::start();

@@ -1,10 +1,10 @@
-The Helm publisher pushes a chart archive to an OCI registry in the format Helm understands.
-Declare it under [`publishers.helm`](/reference/options/#publishers.helm), keyed by a name of your
-choice:
+The OCI Helm publisher pushes a chart archive to an OCI registry in the format Helm understands.
+Declare it under [`publishers.oci-helm`](/reference/options/#publishers.oci-helm), keyed by a name of
+your choice:
 
 ```nix presswerk-module
 {
-  publishers.helm.default = {
+  publishers.oci-helm.default = {
     repository = "ghcr.io/owner/charts/project";
     chart = self.packages.x86_64-linux.chart;
     public = true;
@@ -24,7 +24,7 @@ HTTPS. `chart` is the `.tgz` archive written by `helm package`.
 
 ```console
 publishers
-  helm.default  ghcr.io/owner/charts/project
+  oci-helm.default  ghcr.io/owner/charts/project
     tag      ghcr.io/owner/charts/project:1.2.0
 ```
 
@@ -83,12 +83,13 @@ Before anything is written, Presswerk inspects the version tag:
 - **Unknown:** the registry cannot say what the tag points to. Presswerk stops.
 
 A release's chart is complete once its tag points to its version and store path. Before `plan` and
-`prepare` start the next release, they check the previous release's own Helm publishers. A missing
-or different chart stops them, so the interrupted release is published again first.
+`prepare` start the next release, they check the previous release's own OCI Helm publishers. A
+missing or different chart stops them, so the interrupted release is published again first.
 
 ## Credentials
 
-Helm publishers use the same registry authentication as [OCI image publishers](/reference/publishers/oci/#credentials).
+OCI Helm publishers use the same registry authentication as [OCI image
+publishers](/reference/publishers/oci-image/#credentials).
 `username.secret` and `password.secret` name environment variables read at run time. A public
 username may instead use `username.value`, such as `oauth2accesstoken` for Google Artifact
 Registry. Credentials never enter the declaration or Nix store and are never printed.

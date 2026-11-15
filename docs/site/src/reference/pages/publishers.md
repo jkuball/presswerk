@@ -22,8 +22,8 @@ publisher's page.
 Presswerk has three built-in publishers:
 
 - [GitHub Release](/reference/publishers/github-release/)
-- [Helm](/reference/publishers/helm/) for packaged charts in OCI registries
-- [OCI](/reference/publishers/oci/) for container images
+- [OCI Helm](/reference/publishers/oci-helm/) for packaged charts in OCI registries
+- [OCI image](/reference/publishers/oci-image/) for container images
 
 Declaring publishers for other targets in the flake itself is planned.
 
