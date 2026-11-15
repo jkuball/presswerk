@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.0] - 2026-11-15
+
+### ✨ Introduce new features
+
+- (changelog): Insert before the first level-2 heading without a version heading
+
 ## [0.10.1] - 2026-11-15
 
 ### 🐛 Fix a bug
