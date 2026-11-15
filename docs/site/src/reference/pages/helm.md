@@ -18,9 +18,7 @@ choice:
 and an optional port, and its last segment must equal `name` in the packaged chart's `Chart.yaml`.
 It must not contain credentials such as `user:token@`, a query, or a fragment. Loopback registries
 such as `localhost:5000/charts/project` are reached over plain HTTP, every other registry over
-HTTPS.
-
-`chart` is the `.tgz` archive written by `helm package`.
+HTTPS. `chart` is the `.tgz` archive written by `helm package`.
 
 `presswerk plan` shows the one chart tag:
 
