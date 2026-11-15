@@ -633,3 +633,31 @@ fn refuses_headings_that_split_into_more_than_one_version_and_date() {
         ChangelogError::AmbiguousHeading(_)
     ));
 }
+
+#[test]
+fn keeps_comment_lines_of_code_blocks_in_the_unreleased_text() {
+    let heading = ChangelogHeading::default();
+    let text = "Migrate the configuration:\n\n```console\n# move the file\n$ mv presswerk.json presswerk.toml\n```";
+    let contents =
+        format!("# Changelog\n\n## [Unreleased]\n\n{text}\n\n## [1.0.0] - 2026-01-01\n\nFirst.\n");
+
+    assert_eq!(
+        read_unreleased(&contents, &heading, DEFAULT_UNRELEASED_HEADING),
+        text
+    );
+    let changelog = insert_version_section(
+        Some(&contents),
+        &heading,
+        DEFAULT_UNRELEASED_HEADING,
+        &Version::new(1, 1, 0),
+        "2026-11-04",
+        &format!("{text}\n"),
+    )
+    .unwrap();
+    assert_eq!(
+        changelog,
+        format!(
+            "# Changelog\n\n## [Unreleased]\n\n## [1.1.0] - 2026-11-04\n\n{text}\n\n## [1.0.0] - 2026-01-01\n\nFirst.\n"
+        )
+    );
+}
