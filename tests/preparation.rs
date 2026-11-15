@@ -5,8 +5,8 @@ use git2::Oid;
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::declaration::{
     Analyzer, BadgeOptions, BadgeVersionFile, Changelog, Compression, ConventionalAnalyzer,
-    GithubReleasePublisher, GitmojiAnalyzer, OciHelmPublisher, OciImagePublisher, Publishers,
-    ReleaseDeclaration, Tag, Token, TomlVersionFile, Username, VersionFile,
+    GithubReleasePublisher, GitmojiAnalyzer, JsonVersionFile, OciHelmPublisher, OciImagePublisher,
+    Publishers, ReleaseDeclaration, Tag, Token, TomlVersionFile, Username, VersionFile,
 };
 use presswerk::evaluation::EvaluatedReleaseDeclaration;
 use presswerk::preparation::{build_release_plan, is_worktree_dirty, prepare_release, render_plan};
@@ -498,6 +498,41 @@ fn badge() -> VersionFile {
         path: ".github/presswerk-badge.svg".into(),
         badge: BadgeOptions::default(),
     })
+}
+
+#[test]
+fn prepare_writes_several_keys_of_one_file() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.38.2");
+    let lockfile = "{\n  \"version\": \"0.38.2\",\n  \"packages\": {\n    \"\": { \"version\": \"0.38.2\" }\n  }\n}\n";
+    repository.write("package-lock.json", lockfile);
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.38.2");
+    for key in ["version", r#"packages."".version"#] {
+        evaluated
+            .declaration
+            .version_files
+            .push(VersionFile::Json(JsonVersionFile {
+                path: "package-lock.json".into(),
+                json: key.into(),
+            }));
+    }
+
+    let plan = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap();
+    assert!(render_plan(&plan).contains("package-lock.json  0.38.2 -> 0.39.0"));
+
+    let release = prepare_release(&plan).unwrap().unwrap();
+    assert_eq!(
+        repository.git(["show", &format!("{release}:package-lock.json")]),
+        lockfile.replace("0.38.2", "0.39.0").trim_end()
+    );
 }
 
 #[test]

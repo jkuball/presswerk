@@ -170,19 +170,15 @@ impl VersionFile {
         match self {
             Self::Toml(file) => {
                 validate_relative_path(&file.path)?;
-                if file.toml.is_empty() {
-                    return Err(DeclarationError::Invalid(
-                        "TOML key selector must not be empty".into(),
-                    ));
-                }
+                key_segments(&file.toml).map_err(|error| {
+                    DeclarationError::Invalid(format!("TOML key selector {error}"))
+                })?;
             }
             Self::Json(file) => {
                 validate_relative_path(&file.path)?;
-                if file.json.is_empty() {
-                    return Err(DeclarationError::Invalid(
-                        "JSON key selector must not be empty".into(),
-                    ));
-                }
+                key_segments(&file.json).map_err(|error| {
+                    DeclarationError::Invalid(format!("JSON key selector {error}"))
+                })?;
             }
             Self::Plain(file) => validate_relative_path(&file.path)?,
             Self::Regex(file) => {
@@ -215,6 +211,14 @@ pub struct TomlVersionFile {
 pub struct JsonVersionFile {
     pub path: String,
     pub json: String,
+}
+
+/// The segments of a TOML dotted key, which also selects JSON keys. The flake parses keys as TOML,
+/// too.
+pub fn key_segments(key: &str) -> Result<Vec<String>, String> {
+    toml_edit::Key::parse(key)
+        .map(|keys| keys.iter().map(|key| key.get().to_owned()).collect())
+        .map_err(|error| format!("{key:?} is not a TOML dotted key: {}", error.message()))
 }
 
 /// A file that contains nothing but the version, optionally followed by a line break.
@@ -1019,7 +1023,47 @@ mod tests {
             ReleaseDeclaration::from_json(&empty)
                 .unwrap_err()
                 .to_string()
-                .contains("must not be empty")
+                .contains("TOML key selector \"\" is not a TOML dotted key")
+        );
+    }
+
+    #[test]
+    fn parses_keys_as_toml_dotted_keys() {
+        // The same inputs as the nix-unit test "test keys parse as TOML dotted keys".
+        for (key, segments) in [
+            ("version", &["version"][..]),
+            (r#"packages."".version"#, &["packages", "", "version"]),
+            (r#"packages."a.b".version"#, &["packages", "a.b", "version"]),
+            ("a.'x.y'.b", &["a", "x.y", "b"]),
+            (r#""q\"z""#, &["q\"z"]),
+            (
+                r#"dependencies."@scope/pkg".version"#,
+                &["dependencies", "@scope/pkg", "version"],
+            ),
+            (" a . b ", &["a", "b"]),
+            (r#""\u00e9""#, &["é"]),
+        ] {
+            assert_eq!(key_segments(key).unwrap(), segments, "{key:?}");
+        }
+        for key in [
+            "", "a..b", "a.", "a = 1\nb", "a = 0 #", "@scope", "\"a", "a b", "[a]\nb", "a#",
+        ] {
+            assert!(
+                key_segments(key)
+                    .unwrap_err()
+                    .contains("is not a TOML dotted key"),
+                "{key:?}"
+            );
+        }
+
+        let unbalanced = declaration(|value| {
+            value["versionFiles"][0]["toml"] = json!(r#"packages."a.version"#);
+        });
+        assert!(
+            ReleaseDeclaration::from_json(&unbalanced)
+                .unwrap_err()
+                .to_string()
+                .contains(r#"TOML key selector "packages.\"a.version" is not a TOML dotted key"#)
         );
     }
 

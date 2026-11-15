@@ -171,6 +171,76 @@ fn writes_a_nested_json_version_without_reformatting_the_file() {
 }
 
 #[test]
+fn writes_the_root_package_version_of_an_npm_lockfile() {
+    let writer = JsonVersionFile {
+        path: "package-lock.json".into(),
+        json: r#"packages."".version"#.into(),
+    };
+    let contents = r#"{
+  "name": "frontend",
+  "version": "0.38.2",
+  "lockfileVersion": 3,
+  "packages": {
+    "": {
+      "name": "frontend",
+      "version": "0.38.2"
+    },
+    "node_modules/left-pad": {
+      "version": "0.38.2"
+    }
+  }
+}
+"#;
+    assert_eq!(
+        writer.read_version(contents).unwrap(),
+        Version::new(0, 38, 2)
+    );
+
+    let written = writer
+        .write_version(contents, &Version::new(0, 39, 0))
+        .unwrap();
+
+    assert_eq!(
+        written,
+        contents.replacen(
+            "\"name\": \"frontend\",\n      \"version\": \"0.38.2\"",
+            "\"name\": \"frontend\",\n      \"version\": \"0.39.0\"",
+            1
+        )
+    );
+}
+
+#[test]
+fn selects_a_toml_key_segment_with_a_dot() {
+    let writer = TomlVersionFile {
+        path: "versions.toml".into(),
+        toml: r#"components."api.v1".version"#.into(),
+    };
+    let contents = "[components.\"api.v1\"]\nversion = \"1.2.3\"\n\n[components.api.v1]\nversion = \"9.9.9\"\n";
+
+    let written = writer
+        .write_version(contents, &Version::new(1, 3, 0))
+        .unwrap();
+
+    assert_eq!(written, contents.replace("\"1.2.3\"", "\"1.3.0\""));
+}
+
+#[test]
+fn rejects_a_malformed_key() {
+    let writer = JsonVersionFile {
+        path: "package-lock.json".into(),
+        json: r#"packages."version"#.into(),
+    };
+    assert!(
+        writer
+            .read_version("{}")
+            .unwrap_err()
+            .to_string()
+            .contains("is not a TOML dotted key")
+    );
+}
+
+#[test]
 fn rejects_missing_and_non_string_json_versions() {
     let missing = JsonVersionFile {
         path: "package.json".into(),
