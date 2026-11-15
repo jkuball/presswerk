@@ -1,65 +1,144 @@
 use semver::Version;
 use std::error::Error;
 use std::fmt;
+use time::format_description::{self, OwnedFormatItem};
 
 pub const DEFAULT_HEADING: &str = "## [{version}] - {date}";
 const VERSION_PLACEHOLDER: &str = "{version}";
-const DATE_PLACEHOLDER: &str = "{date}";
+const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
 
-/// The declared version heading, a plain replacement template that both renders new headings
-/// and finds existing ones.
+/// The declared version heading, a template with `{version}` and an optional `{date}` or
+/// `{date:<strftime format>}` that both renders new headings and finds existing ones.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangelogHeading {
-    format: String,
     level: usize,
+    prefix: String,
+    middle: String,
+    suffix: String,
+    date: Option<(DateFormat, DatePosition)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DatePosition {
+    BeforeVersion,
+    AfterVersion,
 }
 
 impl ChangelogHeading {
     pub fn parse(format: &str) -> Result<Self, ChangelogError> {
         let invalid = || ChangelogError::InvalidHeading(format.into());
+        // Trailing whitespace is not part of a heading; found lines are trimmed as well.
+        let trimmed = format.trim_end();
         if format.contains(['\r', '\n'])
             || !format.starts_with('#')
-            || format.matches(VERSION_PLACEHOLDER).count() != 1
-            || format.matches(DATE_PLACEHOLDER).count() > 1
+            || trimmed.matches(VERSION_PLACEHOLDER).count() != 1
         {
             return Err(invalid());
         }
-        let level = format.len() - format.trim_start_matches('#').len();
+
+        let mut date = None;
+        for (start, _) in trimmed.match_indices("{date") {
+            let rest = &trimmed[start + "{date".len()..];
+            let (end, date_format) = if rest.starts_with('}') {
+                (start + "{date}".len(), DEFAULT_DATE_FORMAT)
+            } else if let Some(spec) = rest.strip_prefix(':') {
+                let close = spec.find('}').ok_or_else(invalid)?;
+                (start + "{date:".len() + close + 1, &spec[..close])
+            } else {
+                continue;
+            };
+            if date.is_some() {
+                return Err(invalid());
+            }
+            let date_format = DateFormat::parse(date_format).ok_or_else(invalid)?;
+            date = Some((start, end, date_format));
+        }
+
+        let version_start = trimmed.find(VERSION_PLACEHOLDER).ok_or_else(invalid)?;
+        let version_end = version_start + VERSION_PLACEHOLDER.len();
+        let (prefix, middle, suffix, date) = match date {
+            None => (&trimmed[..version_start], "", &trimmed[version_end..], None),
+            Some((start, end, date_format)) if start >= version_end => (
+                &trimmed[..version_start],
+                &trimmed[version_end..start],
+                &trimmed[end..],
+                Some((date_format, DatePosition::AfterVersion)),
+            ),
+            Some((start, end, date_format)) if end <= version_start => (
+                &trimmed[..start],
+                &trimmed[end..version_start],
+                &trimmed[version_end..],
+                Some((date_format, DatePosition::BeforeVersion)),
+            ),
+            Some(_) => return Err(invalid()),
+        };
+
         Ok(Self {
-            // Trailing whitespace is not part of a heading; found lines are trimmed as well.
-            format: format.trim_end().into(),
-            level,
+            level: format.len() - format.trim_start_matches('#').len(),
+            prefix: prefix.into(),
+            middle: middle.into(),
+            suffix: suffix.into(),
+            date,
         })
     }
 
-    fn render(&self, version: &Version, date: &str) -> String {
-        self.format
-            .split(VERSION_PLACEHOLDER)
-            .map(|part| part.replacen(DATE_PLACEHOLDER, date, 1))
-            .collect::<Vec<_>>()
-            .join(&version.to_string())
+    fn render(&self, version: &Version, date: time::Date) -> Option<String> {
+        let Self {
+            prefix,
+            middle,
+            suffix,
+            ..
+        } = self;
+        Some(match &self.date {
+            None => format!("{prefix}{version}{suffix}"),
+            Some((date_format, DatePosition::AfterVersion)) => {
+                format!(
+                    "{prefix}{version}{middle}{}{suffix}",
+                    date_format.render(date)?
+                )
+            }
+            Some((date_format, DatePosition::BeforeVersion)) => {
+                format!(
+                    "{prefix}{}{middle}{version}{suffix}",
+                    date_format.render(date)?
+                )
+            }
+        })
     }
 
-    /// The version of a heading line in this format, if the line is one. `{date}` matches the
-    /// ISO date that `prepare` writes, which keeps formats such as `{version}-{date}` unambiguous.
+    /// The version of a heading line in this format, if the line is one. The date part must parse
+    /// in the declared date format, which keeps formats such as `{version}-{date}` unambiguous.
     fn version(&self, line: &str) -> Option<Version> {
-        let line = line.trim_end();
-        let (before, after) = self.format.split_once(VERSION_PLACEHOLDER)?;
-        let version = if let Some((prefix, middle)) = before.split_once(DATE_PLACEHOLDER) {
-            let rest = line.strip_prefix(prefix)?.strip_suffix(after)?;
-            let (date, rest) = (rest.get(..ISO_DATE_LEN)?, rest.get(ISO_DATE_LEN..)?);
-            is_iso_date(date).then_some(())?;
-            rest.strip_prefix(middle)?
-        } else if let Some((middle, suffix)) = after.split_once(DATE_PLACEHOLDER) {
-            let rest = line.strip_prefix(before)?.strip_suffix(suffix)?;
-            let split = rest.len().checked_sub(ISO_DATE_LEN)?;
-            let (rest, date) = (rest.get(..split)?, rest.get(split..)?);
-            is_iso_date(date).then_some(())?;
-            rest.strip_suffix(middle)?
-        } else {
-            line.strip_prefix(before)?.strip_suffix(after)?
+        let rest = line
+            .trim_end()
+            .strip_prefix(self.prefix.as_str())?
+            .strip_suffix(self.suffix.as_str())?;
+        let split_points = || {
+            rest.char_indices()
+                .map(|(index, _)| index)
+                .chain([rest.len()])
         };
-        version.parse().ok()
+        match &self.date {
+            None => rest.parse().ok(),
+            // The shortest date that parses wins, so the version keeps a prerelease such as
+            // `1.2.3-rc.1` in `{version}-{date}`.
+            Some((date_format, DatePosition::BeforeVersion)) => split_points().find_map(|index| {
+                date_format.parse_date(&rest[..index])?;
+                rest[index..]
+                    .strip_prefix(self.middle.as_str())?
+                    .parse()
+                    .ok()
+            }),
+            Some((date_format, DatePosition::AfterVersion)) => {
+                split_points().rev().find_map(|index| {
+                    date_format.parse_date(&rest[index..])?;
+                    rest[..index]
+                        .strip_suffix(self.middle.as_str())?
+                        .parse()
+                        .ok()
+                })
+            }
+        }
     }
 
     /// Whether a line is a heading of the declared level or a higher one, which ends a section.
@@ -77,15 +156,58 @@ impl Default for ChangelogHeading {
     }
 }
 
-const ISO_DATE_LEN: usize = "YYYY-MM-DD".len();
+/// A strftime date format, formatted and parsed by the `time` crate.
+#[derive(Clone)]
+struct DateFormat {
+    format: String,
+    items: OwnedFormatItem,
+}
 
-/// Whether `date` has the shape of an ISO calendar date, `YYYY-MM-DD`.
-fn is_iso_date(date: &str) -> bool {
-    date.len() == ISO_DATE_LEN
-        && date.bytes().enumerate().all(|(index, byte)| match index {
-            4 | 7 => byte == b'-',
-            _ => byte.is_ascii_digit(),
-        })
+impl DateFormat {
+    /// The format, if `time` accepts it and reads back the full date it writes.
+    fn parse(format: &str) -> Option<Self> {
+        if format.is_empty() || format.contains(['{', '}']) {
+            return None;
+        }
+        let date_format = Self {
+            format: format.into(),
+            items: format_description::parse_strftime_owned(format).ok()?,
+        };
+        let sample = time::Date::from_calendar_date(2026, time::Month::November, 5).ok()?;
+        let rendered = date_format.render(sample)?;
+        (date_format.parse_date(&rendered)? == sample).then_some(date_format)
+    }
+
+    fn render(&self, date: time::Date) -> Option<String> {
+        date.format(&self.items).ok()
+    }
+
+    /// The date if all of `text` is one in this format.
+    fn parse_date(&self, text: &str) -> Option<time::Date> {
+        time::Date::parse(text, &self.items).ok()
+    }
+}
+
+impl PartialEq for DateFormat {
+    fn eq(&self, other: &Self) -> bool {
+        self.format == other.format
+    }
+}
+
+impl Eq for DateFormat {}
+
+impl fmt::Debug for DateFormat {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("DateFormat")
+            .field(&self.format)
+            .finish()
+    }
+}
+
+/// The release date, given as `YYYY-MM-DD` as `prepare` passes it.
+fn parse_release_date(date: &str) -> Option<time::Date> {
+    DateFormat::parse(DEFAULT_DATE_FORMAT)?.parse_date(date)
 }
 
 pub fn insert_version_section(
@@ -95,9 +217,7 @@ pub fn insert_version_section(
     date: &str,
     notes: &str,
 ) -> Result<String, ChangelogError> {
-    if !is_iso_date(date) {
-        return Err(ChangelogError::InvalidDate(date.into()));
-    }
+    let date = parse_release_date(date).ok_or_else(|| ChangelogError::InvalidDate(date.into()))?;
 
     let contents = contents.unwrap_or("");
     if find_version_heading(contents, heading, version)?.is_some() {
@@ -105,7 +225,9 @@ pub fn insert_version_section(
     }
 
     let line_ending = line_ending(contents, notes);
-    let heading_line = heading.render(version, date);
+    let heading_line = heading
+        .render(version, date)
+        .ok_or_else(|| ChangelogError::InvalidDate(date.to_string()))?;
     let section = format!("{heading_line}{line_ending}{line_ending}{notes}{line_ending}");
     if contents.is_empty() {
         let changelog = format!("# Changelog{line_ending}{line_ending}{section}");
@@ -297,7 +419,7 @@ impl fmt::Display for ChangelogError {
             Self::InvalidDate(date) => write!(formatter, "invalid changelog date {date:?}"),
             Self::InvalidHeading(format) => write!(
                 formatter,
-                "changelog.heading {format:?} must be one line that starts with #, with {{version}} exactly once and {{date}} at most once"
+                "changelog.heading {format:?} must be one line that starts with #, with {{version}} exactly once and {{date}} or {{date:<format>}} at most once, where the format is a strftime format that writes and reads back a full date"
             ),
         }
     }

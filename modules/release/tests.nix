@@ -1000,11 +1000,21 @@ in
           "## {version} {version}"
           "## {version} {date} {date}"
           "## {version}\n{date}"
+          "## {version} ({date:%d.%m.%Y})"
+          "## {version} - {date:%B %e, %Y (100%%)}"
+          "## {version} {date:}"
+          "## {version} {date:%Y"
+          "## {version} {date} {date:%Y}"
         ];
       expected = [
         true
         true
         false
+        false
+        false
+        false
+        true
+        true
         false
         false
         false

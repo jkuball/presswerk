@@ -422,3 +422,92 @@ fn does_not_take_inline_code_for_a_code_fence() {
         "Older."
     );
 }
+
+#[test]
+fn renders_and_finds_headings_with_a_declared_date_format() {
+    let prerelease = Version::parse("1.2.3-rc.1").unwrap();
+    let stable = Version::new(1, 2, 3);
+    for (format, rendered) in [
+        ("## v{version} ({date:%Y-%m-%d})", "## v1.2.3 (2026-11-05)"),
+        (
+            "## {version} vom {date:%d.%m.%Y}",
+            "## 1.2.3 vom 05.11.2026",
+        ),
+        (
+            "## {version} - {date:%B %e, %Y}",
+            "## 1.2.3 - November  5, 2026",
+        ),
+        ("## {date:%d %b %Y}: {version}", "## 05 Nov 2026: 1.2.3"),
+        ("## {version}-{date:%d.%m.%Y}", "## 1.2.3-05.11.2026"),
+        (
+            "## {version} ({date:100%% %m/%d/%Y})",
+            "## 1.2.3 (100% 11/05/2026)",
+        ),
+    ] {
+        let heading = ChangelogHeading::parse(format).unwrap();
+        let changelog =
+            insert_version_section(None, &heading, &prerelease, "2026-11-04", "Candidate.\n")
+                .unwrap();
+        let changelog = insert_version_section(
+            Some(&changelog),
+            &heading,
+            &stable,
+            "2026-11-05",
+            "Stable.\n",
+        )
+        .unwrap();
+
+        assert!(
+            changelog.contains(&format!("\n{rendered}\n")),
+            "{changelog}"
+        );
+        assert_eq!(
+            read_version_section(&changelog, &heading, &stable).unwrap(),
+            "Stable.\n",
+            "{format}"
+        );
+        assert_eq!(
+            read_version_section(&changelog, &heading, &prerelease).unwrap(),
+            "Candidate.\n",
+            "{format}"
+        );
+    }
+}
+
+#[test]
+fn finds_only_valid_dates_in_the_declared_format() {
+    let heading = ChangelogHeading::parse("## {version} ({date:%d.%m.%Y})").unwrap();
+    let changelog =
+        "# Changelog\n\n## 1.0.0 (29.02.2028)\n\nLeap.\n\n## 0.9.0 (29.02.2026)\n\nInvalid.\n";
+
+    assert_eq!(
+        read_version_section(changelog, &heading, &Version::new(1, 0, 0)).unwrap(),
+        "Leap.\n"
+    );
+    assert!(matches!(
+        read_version_section(changelog, &heading, &Version::new(0, 9, 0)).unwrap_err(),
+        ChangelogError::MissingVersion(_)
+    ));
+}
+
+#[test]
+fn rejects_unsupported_date_formats() {
+    for format in [
+        "## {version} {date:%H:%M}",
+        "## {version} {date:%d.%m.}",
+        "## {version} {date:%Q}",
+        "## {version} {date:%}",
+        "## {version} {date:}",
+        "## {version} {date:%Y",
+        "## {version} {date} {date:%Y}",
+        "## {version} {date:%Y{version}}",
+    ] {
+        assert!(
+            matches!(
+                ChangelogHeading::parse(format).unwrap_err(),
+                ChangelogError::InvalidHeading(_)
+            ),
+            "{format}"
+        );
+    }
+}

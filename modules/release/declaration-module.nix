@@ -73,6 +73,17 @@
       # Mirrors the CLI: one line, a Markdown heading, {version} exactly once, {date} at most once.
       placeholderCount = placeholder: format:
         builtins.length (builtins.filter builtins.isList (builtins.split "[{]${placeholder}[}]" format));
+      # `{date}` or `{date:<format>}` at most once. The CLI checks the strftime format itself.
+      validDateFormat = dateFormat: dateFormat != "" && !(lib.hasInfix "{" dateFormat);
+      validDatePlaceholder = format:
+        let
+          parts = builtins.split "[{]date(:[^}]*)?[}]" format;
+          placeholders = builtins.filter builtins.isList parts;
+          spec = builtins.elemAt (builtins.head placeholders) 0;
+        in
+        builtins.length placeholders <= 1
+        && lib.all (literal: !(lib.hasInfix "{date:" literal)) (builtins.filter builtins.isString parts)
+        && (placeholders == [ ] || spec == null || validDateFormat (lib.removePrefix ":" spec));
       changelogHeading = types.addCheck types.str
         (
           format:
@@ -80,8 +91,8 @@
             && !(lib.hasInfix "\n" format)
             && !(lib.hasInfix "\r" format)
             && placeholderCount "version" format == 1
-            && placeholderCount "date" format <= 1
-        ) // { description = "Markdown heading line containing {version} exactly once and {date} at most once"; };
+            && validDatePlaceholder format
+        ) // { description = "Markdown heading line containing {version} exactly once and {date} or {date:<format>} at most once"; };
 
       cargoModule = { name, ... }: {
         options = {
@@ -557,7 +568,7 @@
             type = changelogHeading;
             default = "## [{version}] - {date}";
             example = "## v{version} ({date})";
-            description = "Version heading of a changelog section, in which `{version}` stands for the release version and `{date}` for the release date: one line that starts with `#`, with `{version}` exactly once and `{date}` at most once; other text is literal and trailing whitespace is ignored. `{date}` is the release date as `YYYY-MM-DD`, and only such a date matches it in existing headings. The same format renders new headings and finds existing ones, for the duplicate check, the insertion point, and the section that publishers use as release notes.";
+            description = "Version heading of a changelog section, in which `{version}` stands for the release version and `{date}` for the release date: one line that starts with `#`, with `{version}` exactly once and `{date}` at most once; other text is literal and trailing whitespace is ignored. `{date:<format>}` writes the date in a strftime format, such as `%d.%m.%Y` or `%B %e, %Y`; plain `{date}` means `{date:%Y-%m-%d}`. The format must write a full date that can be read back, and existing headings match only when their date parses in that format. The same format renders new headings and finds existing ones, for the duplicate check, the insertion point, and the section that publishers use as release notes.";
           };
         };
 

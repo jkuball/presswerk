@@ -24,10 +24,8 @@ It defaults to `CHANGELOG.md`.
 ```
 
 The heading is one line that starts with `#`. It contains `{version}` exactly once and `{date}` at
-most once; other text is literal, and trailing whitespace is ignored. `{date}` is the release date
-as `YYYY-MM-DD`, and only such a date matches it when Presswerk looks for headings. The same format
-renders new headings and finds existing ones, so a changelog written by another tool in that format
-keeps it:
+most once; other text is literal, and trailing whitespace is ignored. The same format renders new
+headings and finds existing ones, so a changelog written by another tool in that format keeps it:
 
 ```markdown
 # CHANGELOG
@@ -39,10 +37,22 @@ keeps it:
 …
 ```
 
-Older headings with another date format are not recognized; without any recognized heading, the new
-section goes above the first level-2 heading, as described above. Only lines that match the whole
-format count: with the default, a hand-written `## [1.0.0]` without a date is not a version heading. Lines inside fenced
-code blocks are never headings.
+`{date:<format>}` writes the date in a strftime format, as the Rust `time` crate supports it, with
+English month names. Plain `{date}` means `{date:%Y-%m-%d}`:
+
+```nix presswerk-module
+{
+  changelog.heading = "## {version} ({date:%B %e, %Y})"; # ## 1.4.0 (November  5, 2026)
+}
+```
+
+The format must write a full date that Presswerk can read back, so `%d.%m.` without a year or an
+unknown directive fails declaration validation. An existing heading matches only when its date
+parses in the declared format as a valid calendar date, so `## {version}-{date}` tells `1.2.3-rc.1`
+from the date. Older headings with another date format are not recognized; without any recognized
+heading, the new section goes above the first level-2 heading, as described above. Only lines that
+match the whole format count: with the default, a hand-written `## [1.0.0]` without a date is not a
+version heading. Lines inside fenced code blocks are never headings.
 
 `prepare` refuses a version that already has a heading. Publishers read the section under the
 release version's heading, up to the next heading of the same or a higher level, or the next version
