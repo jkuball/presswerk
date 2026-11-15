@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.13.0] - 2026-11-15
+
+### ✨ Introduce new features
+
+- (version-files): Select JSON and TOML keys with quoted segments
+
+### 🐛 Fix a bug
+
+- (preparation): Write several keys of one version file into one release file
+
+### 📝 Add or update documentation
+
+- (version-files): Link the TOML 1.0 key syntax
+
+### ♻️ Refactor code
+
+- (version-files): Parse keys as TOML dotted keys in the flake and the CLI
+
 ## [0.12.0] - 2026-11-15
 
 ### ✨ Introduce new features
