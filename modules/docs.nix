@@ -187,6 +187,10 @@ in
         for page in options declaration-schema cli publishers publishers/github-release publishers/oci-helm publishers/oci-image analyzers analyzers/gitmoji analyzers/conventional-commits; do
           test -s "$site/reference/$page/index.html" || { echo "missing reference page $page" >&2; exit 1; }
         done
+        # Keep the published OCI image routes working after the page rename.
+        grep -Fq 'http-equiv="refresh" content="0;url=/reference/publishers/oci-image/"' "$site/reference/publishers/oci/index.html"
+        grep -Fq 'rel="canonical" href="https://presswerk.dev/reference/publishers/oci-image/"' "$site/reference/publishers/oci/index.html"
+        cmp "$site/reference/publishers/oci.md" "$site/reference/publishers/oci-image.md"
         test -s "$site/llms.txt"
         grep -Fxq "Sitemap: https://presswerk.dev/sitemap-index.xml" "$site/robots.txt"
         test ! -e "$site/llms-full.txt"

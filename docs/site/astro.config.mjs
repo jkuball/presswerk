@@ -7,6 +7,12 @@ import versionPlugin from './src/plugins/version.mjs';
 
 export default defineConfig({
   site: 'https://presswerk.dev',
+  redirects: {
+    '/reference/publishers/oci/': {
+      status: 301,
+      destination: '/reference/publishers/oci-image/',
+    },
+  },
   markdown: {
     processor: satteri({ mdastPlugins: [versionPlugin(), pelePlugin()] }),
   },
