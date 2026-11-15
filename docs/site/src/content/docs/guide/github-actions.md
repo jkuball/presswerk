@@ -50,6 +50,9 @@ arrives. If another push arrives while the candidate run waits, the candidate ru
 newer push run then fails, because `prepare` refuses to start while a release is pending. Dispatch
 the candidate again, as described under [Recovery](#recovery).
 
+With a [GitHub App](#protected-main), the push run of the release commit replaces the candidate run
+and waits in the same way.
+
 ## Permissions and tokens
 
 ```yaml
@@ -147,12 +150,13 @@ App can. Create your own app for your repositories:
 4. Add the app as a bypass actor to the ruleset on `main`.
 
 The workflow then creates a token for the app, checks out with it so that `git push` uses it, and
-commits as the app's bot user. Find the bot user's ID with
-`gh api '/users/YOUR-APP[bot]' --jq .id`:
+commits as the app's bot user. Unlike pushes made with `GITHUB_TOKEN`, the app's push of the release
+commit starts a push run of its own, so that run publishes and the dispatch goes away. Find the bot
+user's ID with `gh api '/users/YOUR-APP[bot]' --jq .id`:
 
 ```diff lang="yaml" title=".github/workflows/ci.yml"
  permissions:
-   actions: write
+-  actions: write
 -  contents: write
 +  contents: read
 
@@ -160,7 +164,7 @@ commits as the app's bot user. Find the bot user's ID with
    ci:
      runs-on: ubuntu-latest
      env:
-       GH_TOKEN: ${{ github.token }}
+-      GH_TOKEN: ${{ github.token }}
        GITHUB_TOKEN: ${{ github.token }}
      steps:
 +      - name: Create release app token
@@ -184,18 +188,29 @@ commits as the app's bot user. Find the bot user's ID with
        - name: Prepare release
 -        if: github.event_name == 'push'
 +        if: github.event_name == 'push' && github.actor != 'YOUR-APP[bot]'
+         run: |
+           nix run --inputs-from . presswerk -- prepare
+           if test "$(git rev-parse HEAD)" != "$GITHUB_SHA"; then
+             git push origin HEAD:main
+-            gh workflow run ci.yml --ref main -f candidate="$(git rev-parse HEAD)"
+           fi
 
        - name: Publish release
-         if: inputs.candidate
+-        if: inputs.candidate
++        if: inputs.candidate || github.actor == 'YOUR-APP[bot]'
 +        env:
 +          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
          run: nix run --inputs-from . presswerk -- publish HEAD
 ```
 
 Presswerk now pushes, tags, and creates the GitHub Release as the app, so the workflow's own token
-only needs `contents: read`; it still dispatches the candidate run. Unlike pushes made with
-`GITHUB_TOKEN`, the app's push of the release commit starts a push run of its own. That run skips
-`prepare`, because a release is pending.
+only needs `contents: read`, and `actions: write` is no longer needed. The push run of the release
+commit takes the place of the candidate run: it skips `prepare`, checks out exactly the pushed
+commit, builds and checks it, and publishes it. The app only pushes release commits, so its actor
+identifies them.
+
+Keep the dispatch trigger: dispatching a candidate is still the way to [recover](#recovery) a
+release.
 
 ## Recovery
 

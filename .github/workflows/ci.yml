@@ -12,7 +12,6 @@ on:
         type: string
 
 permissions:
-  actions: write
   contents: read
   id-token: write
   pages: write
@@ -24,7 +23,11 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate != '' && 'github-pages' || '' }}
+    # Release runs publish one exact commit: the app's push of a release commit, or a
+    # dispatched candidate for recovery.
+    environment: ${{ (github.event_name == 'push' && github.actor == 'presswerk-releases[bot]' || github.event_name == 'workflow_dispatch' && inputs.candidate != '') && 'github-pages' || '' }}
+    env:
+      RELEASE: ${{ github.event_name == 'push' && github.actor == 'presswerk-releases[bot]' || github.event_name == 'workflow_dispatch' && inputs.candidate != '' }}
     steps:
       - name: Create release app token
         id: app
@@ -52,7 +55,7 @@ jobs:
           nix run --inputs-from . nixpkgs#nix-fast-build --
           --flake ".#" --select 'flake: { inherit (flake) packages checks; }'
           --no-nom --push-build-closure --out-link "$RUNNER_TEMP/result"
-          ${{ !(github.event_name == 'workflow_dispatch' && inputs.candidate != '') && '--skip-cached' || '' }}
+          ${{ env.RELEASE != 'true' && '--skip-cached' || '' }}
           ${{ secrets.CACHIX_AUTH_TOKEN != '' && '--cachix-cache jkuball' || '' }}
 
       - name: Plan release
@@ -76,7 +79,6 @@ jobs:
       - name: Prepare release
         if: github.event_name == 'push' && github.actor != 'presswerk-releases[bot]'
         env:
-          GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           git fetch origin main --tags
@@ -95,13 +97,13 @@ jobs:
             exit 0
           fi
 
+          # The app's push starts a push run for the release commit, which publishes it.
           git push origin HEAD:main
-          gh workflow run ci.yml --ref main -f candidate="$candidate"
 
       - name: Publish release
-        if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
+        if: env.RELEASE == 'true'
         env:
-          CANDIDATE: ${{ inputs.candidate }}
+          CANDIDATE: ${{ inputs.candidate || github.sha }}
           GITHUB_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           test "$(git rev-parse HEAD)" = "$CANDIDATE"
@@ -112,22 +114,22 @@ jobs:
       # Keeps released binaries out of Cachix's garbage collection, so flakes
       # that run a pinned Presswerk get it from the cache instead of building it.
       - name: Pin release in Cachix
-        if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
+        if: env.RELEASE == 'true'
         run: >
           cachix pin jkuball presswerk
           "$(readlink -f "$RUNNER_TEMP/result-packages.x86_64-linux.presswerk")"
           --keep-revisions 5
 
       - name: Collect docs
-        if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
+        if: env.RELEASE == 'true'
         run: |
           cp -rL --no-preserve=mode "$RUNNER_TEMP/result-packages.x86_64-linux.docs" "$RUNNER_TEMP/site"
 
       - uses: actions/upload-pages-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
+        if: env.RELEASE == 'true'
         with:
           path: ${{ runner.temp }}/site
 
       - name: Deploy docs
-        if: github.event_name == 'workflow_dispatch' && inputs.candidate != ''
+        if: env.RELEASE == 'true'
         uses: actions/deploy-pages@v4
