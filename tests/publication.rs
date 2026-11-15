@@ -1,5 +1,6 @@
 mod support;
 
+use git2::Oid;
 use presswerk::analysis::{Analysis, Bump};
 use presswerk::declaration::{
     Compression, OciHelmPublisher, OciImagePublisher, ReleaseDeclaration, Token, Username,
@@ -569,6 +570,82 @@ fn unreadable_predecessor_requires_the_exact_trust(unreadable: UnreadableDeclara
     .unwrap()
     .unwrap();
     assert_eq!(verified.commit, predecessor);
+
+    let lightweight = LightweightTag(predecessor);
+    let verified = verify_predecessor_with(
+        repository.path(),
+        candidate,
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &lightweight,
+        Some(&trusted),
+        |_| Err(unsupported.clone()),
+        |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
+        |_, _| unreachable!("no OCI image publishers are declared"),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(verified.commit, predecessor);
+
+    let elsewhere = LightweightTag(candidate);
+    let error = verify_predecessor_with(
+        repository.path(),
+        candidate,
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &elsewhere,
+        Some(&trusted),
+        |_| Err(unsupported.clone()),
+        |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
+        |_, _| unreachable!("no OCI image publishers are declared"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("lightweight"));
+}
+
+/// A remote whose release tag is lightweight and points to the given commit.
+struct LightweightTag(Oid);
+
+impl TagPublisher for LightweightTag {
+    fn state(&self, _release: &Release) -> Result<RemoteState, PublicationError> {
+        Ok(RemoteState::Conflicting(format!(
+            "remote tag is lightweight and points to {}",
+            self.0
+        )))
+    }
+
+    fn publish(&self, _release: &Release) -> Result<(), PublicationError> {
+        unreachable!("verification does not publish")
+    }
+
+    fn lightweight_target(&self, _tag: &str) -> Result<Option<Oid>, PublicationError> {
+        Ok(Some(self.0))
+    }
+}
+
+#[test]
+fn an_ordinary_predecessor_requires_an_annotated_tag() {
+    let repository = GitRepo::new();
+    let predecessor = repository.commit_version("0.1.0", "🔖 Prepare predecessor");
+    repository.tag("v0.1.0");
+    repository.write("feature", "implemented\n");
+    let candidate = repository.commit("✨ Add a feature");
+    let current_declaration = declaration("0.1.0", "new/project");
+    let previous_declaration = declaration("0.1.0", "old/project");
+
+    let error = verify_predecessor_with(
+        repository.path(),
+        candidate.parse().unwrap(),
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &LightweightTag(predecessor.parse().unwrap()),
+        None,
+        |_| Ok(previous_declaration.clone()),
+        |_, _, _| unreachable!("the tag is checked before publishers"),
+        |_, _| unreachable!("no OCI image publishers are declared"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("lightweight"));
 }
 
 #[test]

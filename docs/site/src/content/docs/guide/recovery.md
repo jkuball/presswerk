@@ -164,7 +164,8 @@ the command that `prepare` prints:
 $ presswerk prepare --trust-predecessor v0.3.0=RELEASE_COMMIT_SHA
 ```
 
-Presswerk then skips the previous declaration but still checks that the tag points to that commit.
+Presswerk then skips the previous declaration but still checks that the tag points to that commit;
+the tag may be lightweight.
 The release commit records the trust in a `Presswerk-Trusted-Predecessor` trailer, so `publish`
 accepts it as well.
 

@@ -1773,14 +1773,13 @@ where
                     trusted.tag, trusted.commit
                 )));
             }
-            // Another tool may have released it with a lightweight tag.
-            let accept_lightweight = unreadable.declaration == UnreadableDeclaration::Missing;
+            // A trusted tag may be lightweight, e.g. when another tool created it.
             return verified_remote_predecessor(
                 tag_publisher,
                 previous_version,
                 previous_tag,
                 previous_commit,
-                accept_lightweight,
+                true,
             )
             .map(Some);
         }
