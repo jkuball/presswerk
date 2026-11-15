@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.0] - 2026-11-15
+
+### ✨ Introduce new features
+
+- (release): Order note groups by effective level
+- (release): Template changelog notes and GitHub Release bodies
+
+### 🐛 Fix a bug
+
+- (publish): Ignore published GitHub Release body edits
+- (publish): Reject GitHub Release body conflicts
+
+### 📝 Add or update documentation
+
+- (docs): Clarify release-note group order
+- (docs): Describe template behavior for users
+
 ## [0.9.0] - 2026-11-15
 
 ### 🐛 Fix a bug
