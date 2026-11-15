@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.1] - 2026-11-15
+
+### 🐛 Fix a bug
+
+- (ci): Publish from the app's release push instead of dispatching
+
 ## [0.10.0] - 2026-11-15
 
 ### ✨ Introduce new features
