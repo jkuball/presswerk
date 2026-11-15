@@ -119,7 +119,7 @@ pub fn insert_version_section(
         .next()
         .map(|(start, _, _)| start)
         .or_else(|| {
-            lines_with_offsets(contents)
+            heading_lines(contents)
                 .find(|(_, _, line)| is_level_two_heading(line))
                 .map(|(start, _, _)| start)
         })
@@ -163,7 +163,7 @@ pub fn read_version_section<'a>(
     let (_, heading_end) = find_version_heading(contents, heading, version)?
         .ok_or_else(|| ChangelogError::MissingVersion(version.clone()))?;
     let body_start = heading_end + line_ending_prefix_len(&contents[heading_end..]);
-    let body_end = lines_with_offsets(contents)
+    let body_end = heading_lines(contents)
         .find(|(start, _, line)| *start >= body_start && heading.ends_section(line))
         .map_or(contents.len(), |(start, _, _)| start);
 
@@ -220,17 +220,53 @@ fn version_headings<'a>(
     contents: &'a str,
     heading: &'a ChangelogHeading,
 ) -> impl Iterator<Item = (usize, usize, Version)> + 'a {
-    lines_with_offsets(contents)
+    heading_lines(contents)
         .filter_map(|(start, end, line)| Some((start, end, heading.version(line)?)))
 }
 
-fn lines_with_offsets(contents: &str) -> impl Iterator<Item = (usize, usize, &str)> {
+/// The lines that can be headings, with their byte offsets: every line outside fenced code
+/// blocks, so `## ` or `# comment` lines inside a fence never count. An unclosed fence runs to
+/// the end of the changelog, as in CommonMark.
+fn heading_lines(contents: &str) -> impl Iterator<Item = (usize, usize, &str)> {
     let mut offset = 0;
-    contents.split_inclusive('\n').map(move |line| {
+    let mut open_fence: Option<(u8, usize)> = None;
+    contents.split_inclusive('\n').filter_map(move |line| {
         let start = offset;
         offset += line.len();
-        (start, offset, line.trim_end_matches(['\r', '\n']))
+        let line = line.trim_end_matches(['\r', '\n']);
+        match (open_fence, code_fence(line)) {
+            (Some((marker, length)), Some((closing, closing_length, info)))
+                if closing == marker && closing_length >= length && info.trim().is_empty() =>
+            {
+                open_fence = None;
+                None
+            }
+            (Some(_), _) => None,
+            (None, Some((marker, length, _))) => {
+                open_fence = Some((marker, length));
+                None
+            }
+            (None, None) => Some((start, offset, line)),
+        }
     })
+}
+
+/// A code fence line: up to three spaces of indentation, then at least three backticks or
+/// tildes. Returns the marker, the run length, and the rest of the line.
+fn code_fence(line: &str) -> Option<(u8, usize, &str)> {
+    let unindented = line.trim_start_matches(' ');
+    if line.len() - unindented.len() > 3 {
+        return None;
+    }
+    let marker = *unindented
+        .as_bytes()
+        .first()
+        .filter(|byte| matches!(byte, b'`' | b'~'))?;
+    let length = unindented
+        .bytes()
+        .take_while(|byte| *byte == marker)
+        .count();
+    (length >= 3).then(|| (marker, length, &unindented[length..]))
 }
 
 #[derive(Debug, PartialEq, Eq)]

@@ -380,3 +380,30 @@ fn ends_a_section_at_a_higher_level_heading() {
         "- first\n"
     );
 }
+
+#[test]
+fn ignores_headings_inside_fenced_code_blocks() {
+    let heading = ChangelogHeading::default();
+    let notes = "Example:\n\n```markdown\n## [0.9.0] - 2026-01-01\n## Not a section\n```\n\n~~~~\n# comment\n~~~\n## still code\n~~~~\n";
+
+    let changelog = insert_version_section(
+        Some("# Changelog\n\n```\n## [Example]\n```\n\n## v0.1.0 (2026-01-01)\n\nOld.\n"),
+        &heading,
+        &Version::new(1, 0, 0),
+        "2026-11-04",
+        notes,
+    )
+    .unwrap();
+
+    assert!(changelog.starts_with(
+        "# Changelog\n\n```\n## [Example]\n```\n\n## [1.0.0] - 2026-11-04\n\nExample:"
+    ));
+    assert_eq!(
+        read_version_section(&changelog, &heading, &Version::new(1, 0, 0)).unwrap(),
+        notes
+    );
+    assert!(matches!(
+        read_version_section(&changelog, &heading, &Version::new(0, 9, 0)).unwrap_err(),
+        ChangelogError::MissingVersion(_)
+    ));
+}

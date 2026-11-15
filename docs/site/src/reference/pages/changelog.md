@@ -40,7 +40,8 @@ keeps it:
 
 Older headings with another date format are not recognized; without any recognized heading, the new
 section goes above the first level-2 heading, as described above. Only lines that match the whole
-format count: with the default, a hand-written `## [1.0.0]` without a date is not a version heading.
+format count: with the default, a hand-written `## [1.0.0]` without a date is not a version heading. Lines inside fenced
+code blocks are never headings.
 
 `prepare` refuses a version that already has a heading. Publishers read the section under the
 release version's heading, up to the next heading of the same or a higher level, or the next version
