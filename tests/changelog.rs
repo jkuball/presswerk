@@ -117,6 +117,22 @@ fn reads_unreleased_text_only_above_the_first_version_heading() {
         .unwrap(),
         "# Changelog\n\n## Upcoming\n\n## [1.0.0] - 2026-11-04\n\nSoon.\n\n"
     );
+
+    // The first level-2 heading of a changelog without version headings yet is the unreleased
+    // heading; the section goes below it, not above.
+    let first = "# Changelog\n\n## [Unreleased]\n\nFirst notes.\n";
+    assert_eq!(
+        insert_version_section(
+            Some(first),
+            &heading,
+            DEFAULT_UNRELEASED_HEADING,
+            &Version::new(0, 1, 0),
+            "2026-11-04",
+            "First notes.\n",
+        )
+        .unwrap(),
+        "# Changelog\n\n## [Unreleased]\n\n## [0.1.0] - 2026-11-04\n\nFirst notes.\n\n"
+    );
 }
 
 #[test]
