@@ -1467,6 +1467,7 @@ dependencies = [
  "flate2",
  "git-cliff-core",
  "git2",
+ "glob",
  "jsonc-parser",
  "minijinja",
  "regex",

@@ -107,6 +107,26 @@
         };
       };
 
+      cargoWorkspaceModule = { config, ... }: {
+        options = {
+          cargoToml = mkOption {
+            type = relativePath;
+            default = "Cargo.toml";
+            description = "Repository-relative path to the workspace root's Cargo.toml.";
+          };
+
+          cargoLock = mkOption {
+            type = relativePath;
+            default =
+              if lib.hasInfix "/" config.cargoToml
+              then "${builtins.dirOf config.cargoToml}/Cargo.lock"
+              else "Cargo.lock";
+            defaultText = lib.literalMD "`Cargo.lock` next to `cargoToml`";
+            description = "Repository-relative path to the workspace's Cargo.lock.";
+          };
+        };
+      };
+
       keyedFileModule = format: {
         options = {
           path = mkOption {
@@ -458,6 +478,22 @@
           description = "Cargo version sources and writers.";
         };
 
+        versionFiles.cargoWorkspace = mkOption {
+          type = types.attrsOf (types.submodule cargoWorkspaceModule);
+          default = { };
+          example = lib.literalExpression ''
+            {
+              my-workspace = { };
+              backend.cargoToml = "backend/Cargo.toml";
+            }
+          '';
+          description = ''
+            Cargo workspace version sources and writers, keyed by a label. The flake reads
+            `workspace.package.version`. Presswerk writes it and the `Cargo.lock` entry of every
+            workspace member with `version.workspace = true`.
+          '';
+        };
+
         versionFiles.toml = mkOption {
           type = types.attrsOf (types.submodule (keyedFileModule "TOML"));
           default = { };
@@ -718,6 +754,15 @@
                   }
               )
               config.versionFiles.cargo
+            ++ lib.mapAttrsToList
+              (
+                name: workspace:
+                  lib.mkDefinition {
+                    file = "versionFiles.cargoWorkspace.${name} (${workspace.cargoToml})";
+                    value = (builtins.fromTOML (read workspace.cargoToml)).workspace.package.version;
+                  }
+              )
+              config.versionFiles.cargoWorkspace
             ++ keyed "toml" builtins.fromTOML
             ++ keyed "json" builtins.fromJSON
             ++ lib.mapAttrsToList

@@ -40,6 +40,22 @@ in
               ]
           )
           releaseConfig.versionFiles.cargo)
+      ++ lib.concatLists
+        (lib.mapAttrsToList
+          (
+            _name: workspace:
+              [
+                {
+                  path = workspace.cargoToml;
+                  toml = "workspace.package.version";
+                }
+                {
+                  path = workspace.cargoLock;
+                  cargoWorkspace = workspace.cargoToml;
+                }
+              ]
+          )
+          releaseConfig.versionFiles.cargoWorkspace)
       ++ lib.mapAttrsToList
         (_name: file: {
           inherit (file) path;
