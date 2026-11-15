@@ -107,7 +107,7 @@
         };
       };
 
-      cargoWorkspaceModule = {
+      cargoWorkspaceModule = { config, ... }: {
         options = {
           cargoToml = mkOption {
             type = relativePath;
@@ -117,7 +117,11 @@
 
           cargoLock = mkOption {
             type = relativePath;
-            default = "Cargo.lock";
+            default =
+              if lib.hasInfix "/" config.cargoToml
+              then "${builtins.dirOf config.cargoToml}/Cargo.lock"
+              else "Cargo.lock";
+            defaultText = lib.literalMD "`Cargo.lock` next to `cargoToml`";
             description = "Repository-relative path to the workspace's Cargo.lock.";
           };
         };

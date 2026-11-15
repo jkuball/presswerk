@@ -236,6 +236,34 @@ in
       };
     };
 
+    "test a Cargo workspace's lock file defaults to the one next to its manifest" = {
+      expr = (mkRelease {
+        sourceRoot = fixtureRoot;
+        versionFiles.cargoWorkspace = {
+          root = { };
+          backend.cargoToml = "services/backend/Cargo.toml";
+        };
+      }).versionFiles;
+      expected = [
+        {
+          path = "services/backend/Cargo.toml";
+          toml = "workspace.package.version";
+        }
+        {
+          path = "services/backend/Cargo.lock";
+          cargoWorkspace = "services/backend/Cargo.toml";
+        }
+        {
+          path = "Cargo.toml";
+          toml = "workspace.package.version";
+        }
+        {
+          path = "Cargo.lock";
+          cargoWorkspace = "Cargo.toml";
+        }
+      ];
+    };
+
     "test a disagreeing Cargo workspace fails" = {
       expr = succeeds (mkRelease {
         sourceRoot = fixtureRoot;

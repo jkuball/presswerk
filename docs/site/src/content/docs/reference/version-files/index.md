@@ -50,7 +50,9 @@ entry per workspace. Its name is only a label. The flake reads `workspace.packag
 workspace root's `Cargo.toml`. Presswerk writes that field, resolves `workspace.members`
 (including globs, minus `workspace.exclude`), and writes the `Cargo.lock` package entry of every
 member with `version.workspace = true`, including a root package. It checks that all of them carry
-the same version.
+the same version. Presswerk does not add the members that Cargo adds implicitly through path
+dependencies; list them in `workspace.members`. Unless `cargoLock` says otherwise, the
+`Cargo.lock` next to `cargoToml` is written.
 
 ```nix presswerk-module
 versionFiles.cargoWorkspace.my-workspace = { };
