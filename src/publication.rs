@@ -20,24 +20,34 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use url::Url;
 
+/// Why a predecessor's declaration cannot be read, so only `--trust-predecessor` can cross it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnreadableDeclaration {
+    /// Written for a schema version this CLI cannot read.
+    UnsupportedSchema(i64),
+    /// The predecessor has no Presswerk declaration, e.g. it was released by another tool.
+    Missing,
+}
+
+/// A predecessor release whose declaration cannot be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnsupportedPredecessor {
+pub struct UnreadablePredecessor {
     pub tag: String,
     pub commit: Oid,
-    pub schema_version: i64,
+    pub declaration: UnreadableDeclaration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicationError {
     message: String,
-    unsupported_predecessor: Option<UnsupportedPredecessor>,
+    unreadable_predecessor: Option<UnreadablePredecessor>,
 }
 
 impl PublicationError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
-            unsupported_predecessor: None,
+            unreadable_predecessor: None,
         }
     }
 
@@ -50,19 +60,41 @@ impl PublicationError {
         let message = format!(
             "previous release tag {tag:?} at {commit} uses a declaration with schemaVersion {schema_version} that this CLI cannot read; verify that release with its original Presswerk toolchain, then run `presswerk prepare --trust-predecessor {tag}={commit}`"
         );
+        Self::unreadable_predecessor(
+            message,
+            tag,
+            commit,
+            UnreadableDeclaration::UnsupportedSchema(schema_version),
+        )
+    }
+
+    pub fn undeclared_predecessor(tag: impl Into<String>, commit: Oid) -> Self {
+        let tag = tag.into();
+        let message = format!(
+            "previous release {tag} at {commit} has no Presswerk declaration\n  If {tag} was released completely by another tool, adopt it once:\n    presswerk prepare --trust-predecessor {tag}={commit}"
+        );
+        Self::unreadable_predecessor(message, tag, commit, UnreadableDeclaration::Missing)
+    }
+
+    fn unreadable_predecessor(
+        message: String,
+        tag: String,
+        commit: Oid,
+        declaration: UnreadableDeclaration,
+    ) -> Self {
         Self {
             message,
-            unsupported_predecessor: Some(UnsupportedPredecessor {
+            unreadable_predecessor: Some(UnreadablePredecessor {
                 tag,
                 commit,
-                schema_version,
+                declaration,
             }),
         }
     }
 
     #[must_use]
-    pub fn as_unsupported_predecessor(&self) -> Option<&UnsupportedPredecessor> {
-        self.unsupported_predecessor.as_ref()
+    pub fn as_unreadable_predecessor(&self) -> Option<&UnreadablePredecessor> {
+        self.unreadable_predecessor.as_ref()
     }
 }
 
@@ -146,6 +178,10 @@ pub type ArtifactSteps = Vec<ArtifactStep>;
 pub trait TagPublisher {
     fn state(&self, release: &Release) -> Result<RemoteState, PublicationError>;
     fn publish(&self, release: &Release) -> Result<(), PublicationError>;
+    /// The commit a lightweight remote tag points to, or `None` if the tag is not lightweight.
+    fn lightweight_target(&self, _tag: &str) -> Result<Option<Oid>, PublicationError> {
+        Ok(None)
+    }
 }
 
 pub trait Publisher {
@@ -942,6 +978,13 @@ impl GitTagPublisher {
 }
 
 impl TagPublisher for GitTagPublisher {
+    fn lightweight_target(&self, tag: &str) -> Result<Option<Oid>, PublicationError> {
+        Ok(match self.remote_target(tag)? {
+            Some(RemoteTag::Lightweight(commit)) => Some(commit),
+            _ => None,
+        })
+    }
+
     fn state(&self, release: &Release) -> Result<RemoteState, PublicationError> {
         let expected = Oid::from_str(&release.commit).map_err(|error| {
             PublicationError::new(format!(
@@ -1507,6 +1550,13 @@ fn verify_predecessor_with_trust_mode(
                     UNSTABLE_SCHEMA_VERSION,
                 ))
             }
+            // Presswerk never released a commit without a lock file, so it has no declaration either.
+            Err(EvaluationError::MissingDeclaration(_) | EvaluationError::MissingLockFile(_)) => {
+                Err(PublicationError::undeclared_predecessor(
+                    previous_tag.clone(),
+                    commit,
+                ))
+            }
             Err(error) => Err(PublicationError::new(error.to_string())),
         },
         |publisher, tag, _version| {
@@ -1702,16 +1752,16 @@ where
         Ok(declaration) => {
             if trusted_predecessor.is_some() {
                 return Err(PublicationError::new(format!(
-                    "trusted predecessor {previous_tag}={previous_commit} is unnecessary because its declaration schema is supported"
+                    "trusted predecessor {previous_tag}={previous_commit} is unnecessary because its declaration is readable"
                 )));
             }
             declaration
         }
         Err(error) => {
-            let Some(unsupported) = error.as_unsupported_predecessor() else {
+            let Some(unreadable) = error.as_unreadable_predecessor() else {
                 return Err(error);
             };
-            if unsupported.tag != previous_tag || unsupported.commit != previous_commit {
+            if unreadable.tag != previous_tag || unreadable.commit != previous_commit {
                 return Err(error);
             }
             let Some(trusted) = trusted_predecessor else {
@@ -1719,15 +1769,17 @@ where
             };
             if trusted.tag != previous_tag || trusted.commit != previous_commit {
                 return Err(PublicationError::new(format!(
-                    "trusted predecessor {}={} does not match expected unsupported predecessor {previous_tag}={previous_commit}",
+                    "trusted predecessor {}={} does not match expected predecessor {previous_tag}={previous_commit}",
                     trusted.tag, trusted.commit
                 )));
             }
+            // A trusted tag may be lightweight, e.g. when another tool created it.
             return verified_remote_predecessor(
                 tag_publisher,
                 previous_version,
                 previous_tag,
                 previous_commit,
+                true,
             )
             .map(Some);
         }
@@ -1761,6 +1813,7 @@ where
         previous_version,
         previous_tag.clone(),
         previous_commit,
+        false,
     )?;
 
     let expected_prerelease = !previous_version.pre.is_empty();
@@ -1826,6 +1879,7 @@ fn verified_remote_predecessor(
     previous_version: &Version,
     previous_tag: String,
     previous_commit: Oid,
+    accept_lightweight: bool,
 ) -> Result<VerifiedPredecessor, PublicationError> {
     let previous = Release {
         commit: previous_commit.to_string(),
@@ -1834,16 +1888,25 @@ fn verified_remote_predecessor(
         notes: String::new(),
     };
     match tag_publisher.state(&previous)? {
-        RemoteState::Matching => Ok(VerifiedPredecessor {
-            version: previous_version.clone(),
-            tag: previous_tag,
-            commit: previous_commit,
-        }),
-        RemoteState::Missing => Err(PublicationError::new(format!(
-            "previous release tag {previous_tag:?} is missing from the remote"
-        ))),
-        RemoteState::Conflicting(message) => Err(PublicationError::new(message)),
+        RemoteState::Matching => {}
+        RemoteState::Missing => {
+            return Err(PublicationError::new(format!(
+                "previous release tag {previous_tag:?} is missing from the remote"
+            )));
+        }
+        RemoteState::Conflicting(message) => {
+            if !accept_lightweight
+                || tag_publisher.lightweight_target(&previous_tag)? != Some(previous_commit)
+            {
+                return Err(PublicationError::new(message));
+            }
+        }
     }
+    Ok(VerifiedPredecessor {
+        version: previous_version.clone(),
+        tag: previous_tag,
+        commit: previous_commit,
+    })
 }
 
 fn stable_base(

@@ -1,5 +1,6 @@
 mod support;
 
+use git2::Oid;
 use presswerk::analysis::{Analysis, Bump};
 use presswerk::declaration::{
     Compression, OciHelmPublisher, OciImagePublisher, ReleaseDeclaration, Token, Username,
@@ -8,8 +9,8 @@ use presswerk::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GitTagPublisher, GithubClient,
     GithubPublisher, GithubReleaseReader, GithubReleaseState, LocalAsset, PublicationError,
     Publisher, PublisherState, PublisherStep, Release, RemoteState, TagPublisher, TagStep,
-    is_valid_successor, publish_ordered, validate_new_release, verify_predecessor_with,
-    verify_predecessor_with_oci_helm,
+    UnreadableDeclaration, is_valid_successor, publish_ordered, validate_new_release,
+    verify_predecessor_with, verify_predecessor_with_oci_helm,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
@@ -470,7 +471,16 @@ fn predecessor_verification_uses_the_tagged_commits_own_publishers() {
 }
 
 #[test]
-fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() {
+fn unreadable_predecessors_require_the_exact_trust_and_a_matching_remote_tag() {
+    for unreadable in [
+        UnreadableDeclaration::UnsupportedSchema(1),
+        UnreadableDeclaration::Missing,
+    ] {
+        unreadable_predecessor_requires_the_exact_trust(unreadable);
+    }
+}
+
+fn unreadable_predecessor_requires_the_exact_trust(unreadable: UnreadableDeclaration) {
     let repository = GitRepo::new();
     let predecessor = repository.commit_version("0.1.0", "🔖 Prepare predecessor");
     repository.annotated_tag("v0.1.0");
@@ -479,7 +489,14 @@ fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() 
     let predecessor = predecessor.parse().unwrap();
     let candidate = candidate.parse().unwrap();
     let current_declaration = declaration("0.1.0", "new/project");
-    let unsupported = PublicationError::unsupported_predecessor("v0.1.0", predecessor, 1);
+    let unsupported = match unreadable {
+        UnreadableDeclaration::UnsupportedSchema(schema_version) => {
+            PublicationError::unsupported_predecessor("v0.1.0", predecessor, schema_version)
+        }
+        UnreadableDeclaration::Missing => {
+            PublicationError::undeclared_predecessor("v0.1.0", predecessor)
+        }
+    };
 
     let tag = FakeTagPublisher {
         state: Rc::new(RefCell::new(RemoteState::Matching)),
@@ -497,10 +514,9 @@ fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() 
         |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap_err();
-    assert_eq!(
-        error.as_unsupported_predecessor().unwrap().commit,
-        predecessor
-    );
+    let reported = error.as_unreadable_predecessor().unwrap();
+    assert_eq!(reported.commit, predecessor);
+    assert_eq!(reported.declaration, unreadable);
 
     let forged = TrustedPredecessor {
         tag: "v0.1.0".into(),
@@ -554,6 +570,82 @@ fn unsupported_predecessor_requires_the_exact_trust_and_a_matching_remote_tag() 
     .unwrap()
     .unwrap();
     assert_eq!(verified.commit, predecessor);
+
+    let lightweight = LightweightTag(predecessor);
+    let verified = verify_predecessor_with(
+        repository.path(),
+        candidate,
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &lightweight,
+        Some(&trusted),
+        |_| Err(unsupported.clone()),
+        |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
+        |_, _| unreachable!("no OCI image publishers are declared"),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(verified.commit, predecessor);
+
+    let elsewhere = LightweightTag(candidate);
+    let error = verify_predecessor_with(
+        repository.path(),
+        candidate,
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &elsewhere,
+        Some(&trusted),
+        |_| Err(unsupported.clone()),
+        |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
+        |_, _| unreachable!("no OCI image publishers are declared"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("lightweight"));
+}
+
+/// A remote whose release tag is lightweight and points to the given commit.
+struct LightweightTag(Oid);
+
+impl TagPublisher for LightweightTag {
+    fn state(&self, _release: &Release) -> Result<RemoteState, PublicationError> {
+        Ok(RemoteState::Conflicting(format!(
+            "remote tag is lightweight and points to {}",
+            self.0
+        )))
+    }
+
+    fn publish(&self, _release: &Release) -> Result<(), PublicationError> {
+        unreachable!("verification does not publish")
+    }
+
+    fn lightweight_target(&self, _tag: &str) -> Result<Option<Oid>, PublicationError> {
+        Ok(Some(self.0))
+    }
+}
+
+#[test]
+fn an_ordinary_predecessor_requires_an_annotated_tag() {
+    let repository = GitRepo::new();
+    let predecessor = repository.commit_version("0.1.0", "🔖 Prepare predecessor");
+    repository.tag("v0.1.0");
+    repository.write("feature", "implemented\n");
+    let candidate = repository.commit("✨ Add a feature");
+    let current_declaration = declaration("0.1.0", "new/project");
+    let previous_declaration = declaration("0.1.0", "old/project");
+
+    let error = verify_predecessor_with(
+        repository.path(),
+        candidate.parse().unwrap(),
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &LightweightTag(predecessor.parse().unwrap()),
+        None,
+        |_| Ok(previous_declaration.clone()),
+        |_, _, _| unreachable!("the tag is checked before publishers"),
+        |_, _| unreachable!("no OCI image publishers are declared"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("lightweight"));
 }
 
 #[test]

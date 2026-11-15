@@ -304,15 +304,22 @@ example, a first Gitmoji feature commit bumps the implicit `0.0.0` baseline to `
 For the first milestone, the fresh baseline is recognized by a simple rule: the committed
 version is `0.0.0` and no release tag exists. Such a commit is neither a pending release nor a
 previous release whose completion must be checked. A release commit whose parent is at this
-baseline skips the previous-release check. Adopting a repository with releases made by other
-tools remains open. See [scenario 13](scenarios.md#13-first-automatic-release).
+baseline skips the previous-release check. Repositories with releases made by other tools are
+adopted as described below. See [scenario 13](scenarios.md#13-first-automatic-release).
 
 ### Adoption
 
-Fresh repositories require no special adoption flow. For an already released or versioned
-repository, existing tags, committed versions, and possibly incomplete releases need to be
-reconciled without mistaking them for a fresh `0.0.0` baseline. The exact workflow is not part
-of the first self-release milestone.
+Fresh repositories require no special adoption flow. An already released repository adopts its
+last release as the baseline: the commit of that release has no Presswerk declaration, so
+`prepare` stops and names the command `prepare --trust-predecessor TAG=SHA`. With it, the tag is
+rendered from the current declaration's `tag.format` and must exist on the remote, point to the
+given commit, and be an ancestor; the currently committed version must match it. The old release's
+publishers are not checked, because another tool published them. The trust is recorded in the
+`Presswerk-Trusted-Predecessor` trailer of the release commit, so `publish` verifies the same
+predecessor; from the next release on, the predecessor is an ordinary Presswerk release.
+
+A committed version without any tag is not adopted: it stays a pending release until its tag is
+created by hand.
 
 ## Branches
 

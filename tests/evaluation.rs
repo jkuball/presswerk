@@ -165,6 +165,45 @@ fn treats_an_undecodable_unstable_schema_as_written_for_another_version() {
 }
 
 #[test]
+fn reports_a_commit_without_a_flake_as_missing_declaration() {
+    let repository = GitRepo::new();
+    repository.write("Cargo.toml", "[package]\nversion = \"0.38.2\"\n");
+    let commit = repository.commit("🔖 Release by another tool");
+
+    assert!(matches!(
+        evaluate(&repository, "HEAD").unwrap_err(),
+        EvaluationError::MissingDeclaration(missing) if missing.to_string() == commit
+    ));
+}
+
+#[test]
+fn reports_a_flake_without_presswerk_output_as_missing_declaration() {
+    let repository = GitRepo::new();
+    repository.write("flake.nix", "{\n  outputs = { self }: { };\n}\n");
+    repository.write("flake.lock", LOCK_FILE);
+    let commit = repository.commit("🔖 Release by another tool");
+
+    let error = evaluate(&repository, "HEAD").unwrap_err();
+    assert!(error.to_string().contains("has no Presswerk declaration"));
+    assert!(matches!(
+        error,
+        EvaluationError::MissingDeclaration(missing) if missing.to_string() == commit
+    ));
+}
+
+#[test]
+fn keeps_a_failing_presswerk_output_as_evaluation_error() {
+    let repository = GitRepo::new();
+    repository.write("flake.nix", flake("throw \"broken declaration\""));
+    repository.write("flake.lock", LOCK_FILE);
+    repository.commit("🧪 Break the declaration");
+
+    let error = evaluate(&repository, "HEAD").unwrap_err();
+    assert!(error.to_string().contains("broken declaration"), "{error}");
+    assert!(matches!(error, EvaluationError::Nix(_)));
+}
+
+#[test]
 fn rejects_a_commit_without_a_lock_file_without_creating_one() {
     let repository = GitRepo::new();
     repository.write("flake.nix", valid_flake("1.2.3"));

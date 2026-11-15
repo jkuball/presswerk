@@ -50,13 +50,11 @@ impl ReleaseDeclarationEvaluator {
         let commit_id = commit.id();
         let tree = commit.tree().map_err(EvaluationError::Git)?;
 
-        match tree.get_path(Path::new("flake.lock")) {
-            Ok(entry) if entry.kind() == Some(ObjectType::Blob) => {}
-            Ok(_) => return Err(EvaluationError::MissingLockFile(commit_id)),
-            Err(error) if error.code() == ErrorCode::NotFound => {
-                return Err(EvaluationError::MissingLockFile(commit_id));
-            }
-            Err(error) => return Err(EvaluationError::Git(error)),
+        if !contains_blob(&tree, "flake.nix")? {
+            return Err(EvaluationError::MissingDeclaration(commit_id));
+        }
+        if !contains_blob(&tree, "flake.lock")? {
+            return Err(EvaluationError::MissingLockFile(commit_id));
         }
 
         let workdir = repository
@@ -79,9 +77,18 @@ impl ReleaseDeclarationEvaluator {
     }
 }
 
+fn contains_blob(tree: &git2::Tree<'_>, path: &str) -> Result<bool, EvaluationError> {
+    match tree.get_path(Path::new(path)) {
+        Ok(entry) => Ok(entry.kind() == Some(ObjectType::Blob)),
+        Err(error) if error.code() == ErrorCode::NotFound => Ok(false),
+        Err(error) => Err(EvaluationError::Git(error)),
+    }
+}
+
 #[derive(Deserialize)]
 struct NixEvaluation {
-    declaration: serde_json::Value,
+    /// `None` if the flake has no `presswerk.default` output.
+    declaration: Option<serde_json::Value>,
     revision: Option<String>,
 }
 
@@ -93,7 +100,7 @@ fn evaluate_pinned_flake(
     let reference = serde_json::to_string(reference).expect("flake reference is a JSON string");
     // A virtual lock update omits sourceInfo.rev, so return it beside the declaration.
     let expression = format!(
-        "let flake = builtins.getFlake {reference}; in {{ declaration = flake.presswerk.default; revision = flake.sourceInfo.rev or null; }}"
+        "let flake = builtins.getFlake {reference}; in {{ declaration = flake.presswerk.default or null; revision = flake.sourceInfo.rev or null; }}"
     );
     let mut command = Command::new("nix");
     command.args([
@@ -136,7 +143,10 @@ fn evaluate_pinned_flake(
         });
     }
 
-    let json = serde_json::to_string(&evaluated.declaration)
+    let Some(declaration) = evaluated.declaration else {
+        return Err(EvaluationError::MissingDeclaration(expected_commit));
+    };
+    let json = serde_json::to_string(&declaration)
         .context("encode evaluated release declaration")
         .map_err(EvaluationError::Nix)?;
     ReleaseDeclaration::from_json(&json).map_err(EvaluationError::Declaration)
@@ -148,9 +158,14 @@ pub enum EvaluationError {
     Io(std::io::Error),
     BareRepository,
     InvalidRepositoryPath(PathBuf),
+    /// The commit has no `flake.nix` or its flake has no `presswerk.default` output.
+    MissingDeclaration(Oid),
     MissingLockFile(Oid),
     LockFileRequiresChanges(Oid),
-    UnexpectedLockedRevision { expected: Oid, actual: String },
+    UnexpectedLockedRevision {
+        expected: Oid,
+        actual: String,
+    },
     Nix(anyhow::Error),
     Declaration(DeclarationError),
 }
@@ -167,6 +182,10 @@ impl fmt::Display for EvaluationError {
                     "repository path cannot be represented as a file URL: {path:?}"
                 )
             }
+            Self::MissingDeclaration(commit) => write!(
+                formatter,
+                "commit {commit} has no Presswerk declaration (flake output `presswerk.default`)"
+            ),
             Self::MissingLockFile(commit) => {
                 write!(formatter, "commit {commit} does not contain flake.lock")
             }
