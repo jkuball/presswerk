@@ -73,8 +73,8 @@ export default defineConfig({
               items: [
                 { label: 'Overview', slug: 'reference/publishers' },
                 { label: 'GitHub Release', slug: 'reference/publishers/github-release' },
-                { label: 'OCI Helm', slug: 'reference/publishers/oci-helm' },
-                { label: 'OCI image', slug: 'reference/publishers/oci-image' },
+                { label: 'OCI: Helm Chart', slug: 'reference/publishers/oci-helm' },
+                { label: 'OCI: Image', slug: 'reference/publishers/oci-image' },
               ],
             },
           ],

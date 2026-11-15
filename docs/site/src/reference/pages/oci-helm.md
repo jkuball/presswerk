@@ -88,8 +88,8 @@ missing or different chart stops them, so the interrupted release is published a
 
 ## Credentials
 
-OCI Helm publishers use the same registry authentication as [OCI image
-publishers](/reference/publishers/oci-image/#credentials).
+OCI Helm publishers use the same registry authentication as
+[OCI: Image](/reference/publishers/oci-image/#credentials).
 `username.secret` and `password.secret` name environment variables read at run time. A public
 username may instead use `username.value`, such as `oauth2accesstoken` for Google Artifact
 Registry. Credentials never enter the declaration or Nix store and are never printed.

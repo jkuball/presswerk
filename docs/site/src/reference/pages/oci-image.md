@@ -24,7 +24,7 @@ with the image for each platform. The Nix option `publishers.oci` is an alias fo
 such as `user:token@`, a query, or a fragment. Loopback registries such as `localhost:5000/project`
 are reached over plain HTTP, every other registry over HTTPS.
 
-Helm charts use the separate [OCI Helm publisher](/reference/publishers/oci-helm/), which shares this
+Helm charts use [OCI: Helm Chart](/reference/publishers/oci-helm/), which shares this
 publisher's registry authentication but has chart-specific version and repository checks.
 
 `presswerk plan` lists the publisher with its platforms and the tags it will push:

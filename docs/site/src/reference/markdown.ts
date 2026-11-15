@@ -169,7 +169,7 @@ export const referencePages: ReferencePage[] = [
   },
   {
     slug: 'reference/publishers/oci-helm',
-    title: 'OCI Helm publisher',
+    title: 'OCI: Helm Chart',
     description: 'The OCI Helm publisher: packaged charts, OCI artifact format, retry behavior, credentials, and options.',
     markdown: ({ options }, base, target) =>
       fill(ociHelmPage, base, {
@@ -178,7 +178,7 @@ export const referencePages: ReferencePage[] = [
   },
   {
     slug: 'reference/publishers/oci-image',
-    title: 'OCI image publisher',
+    title: 'OCI: Image',
     description: 'The OCI image publisher for container images: images, tags and aliases, behavior, credentials, and options.',
     markdown: ({ options }, base, target) =>
       fill(ociImagePage, base, {
