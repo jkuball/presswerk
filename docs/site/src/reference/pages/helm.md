@@ -45,6 +45,7 @@ release's [version files](/reference/version-files/). Today they use regex write
     path = "chart/Chart.yaml";
     pattern = ''^version: (?<version>\S+)$'';
   };
+  # Optional: only when appVersion follows the release version.
   versionFiles.regex.chartAppVersion = {
     path = "chart/Chart.yaml";
     pattern = ''^appVersion: (?<version>\S+)$'';
@@ -53,7 +54,7 @@ release's [version files](/reference/version-files/). Today they use regex write
 ```
 
 The flake cannot read regex version files, so also declare a version file it can read. Native YAML
-version files are planned in [#102](https://github.com/jkuball/presswerk/issues/102).
+version files are planned.
 
 The chart is pushed under exactly one tag, the release version. Following Helm's convention, `+`
 in SemVer build metadata becomes `_` in the registry tag, so `1.2.0+build.5` becomes
