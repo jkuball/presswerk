@@ -1,4 +1,6 @@
-use crate::analysis::{Analysis, Analyzer, CommitRange, render_release_notes};
+use crate::analysis::{
+    Analysis, Analyzer, CommitRange, render_release_notes, template_uses_unreleased,
+};
 use crate::declaration::{Publishers, ReleaseDeclaration, Tag};
 use crate::evaluation::{EvaluatedReleaseDeclaration, evaluate_release_declaration};
 use crate::publication::{VerifiedPredecessor, verify_predecessor_with_trust};
@@ -129,9 +131,21 @@ pub fn build_release_plan(
     )?;
     let analysis = analyzer.analyze(&range, &declaration.analyzer, &declaration.tag)?;
     let next_version = analysis.next_version(Some(&declaration.version))?;
+    let heading = declaration.changelog.heading()?;
+    let changelog = read_optional_text(&repository, &tree, &declaration.changelog.path)?;
+    // A template without `unreleased` leaves the hand-written section untouched.
+    let unreleased_heading = template_uses_unreleased(&declaration.changelog.template)
+        .then_some(declaration.changelog.unreleased_heading.as_str());
+    let unreleased = changelog.as_deref().zip(unreleased_heading).map_or(
+        "",
+        |(changelog, unreleased_heading)| {
+            crate::changelog::read_unreleased(changelog, &heading, unreleased_heading)
+        },
+    );
     let notes = render_release_notes(
         &analysis,
         next_version.as_ref().unwrap_or(&declaration.version),
+        unreleased,
         &declaration.changelog.template,
     )?;
     let mut version_files = Vec::new();
@@ -174,10 +188,10 @@ pub fn build_release_plan(
                 .map(|(path, contents)| ReleaseFile::new(path, contents)),
         );
 
-        let changelog = read_optional_text(&repository, &tree, &declaration.changelog.path)?;
         let changelog = crate::changelog::insert_version_section(
             changelog.as_deref(),
-            &declaration.changelog.heading()?,
+            &heading,
+            unreleased_heading,
             next_version,
             date,
             &notes,

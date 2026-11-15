@@ -61,6 +61,43 @@ release version's heading, up to the next heading of the same or a higher level,
 heading. `prepare` checks that the new section reads back as the rendered notes, so
 `changelog.template` must not use headings of the heading's level or higher.
 
+## Unreleased notes
+
+Hand-written release notes go under
+[`changelog.unreleasedHeading`](/reference/options/#changelog.unreleasedHeading) above the first
+version heading. The heading is a literal line, `## [Unreleased]` by default; trailing whitespace is
+ignored. Its text reaches up to the next level-2 heading:
+
+```markdown
+# Changelog
+
+## [Unreleased]
+
+The configuration file is now `presswerk.toml`; see the migration below.
+
+## [0.10.1] - 2026-11-14
+```
+
+`prepare` moves the text into the new version section through the template's `unreleased`
+variable and removes the unreleased section, heading included, even when it has no text:
+
+```markdown
+# Changelog
+
+## [0.11.0] - 2026-11-20
+
+The configuration file is now `presswerk.toml`; see the migration below.
+
+### ✨ Features
+
+- …
+```
+
+`prepare` never adds the heading; write it again for the next release's notes. A changelog without
+it gets commit-derived notes alone. The
+text does not cause a release by itself, the commit analysis decides. `presswerk plan` shows it in
+the notes preview.
+
 ## Template
 
 [`changelog.template`](/reference/options/#changelog.template) is a MiniJinja string. Its default is
@@ -75,6 +112,10 @@ Presswerk's built-in Markdown template. Read a template file with `builtins.read
 The context is the same for every commit analyzer:
 
 - `version`: the version being prepared, as a string.
+- `unreleased`: the trimmed text under the [unreleased heading](#unreleased-notes), or an empty
+  string, so templates use `{% if unreleased %}`. The built-in template puts it before the groups
+  and leaves out "No recorded changes." when there is text. A template that does not use
+  `unreleased` leaves the unreleased section untouched.
 - `groups`: the release-note groups, ordered by level (`rank`), then by descending size, then by
   name.
   - `title`: the group heading.
@@ -101,6 +142,25 @@ Release {{ version }}
 - {{ commit.text }} ([{{ commit.id[:7] }}](https://github.com/owner/project/commit/{{ commit.id }}))
 {% endfor %}
 {% endfor %}
+```
+
+A template that puts the hand-written text first and collapses the generated commits:
+
+```jinja
+{% if unreleased %}{{ unreleased }}
+
+{% endif %}{% if groups %}<details>
+<summary>Commits</summary>
+
+{% for group in groups %}
+### {{ group.title }}
+
+{% for commit in group.commits %}
+- {{ commit.text }}
+{% endfor %}
+{% endfor %}
+</details>
+{% endif %}
 ```
 
 Template syntax, unavailable filters, and unknown context fields fail declaration validation during

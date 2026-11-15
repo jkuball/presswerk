@@ -1,6 +1,8 @@
-{% if groups %}{% for group in groups %}### {{ group.title }}
+{% if unreleased %}{{ unreleased }}
+{% if groups %}
+{% endif %}{% endif %}{% if groups %}{% for group in groups %}### {{ group.title }}
 
 {% for commit in group.commits %}- {{ commit.text }}
 {% endfor %}{% if not loop.last %}
-{% endif %}{% endfor %}{% else %}No recorded changes.
+{% endif %}{% endfor %}{% elif not unreleased %}No recorded changes.
 {% endif %}

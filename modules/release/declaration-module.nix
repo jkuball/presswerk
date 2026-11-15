@@ -108,6 +108,10 @@
             && placeholderCount "version" format == 1
             && validDatePlaceholder format
         ) // { description = "Markdown heading line containing {version} exactly once and {date} or {date:<format>} at most once"; };
+      unreleasedHeading = types.addCheck types.str
+        (
+          line: lib.hasPrefix "#" line && !(lib.hasInfix "\n" line) && !(lib.hasInfix "\r" line)
+        ) // { description = "Markdown heading line"; };
 
       cargoModule = { name, ... }: {
         options = {
@@ -616,7 +620,7 @@
             example = lib.literalExpression ''
               builtins.readFile ./release-notes.md.j2
             '';
-            description = "MiniJinja template for the changelog section that `prepare` writes. The context contains `version` and `groups`, each with `title` and `commits`; every commit has `text`, `message`, `scope`, `breaking`, and `id`.";
+            description = "MiniJinja template for the changelog section that `prepare` writes. The context contains `version`; `unreleased`, the hand-written text under `changelog.unreleasedHeading`, or an empty string; and `groups`, each with `title` and `commits`; every commit has `text`, `message`, `scope`, `breaking`, and `id`.";
           };
 
           heading = mkOption {
@@ -624,6 +628,13 @@
             default = "## [{version}] - {date}";
             example = "## v{version} ({date})";
             description = "Version heading of a changelog section, in which `{version}` stands for the release version and `{date}` for the release date: one line that starts with `#`, with `{version}` exactly once and `{date}` at most once; other text is literal and trailing whitespace is ignored. `{date:<format>}` writes the date in a strftime format, such as `%d.%m.%Y` or `%B %e, %Y`; plain `{date}` means `{date:%Y-%m-%d}`. The format must write a full date that can be read back, and existing headings match only when their date parses in that format. The same format renders new headings and finds existing ones, for the duplicate check, the insertion point, and the section that publishers use as release notes.";
+          };
+
+          unreleasedHeading = mkOption {
+            type = unreleasedHeading;
+            default = "## [Unreleased]";
+            example = "## Upcoming";
+            description = "Literal heading line of an optional section above the first version heading for hand-written release notes; trailing whitespace is ignored. `prepare` moves its text into the new version section through the template's `unreleased` variable and removes the section, heading included. It never adds the heading, and the text alone does not cause a release. A template that does not use `unreleased` leaves the section untouched.";
           };
         };
 

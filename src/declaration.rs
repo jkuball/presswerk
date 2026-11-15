@@ -1,5 +1,8 @@
 use crate::analysis::Bump;
-use crate::changelog::{ChangelogError, ChangelogHeading, DEFAULT_HEADING};
+use crate::changelog::{
+    ChangelogError, ChangelogHeading, DEFAULT_HEADING, DEFAULT_UNRELEASED_HEADING,
+    validate_unreleased_heading,
+};
 use minijinja::{Environment, UndefinedBehavior, value::Serde};
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -70,12 +73,14 @@ impl ReleaseDeclaration {
         validate_relative_path(&self.changelog.path)?;
         self.changelog
             .heading()
+            .and_then(|_| validate_unreleased_heading(&self.changelog.unreleased_heading))
             .map_err(|error| DeclarationError::Invalid(error.to_string()))?;
         validate_template(
             &self.changelog.template,
             "changelog.template",
             serde_json::json!({
                 "version": "1.2.3",
+                "unreleased": "Hand-written notes.",
                 "groups": [{
                     "title": "Features",
                     "level": "minor",
@@ -490,13 +495,15 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Changelog {
     pub path: String,
     #[serde(default = "default_changelog_template")]
     pub template: String,
     #[serde(default = "default_changelog_heading")]
     pub heading: String,
+    #[serde(default = "default_changelog_unreleased_heading")]
+    pub unreleased_heading: String,
 }
 
 impl Changelog {
@@ -508,6 +515,10 @@ impl Changelog {
 
 fn default_changelog_heading() -> String {
     DEFAULT_HEADING.into()
+}
+
+fn default_changelog_unreleased_heading() -> String {
+    DEFAULT_UNRELEASED_HEADING.into()
 }
 
 fn default_changelog_template() -> String {
@@ -857,6 +868,7 @@ mod tests {
                 path: "CHANGELOG.md".into(),
                 template: DEFAULT_CHANGELOG_TEMPLATE.into(),
                 heading: DEFAULT_HEADING.into(),
+                unreleased_heading: DEFAULT_UNRELEASED_HEADING.into(),
             }
         );
         assert_eq!(
@@ -1253,6 +1265,16 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("changelog.heading")
+        );
+
+        let invalid = declaration(|value| {
+            value["changelog"]["unreleasedHeading"] = json!("Unreleased");
+        });
+        assert!(
+            ReleaseDeclaration::from_json(&invalid)
+                .unwrap_err()
+                .to_string()
+                .contains("changelog.unreleasedHeading")
         );
     }
 

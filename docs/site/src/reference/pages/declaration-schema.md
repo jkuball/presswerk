@@ -33,7 +33,9 @@ Every field is required, and unknown fields are rejected.
   MiniJinja template that renders a version section from the analyzed commit groups; it may be
   missing in older declarations and then means the built-in template. `changelog.heading` is the
   version heading format with `{version}` and an optional `{date}` or `{date:<strftime format>}`; it may be missing in older
-  declarations and then means `## [{version}] - {date}`.
+  declarations and then means `## [{version}] - {date}`. `changelog.unreleasedHeading` is the
+  literal heading line of the hand-written section above the first version heading; it may be
+  missing in older declarations and then means `## [Unreleased]`.
 - `versionFiles`: the files whose version `prepare` updates. Each entry has a repository-relative
   `path` and either `toml` or `json`, a dotted key selector such as `"package.version"`, `plain`,
   an empty object for a file that contains only the version, `regex`, a pattern with a `version`
