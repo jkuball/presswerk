@@ -79,8 +79,9 @@ The repository-specific skill is rendered from that repository's release declara
 `plan`, and documents what an agent working in that repository needs to know: the configured
 commit analyzer and how commits must be written to produce which bump, where developer-written
 release notes go, which files carry the version, the tag format, and anything the configured
-publishers require from contributors. Where a skill is installed is the user's choice, for
-example `presswerk skill . > .claude/skills/releasing/SKILL.md`.
+publishers require from contributors. Where a skill is installed is the user's choice; the
+documentation recommends the tool-neutral `.agents/skills/` over agent-specific directories such
+as `.claude/skills/`, for example `presswerk skill . > .agents/skills/releasing/SKILL.md`.
 
 ## Release declaration in the flake
 
