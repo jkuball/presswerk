@@ -21,11 +21,16 @@ fn presswerk(args: &[&str]) -> Output {
 }
 
 fn presswerk_in(repository: &Path, args: &[&str]) -> Output {
+    presswerk_in_with(repository, args, &[])
+}
+
+fn presswerk_in_with(repository: &Path, args: &[&str], envs: &[(&str, &Path)]) -> Output {
     // Give each CLI test a writable store without touching the host's global Nix state.
     let store = tempfile::tempdir().expect("create temporary Nix store");
     Command::new(env!("CARGO_BIN_EXE_presswerk"))
         .args(args)
         .current_dir(repository)
+        .envs(envs.iter().copied())
         .env(
             "NIX_REMOTE",
             format!(
@@ -241,6 +246,55 @@ fn plan_reads_head_and_prepare_creates_the_first_release_commit() {
         changelog.contains("### ✨ Introduce new features\n\n- Add the first feature"),
         "{changelog}"
     );
+}
+
+#[test]
+fn publish_without_a_git_identity_fails_before_writing_anything() {
+    let repository = release_repository();
+    let prepared = presswerk_in(repository.path(), &["prepare"]);
+    assert!(
+        prepared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared.stderr)
+    );
+    let remote = tempfile::tempdir().unwrap();
+    let remote_path = remote.path().to_string_lossy().into_owned();
+    repository.git(["init", "--bare", "--quiet", &remote_path]);
+    repository.git(["remote", "add", "origin", &remote_path]);
+    repository.git(["config", "--unset", "user.name"]);
+    repository.git(["config", "--unset", "user.email"]);
+    // Keep the host's global and system Git configuration, and with it any identity, out of reach.
+    let home = tempfile::tempdir().unwrap();
+    let nowhere = home.path().join("missing");
+
+    let output = presswerk_in_with(
+        repository.path(),
+        &["publish"],
+        &[
+            ("HOME", home.path()),
+            ("XDG_CONFIG_HOME", home.path()),
+            ("GIT_CONFIG_GLOBAL", &nowhere),
+            ("GIT_CONFIG_NOSYSTEM", Path::new("1")),
+        ],
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("could not read Git tagger configuration"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("set them with `git config` in the job that runs `publish`"),
+        "{stderr}"
+    );
+    assert_eq!(repository.git(["tag", "--list"]), "");
+    let remote_tags = Command::new("git")
+        .args(["--git-dir", &remote_path, "tag", "--list"])
+        .output()
+        .unwrap();
+    assert!(remote_tags.status.success());
+    assert!(remote_tags.stdout.is_empty());
 }
 
 /// A repository whose release v0.38.2 was made by another tool, followed by the Presswerk declaration.

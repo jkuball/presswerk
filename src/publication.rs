@@ -8,7 +8,7 @@ use crate::declaration::{
 };
 use crate::evaluation::{EvaluationError, evaluate_release_declaration};
 use crate::release_commit::TrustedPredecessor;
-use git2::{ErrorCode, ObjectType, Oid, Repository};
+use git2::{ErrorCode, ObjectType, Oid, Repository, Signature};
 use minijinja::{Environment, UndefinedBehavior, context};
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -829,10 +829,11 @@ struct GithubReleaseRequest<'a> {
     prerelease: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GitTagPublisher {
     repository: PathBuf,
     remote: String,
+    tagger: Option<Signature<'static>>,
 }
 
 impl GitTagPublisher {
@@ -840,7 +841,25 @@ impl GitTagPublisher {
         Self {
             repository: repository.into(),
             remote: remote.into(),
+            tagger: None,
         }
+    }
+
+    /// Reads the tagger identity up front, so a missing one stops `publish` before anything is
+    /// written. The annotated tag reuses it.
+    pub fn with_tagger(mut self) -> Result<Self, PublicationError> {
+        let repository = self.open_repository()?;
+        self.tagger = Some(read_tagger(&repository)?);
+        Ok(self)
+    }
+
+    fn open_repository(&self) -> Result<Repository, PublicationError> {
+        Repository::open(&self.repository).map_err(|error| {
+            PublicationError::new(format!(
+                "could not open Git repository {}: {error}",
+                self.repository.display()
+            ))
+        })
     }
 
     fn remote_target(&self, tag: &str) -> Result<Option<RemoteTag>, PublicationError> {
@@ -906,12 +925,7 @@ impl GitTagPublisher {
     }
 
     fn create_local_tag(&self, release: &Release) -> Result<(), PublicationError> {
-        let repository = Repository::open(&self.repository).map_err(|error| {
-            PublicationError::new(format!(
-                "could not open Git repository {}: {error}",
-                self.repository.display()
-            ))
-        })?;
+        let repository = self.open_repository()?;
         let commit = Oid::from_str(&release.commit).map_err(|error| {
             PublicationError::new(format!(
                 "invalid release commit {:?}: {error}",
@@ -956,9 +970,10 @@ impl GitTagPublisher {
             }
         }
 
-        let signature = repository.signature().map_err(|error| {
-            PublicationError::new(format!("could not read Git tagger configuration: {error}"))
-        })?;
+        let signature = match &self.tagger {
+            Some(tagger) => tagger.clone(),
+            None => read_tagger(&repository)?,
+        };
         repository
             .tag(
                 &release.tag,
@@ -1042,6 +1057,16 @@ impl TagPublisher for GitTagPublisher {
             ))),
         }
     }
+}
+
+fn read_tagger(repository: &Repository) -> Result<Signature<'static>, PublicationError> {
+    repository.signature().map_err(|error| {
+        PublicationError::new(format!(
+            "could not read Git tagger configuration: {error}; annotated release tags need \
+             `user.name` and `user.email`, so set them with `git config` in the job that runs \
+             `publish`"
+        ))
+    })
 }
 
 /// Why a git command failed: its exit status, what it printed on stderr, and the refs a porcelain
@@ -1224,8 +1249,10 @@ pub fn publish_to_remote(
     crate::artifacts::fetch(images.chain(charts).chain(assets))
         .map_err(|error| PublicationError::new(error.to_string()))?;
 
-    match tag_publisher.state(&release)? {
+    let tag_publisher = match tag_publisher.state(&release)? {
         RemoteState::Missing => {
+            // The tag is created last, so its tagger identity is checked with everything else.
+            let tag_publisher = tag_publisher.with_tagger()?;
             let parent_version =
                 verify_candidate_predecessor(repository_path, commit, &declaration, remote, true)?;
             validate_candidate(
@@ -1236,12 +1263,14 @@ pub fn publish_to_remote(
                 &changelog,
                 analyzer,
             )?;
+            tag_publisher
         }
         RemoteState::Matching => {
             verify_candidate_predecessor(repository_path, commit, &declaration, remote, false)?;
+            tag_publisher
         }
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
-    }
+    };
 
     // The forge release comes last, so it never announces a release whose images are missing.
     let mut publishers: Vec<Box<dyn Publisher>> = Vec::new();
