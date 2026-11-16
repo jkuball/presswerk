@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.16.1] - 2026-11-16
+
+### 📝 Add or update documentation
+
+- (conception): Recommend .agents/skills/ for installing the agent skill
+- (conception): Deliver the agent skill as a skill subcommand with a repository-specific variant
+
+### 🐛 Fix a bug
+
+- (publish): Check the Git tagger identity during preflight
+
+### 💚 Fix CI Build
+
+- (ci): Leave packages.default out of the build so the release link is stable
+
+### ✅ Add, update, or pass tests
+
+- (publish): Fail before writing when the Git identity is missing
+
 ## [0.16.0] - 2026-11-15
 
 ### ✨ Introduce new features
