@@ -163,6 +163,13 @@ fn run() -> Result<()> {
 /// Tells before anything is written which aliases another tool pushed: `publish` keeps them, or
 /// takes them over from the trusted predecessor.
 fn print_alias_notes(plan: &ReleasePlan) {
+    for (publisher, variables) in &plan.anonymous_alias_reads {
+        let verb = if variables.len() == 1 { "is" } else { "are" };
+        eprintln!(
+            "warning: {publisher} is not marked public and {} {verb} not set; checking its aliases anonymously, which will probably fail",
+            variables.join("/")
+        );
+    }
     for alias in &plan.foreign_aliases {
         match &alias.predecessor_tag {
             Some(tag) => eprintln!(

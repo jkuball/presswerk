@@ -1637,6 +1637,27 @@ pub(crate) fn annotated_version(manifest: &[u8]) -> Option<Version> {
     Version::parse(annotated.annotations.get(VERSION_ANNOTATION)?).ok()
 }
 
+/// The credential variables of a publisher that are unset or empty, as `lookup` reads them; none
+/// for a public repository, which `plan` and `prepare` read anonymously.
+pub fn missing_credentials(
+    declaration: &crate::declaration::OciImagePublisher,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Vec<String> {
+    if declaration.public {
+        return Vec::new();
+    }
+    let username = match &declaration.username {
+        crate::declaration::Username::Secret(name) => Some(name.as_str()),
+        crate::declaration::Username::Value(_) => None,
+    };
+    username
+        .into_iter()
+        .chain([declaration.password.secret.as_str()])
+        .filter(|name| lookup(name).is_none_or(|value| value.is_empty()))
+        .map(str::to_owned)
+        .collect()
+}
+
 /// A client that reads a publisher's repository as `plan` and `prepare` do: anonymously if it is
 /// public, so its credentials are not needed.
 pub fn reading_client(

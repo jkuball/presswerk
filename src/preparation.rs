@@ -44,6 +44,9 @@ pub struct ReleasePlan {
     /// The aliases another tool pushed, which the next release keeps or takes over, as read from
     /// the registries by `plan` and `prepare`.
     pub foreign_aliases: Vec<ForeignAlias>,
+    /// The publishers that are not public but whose aliases were read anonymously, since these
+    /// credential variables are unset.
+    pub anonymous_alias_reads: Vec<(String, Vec<String>)>,
     /// Why the aliases of a publisher could not be read, by publisher.
     pub unchecked_aliases: Vec<(String, String)>,
 }
@@ -100,7 +103,17 @@ fn check_foreign_aliases(plan: &mut ReleasePlan) {
         if publisher.aliases.is_empty() {
             continue;
         }
-        let found = crate::oci::reading_client(publisher).and_then(|registry| {
+        let variables = crate::oci::missing_credentials(publisher, |name| std::env::var(name).ok());
+        // Without credentials, an anonymous read may still succeed, such as for a repository
+        // that is public without being marked so.
+        let registry = if variables.is_empty() {
+            crate::oci::reading_client(publisher)
+        } else {
+            plan.anonymous_alias_reads
+                .push((format!("oci-image.{name}"), variables));
+            crate::oci::RegistryClient::new(&publisher.repository, None)
+        };
+        let found = registry.and_then(|registry| {
             crate::oci::foreign_aliases(
                 &registry,
                 &publisher.repository,
@@ -268,6 +281,7 @@ pub fn build_release_plan(
         release_files,
         trusted_predecessor: None,
         foreign_aliases: Vec::new(),
+        anonymous_alias_reads: Vec::new(),
         unchecked_aliases: Vec::new(),
     })
 }
