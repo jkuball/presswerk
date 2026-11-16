@@ -1283,7 +1283,7 @@ pub enum TagState {
     Behind,
     /// An alias that is left alone, with the reason.
     Kept(String),
-    /// An alias without a version that points to the trusted predecessor's release, whose tool
+    /// An alias without a version annotation that points to the trusted predecessor's release, whose tool
     /// pushed it; it moves to this release once, named by the predecessor's version tag.
     TakeOver(String),
     /// An alias whose state could not be read; it is left alone and repaired by a later run.
@@ -1474,7 +1474,9 @@ impl OciImagePublisher {
                         &actual,
                     ) {
                         Ok(Some(tag)) => TagState::TakeOver(tag),
-                        Ok(None) => TagState::Kept(format!("points to {actual} without a version")),
+                        Ok(None) => TagState::Kept(format!(
+                            "points to {actual} without a version annotation"
+                        )),
                         Err(error) => TagState::Unknown(error.to_string()),
                     },
                     Some(current) if current > release.version => {
@@ -1651,7 +1653,7 @@ pub fn reading_client(
     RegistryClient::new(&declaration.repository, credentials)
 }
 
-/// The trusted predecessor's version tag that points to `digest`, so an alias without a version
+/// The trusted predecessor's version tag that points to `digest`, so an alias without a version annotation
 /// that points there was pushed for that release by the tool before Presswerk. Both digests come
 /// from the registry.
 fn predecessor_tag(

@@ -1299,7 +1299,7 @@ fn aliases_move_only_to_a_higher_stable_version() {
     );
     assert_eq!(registry.tag("latest"), registry.tag("1.2.0"));
 
-    // An alias pushed by something else, without a version, is not taken over.
+    // An alias pushed by something else, without a version annotation, is not taken over.
     registry.set_tag("stable", &latest);
     {
         let mut state = registry.state.lock().unwrap();
@@ -1317,7 +1317,7 @@ fn aliases_move_only_to_a_higher_stable_version() {
     let AssetStep::Kept(reason) = alias(steps) else {
         panic!("expected the foreign alias to be kept");
     };
-    assert!(reason.contains("without a version"), "{reason}");
+    assert!(reason.contains("without a version annotation"), "{reason}");
 }
 
 #[test]
@@ -1529,7 +1529,7 @@ fn an_alias_of_another_image_than_the_trusted_predecessor_is_kept() {
     let step = publish_after_foreign_predecessor(&registry, &images, Some("1.0.0"));
     assert_eq!(
         step,
-        AssetStep::Kept(format!("points to {foreign} without a version"))
+        AssetStep::Kept(format!("points to {foreign} without a version annotation"))
     );
     assert_eq!(registry.tag("latest"), Some(foreign));
 }
@@ -1543,7 +1543,7 @@ fn an_alias_is_kept_when_the_trusted_predecessor_has_no_tag() {
     let step = publish_after_foreign_predecessor(&registry, &images, Some("1.0.0"));
     assert_eq!(
         step,
-        AssetStep::Kept(format!("points to {foreign} without a version"))
+        AssetStep::Kept(format!("points to {foreign} without a version annotation"))
     );
     assert_eq!(registry.tag("latest"), Some(foreign));
 }
@@ -1557,7 +1557,7 @@ fn an_alias_is_kept_without_a_trusted_predecessor() {
     let step = publish_after_foreign_predecessor(&registry, &images, None);
     assert_eq!(
         step,
-        AssetStep::Kept(format!("points to {foreign} without a version"))
+        AssetStep::Kept(format!("points to {foreign} without a version annotation"))
     );
     assert_eq!(registry.tag("latest"), Some(foreign));
 }

@@ -170,7 +170,7 @@ fn print_alias_notes(plan: &ReleasePlan) {
                 alias.reference
             ),
             None => eprintln!(
-                "warning: alias {} points to {} without a version, so another tool pushed it; publish will keep it",
+                "warning: alias {} points to {} without a version annotation, so another tool pushed it; publish will keep it",
                 alias.reference, alias.digest
             ),
         }

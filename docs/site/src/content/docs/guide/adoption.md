@@ -98,7 +98,7 @@ flag. Continue with the flow of your [release mode](../release-modes/).
 ## Aliases
 
 Presswerk moves an OCI image alias such as `latest` only when the index it points to carries a
-version annotation, which another tool usually does not write. Such an alias would stay on the old
+version annotation (`org.opencontainers.image.version`), which other tools often do not write. Such an alias would stay on the old
 release, so the first release takes it over: if the release commit trusts a predecessor, an alias
 without a version annotation moves when it points to the same digest as the predecessor's version
 tag in the same repository. The predecessor's tag is one of the publisher's `tags`, rendered with
@@ -116,7 +116,7 @@ name or someone retagged it by hand, Presswerk leaves it alone and reports it as
 `prepare` warn about it beforehand:
 
 ```console
-warning: alias ghcr.io/owner/project:latest points to sha256:d753bc… without a version, so another tool pushed it; publish will keep it
+warning: alias ghcr.io/owner/project:latest points to sha256:d753bc… without a version annotation, so another tool pushed it; publish will keep it
 ```
 
 Retag such an alias once by hand after the first release, for example with
