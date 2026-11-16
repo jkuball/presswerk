@@ -3,7 +3,7 @@ use clap::{CommandFactory, Parser};
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::cli::{Cli, Command};
 use presswerk::preparation::{
-    build_head_release_plan, build_head_release_plan_with_trust, is_worktree_dirty,
+    ReleasePlan, build_head_release_plan, build_head_release_plan_with_trust, is_worktree_dirty,
     prepare_release, render_plan,
 };
 use presswerk::publication::{
@@ -36,6 +36,7 @@ fn run() -> Result<()> {
                     short_commit(&plan.commit.to_string())
                 );
             }
+            print_alias_notes(&plan);
             print!("{}", render_plan(&plan));
         }
         Command::Prepare { trust_predecessor } => {
@@ -52,6 +53,7 @@ fn run() -> Result<()> {
                     short_commit(&plan.commit.to_string())
                 );
             }
+            print_alias_notes(&plan);
             match prepare_release(&plan)? {
                 Some(commit) => {
                     let version = plan.next_version.as_ref().expect("release version exists");
@@ -156,6 +158,26 @@ fn run() -> Result<()> {
         },
     }
     Ok(())
+}
+
+/// Tells before anything is written which aliases another tool pushed: `publish` keeps them, or
+/// takes them over from the trusted predecessor.
+fn print_alias_notes(plan: &ReleasePlan) {
+    for alias in &plan.foreign_aliases {
+        match &alias.predecessor_tag {
+            Some(tag) => eprintln!(
+                "note: alias {} points to the trusted predecessor's tag {tag}; publish will take it over",
+                alias.reference
+            ),
+            None => eprintln!(
+                "warning: alias {} points to {} without a version, so another tool pushed it; publish will keep it",
+                alias.reference, alias.digest
+            ),
+        }
+    }
+    for (publisher, reason) in &plan.unchecked_aliases {
+        eprintln!("warning: could not check the aliases of {publisher}: {reason}");
+    }
 }
 
 /// Renders one indented line per step with aligned kind and target columns.

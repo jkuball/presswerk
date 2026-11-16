@@ -1635,6 +1635,22 @@ pub(crate) fn annotated_version(manifest: &[u8]) -> Option<Version> {
     Version::parse(annotated.annotations.get(VERSION_ANNOTATION)?).ok()
 }
 
+/// A client that reads a publisher's repository as `plan` and `prepare` do: anonymously if it is
+/// public, so its credentials are not needed.
+pub fn reading_client(
+    declaration: &crate::declaration::OciImagePublisher,
+) -> Result<RegistryClient, PublicationError> {
+    let credentials = if declaration.public {
+        None
+    } else {
+        Some(Credentials::from_environment(
+            &declaration.username,
+            &declaration.password.secret,
+        )?)
+    };
+    RegistryClient::new(&declaration.repository, credentials)
+}
+
 /// The trusted predecessor's version tag that points to `digest`, so an alias without a version
 /// that points there was pushed for that release by the tool before Presswerk. Both digests come
 /// from the registry.
@@ -1653,6 +1669,52 @@ fn predecessor_tag(
         }
     }
     Ok(None)
+}
+
+/// An alias that points to a manifest without a version annotation, so another tool pushed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignAlias {
+    /// The alias with its repository, such as `ghcr.io/owner/project:latest`.
+    pub reference: String,
+    pub digest: String,
+    /// The trusted predecessor's version tag that points to the same digest; the release then
+    /// takes the alias over instead of keeping it.
+    pub predecessor_tag: Option<String>,
+}
+
+/// The aliases of `version` that its release would keep because another tool pushed them, or
+/// take over from the trusted `predecessor`. Read before anything is written, so `plan` and
+/// `prepare` can warn about them; a pre-release moves no alias and has none.
+pub fn foreign_aliases(
+    registry: &RegistryClient,
+    repository: &str,
+    tags: &[String],
+    aliases: &[String],
+    version: &Version,
+    predecessor: Option<&Version>,
+) -> Result<Vec<ForeignAlias>, PublicationError> {
+    if !version.pre.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut foreign = Vec::new();
+    for tag in render_tags(tags, aliases, version).map_err(PublicationError::new)? {
+        let OciTag::Alias(alias) = tag else {
+            continue;
+        };
+        let Some((digest, manifest)) = registry.manifest(&alias)? else {
+            continue;
+        };
+        if annotated_version(&manifest).is_some() {
+            continue;
+        }
+        let predecessor_tag = predecessor_tag(registry, tags, predecessor, &digest)?;
+        foreign.push(ForeignAlias {
+            reference: format!("{repository}:{alias}"),
+            digest,
+            predecessor_tag,
+        });
+    }
+    Ok(foreign)
 }
 
 impl Publisher for OciImagePublisher {

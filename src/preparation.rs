@@ -3,6 +3,7 @@ use crate::analysis::{
 };
 use crate::declaration::{Publishers, ReleaseDeclaration, Tag};
 use crate::evaluation::{EvaluatedReleaseDeclaration, evaluate_release_declaration};
+use crate::oci::ForeignAlias;
 use crate::publication::{VerifiedPredecessor, verify_predecessor_with_trust};
 use crate::release_commit::{
     ReleaseFile, TrustedPredecessor, create_release_commit, release_subject,
@@ -40,6 +41,11 @@ pub struct ReleasePlan {
     pub publishers: Publishers,
     release_files: Vec<ReleaseFile>,
     trusted_predecessor: Option<TrustedPredecessor>,
+    /// The aliases another tool pushed, which the next release keeps or takes over, as read from
+    /// the registries by `plan` and `prepare`.
+    pub foreign_aliases: Vec<ForeignAlias>,
+    /// Why the aliases of a publisher could not be read, by publisher.
+    pub unchecked_aliases: Vec<(String, String)>,
 }
 
 pub fn build_head_release_plan(
@@ -75,7 +81,42 @@ pub fn build_head_release_plan_with_trust(
         },
     )?;
     plan.trusted_predecessor = trusted_predecessor;
+    check_foreign_aliases(&mut plan);
     Ok(plan)
+}
+
+/// Read the aliases of the next release before anything is written, so an alias another tool
+/// pushed does not stay behind unnoticed. Reading is best effort and never stops the plan.
+fn check_foreign_aliases(plan: &mut ReleasePlan) {
+    let Some(version) = &plan.next_version else {
+        return;
+    };
+    let predecessor = plan
+        .trusted_predecessor
+        .as_ref()
+        .and(plan.previous_release.as_ref())
+        .map(|previous| &previous.version);
+    for (name, publisher) in &plan.publishers.oci_image {
+        if publisher.aliases.is_empty() {
+            continue;
+        }
+        let found = crate::oci::reading_client(publisher).and_then(|registry| {
+            crate::oci::foreign_aliases(
+                &registry,
+                &publisher.repository,
+                &publisher.tags,
+                &publisher.aliases,
+                version,
+                predecessor,
+            )
+        });
+        match found {
+            Ok(found) => plan.foreign_aliases.extend(found),
+            Err(error) => plan
+                .unchecked_aliases
+                .push((format!("oci-image.{name}"), error.to_string())),
+        }
+    }
 }
 
 pub fn build_release_plan(
@@ -226,6 +267,8 @@ pub fn build_release_plan(
         publishers: declaration.publishers,
         release_files,
         trusted_predecessor: None,
+        foreign_aliases: Vec::new(),
+        unchecked_aliases: Vec::new(),
     })
 }
 
