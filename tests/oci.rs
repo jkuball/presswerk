@@ -2,6 +2,7 @@ use presswerk::declaration::{Compression, Username};
 use presswerk::oci::{
     BlobData, Credentials, ForeignAlias, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, Image,
     OciImagePublisher, RegistryClient, ZSTD_LAYER_MEDIA_TYPE, foreign_aliases, image_index,
+    missing_credentials,
 };
 use presswerk::publication::{
     ArtifactKind, ArtifactStep, AssetStep, Publisher, PublisherState, Release,
@@ -1622,6 +1623,46 @@ fn foreign_aliases_are_found_before_anything_is_written() {
     // A pre-release moves no alias.
     assert_eq!(found("1.0.1-rc.1", None), Vec::new());
     assert_eq!(registry.writes(), writes, "nothing is written");
+}
+
+#[test]
+fn only_unset_credentials_of_a_private_repository_are_missing() {
+    let mut publisher = presswerk::declaration::OciImagePublisher {
+        repository: "ghcr.io/owner/project".into(),
+        platforms: [("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into())].into(),
+        tags: vec!["{version}".into()],
+        aliases: vec!["latest".into()],
+        public: false,
+        compression: Compression::default(),
+        username: Username::Secret("REGISTRY_USERNAME".into()),
+        password: presswerk::declaration::Token {
+            secret: "REGISTRY_TOKEN".into(),
+        },
+    };
+    let set = |names: &'static [&'static str]| {
+        move |name: &str| {
+            names
+                .contains(&name)
+                .then(|| if name == "REGISTRY_TOKEN" { "" } else { "set" }.to_owned())
+        }
+    };
+
+    assert_eq!(
+        missing_credentials(&publisher, set(&[])),
+        ["REGISTRY_USERNAME", "REGISTRY_TOKEN"]
+    );
+    // An empty variable counts as unset.
+    assert_eq!(
+        missing_credentials(&publisher, set(&["REGISTRY_USERNAME", "REGISTRY_TOKEN"])),
+        ["REGISTRY_TOKEN"]
+    );
+    publisher.username = Username::Value("oauth2accesstoken".into());
+    assert_eq!(
+        missing_credentials(&publisher, set(&[])),
+        ["REGISTRY_TOKEN"]
+    );
+    publisher.public = true;
+    assert!(missing_credentials(&publisher, set(&[])).is_empty());
 }
 
 #[test]
