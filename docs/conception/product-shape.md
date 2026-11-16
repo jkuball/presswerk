@@ -66,6 +66,23 @@ logic lives in the CLI: writing and reading version files, cutting and reading c
 sections, analyzing commits, and publishing. The declaration stays plain data wherever
 possible.
 
+### Agent skill
+
+The CLI ships an agent skill as a `skill` subcommand that prints a `SKILL.md` to stdout:
+
+```text
+presswerk skill        # generic skill: what Presswerk is and how its commands work
+presswerk skill .      # skill for the repository at this path
+```
+
+The repository-specific skill is rendered from that repository's release declaration, like
+`plan`, and documents what an agent working in that repository needs to know: the configured
+commit analyzer and how commits must be written to produce which bump, where developer-written
+release notes go, which files carry the version, the tag format, and anything the configured
+publishers require from contributors. Where a skill is installed is the user's choice; the
+documentation recommends the tool-neutral `.agents/skills/` over agent-specific directories such
+as `.claude/skills/`, for example `presswerk skill . > .agents/skills/releasing/SKILL.md`.
+
 ## Release declaration in the flake
 
 The consumer declares what to release in its flake: artifacts, publishers, version source,

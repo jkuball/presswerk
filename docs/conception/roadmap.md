@@ -96,7 +96,8 @@ Potential later issues include:
 - preparation branches, protected-branch workflows, maintenance lines, and pre-releases;
 - configurable release conditions such as weekends only or at most once a day, combined with a
   scheduled CI workflow instead of an on-push workflow;
-- observability, adoption documentation, a flake template, and an agent skill;
+- observability, adoption documentation, a flake template, and an
+  [agent skill](product-shape.md#agent-skill);
 - option documentation and a [NuschtOS search](https://github.com/NuschtOS/search) page for the
   future flake-parts module.
 
