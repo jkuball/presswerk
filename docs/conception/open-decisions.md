@@ -34,7 +34,6 @@ relevant document and remove it from this list.
 ## Developer experience
 
 - final commands and whether preparation is one command or a sequence;
-- how the agent skill is delivered by the CLI: `--skill` or a `skill` subcommand;
 - interactive confirmation versus fully non-interactive operation;
 - machine-readable output.
 
