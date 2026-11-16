@@ -152,7 +152,8 @@ previous release declared this publisher, since they read that release's tags. W
 `public = true;`, they read the tags anonymously instead, with pull access only, and never read the
 credential variables. If the registry refuses the anonymous read, Presswerk stops and reports that
 the repository does not seem to be publicly readable. They read the aliases of the next release
-the same way, but an alias they cannot read, such as without credentials, only gives a warning.
+the same way, but never stop for them: if the repository is not public and its credential
+variables are unset, they warn and try an anonymous read, and a failed read is a warning too.
 
 Common registries take these credentials:
 
