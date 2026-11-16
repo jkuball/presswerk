@@ -1460,6 +1460,108 @@ fn an_unreadable_alias_is_a_warning_while_the_release_completes() {
     );
 }
 
+impl MockRegistry {
+    /// Push an index without a version annotation, as a tool before Presswerk did, under `tags`.
+    fn push_foreign(&self, contents: &str, tags: &[&str]) -> String {
+        let foreign = json!({
+            "schemaVersion": 2,
+            "mediaType": INDEX_MEDIA_TYPE,
+            "manifests": [],
+            "annotations": { "org.opencontainers.image.description": contents },
+        })
+        .to_string()
+        .into_bytes();
+        let digest = digest(&foreign);
+        let mut state = self.state.lock().unwrap();
+        state
+            .manifests
+            .insert(digest.clone(), (INDEX_MEDIA_TYPE.into(), foreign));
+        for tag in tags {
+            state.tags.insert((*tag).into(), digest.clone());
+        }
+        digest
+    }
+}
+
+/// Publish `1.0.1` after a trusted predecessor `1.0.0` that another tool released.
+fn publish_after_foreign_predecessor(
+    registry: &MockRegistry,
+    images: &Images,
+    predecessor: Option<&str>,
+) -> AssetStep {
+    let publisher = registry
+        .publisher(images.platforms(), &["{version}"], &["latest"])
+        .with_trusted_predecessor(predecessor.map(|version| Version::parse(version).unwrap()));
+    let steps = publisher.publish(&release("1.0.1")).unwrap();
+    steps.last().unwrap().step.clone()
+}
+
+#[test]
+fn an_alias_of_the_trusted_predecessor_is_taken_over() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    let foreign = registry.push_foreign("old tool", &["1.0.0", "latest"]);
+
+    let step = publish_after_foreign_predecessor(&registry, &images, Some("1.0.0"));
+    assert_eq!(step, AssetStep::TakenOver);
+    assert_eq!(registry.tag("latest"), registry.tag("1.0.1"));
+    assert_eq!(registry.tag("1.0.0"), Some(foreign));
+
+    // From then on, the alias is Presswerk's own.
+    let rerun = registry
+        .publisher(images.platforms(), &["{version}"], &["latest"])
+        .with_trusted_predecessor(Some(Version::new(1, 0, 0)));
+    assert_eq!(
+        rerun.state(&release("1.0.1")).unwrap(),
+        PublisherState::Published
+    );
+    let steps = rerun.publish(&release("1.0.1")).unwrap();
+    assert_eq!(steps.last().unwrap().step, AssetStep::AlreadyUploaded);
+}
+
+#[test]
+fn an_alias_of_another_image_than_the_trusted_predecessor_is_kept() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    registry.push_foreign("old release", &["1.0.0"]);
+    let foreign = registry.push_foreign("hand-pushed", &["latest"]);
+
+    let step = publish_after_foreign_predecessor(&registry, &images, Some("1.0.0"));
+    assert_eq!(
+        step,
+        AssetStep::Kept(format!("points to {foreign} without a version"))
+    );
+    assert_eq!(registry.tag("latest"), Some(foreign));
+}
+
+#[test]
+fn an_alias_is_kept_when_the_trusted_predecessor_has_no_tag() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    let foreign = registry.push_foreign("old tool", &["v1.0.0", "latest"]);
+
+    let step = publish_after_foreign_predecessor(&registry, &images, Some("1.0.0"));
+    assert_eq!(
+        step,
+        AssetStep::Kept(format!("points to {foreign} without a version"))
+    );
+    assert_eq!(registry.tag("latest"), Some(foreign));
+}
+
+#[test]
+fn an_alias_is_kept_without_a_trusted_predecessor() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    let foreign = registry.push_foreign("old tool", &["1.0.0", "latest"]);
+
+    let step = publish_after_foreign_predecessor(&registry, &images, None);
+    assert_eq!(
+        step,
+        AssetStep::Kept(format!("points to {foreign} without a version"))
+    );
+    assert_eq!(registry.tag("latest"), Some(foreign));
+}
+
 #[test]
 fn json_files_are_bounded_in_size_and_in_all() {
     let directory = tempfile::tempdir().unwrap();
