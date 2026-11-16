@@ -1283,6 +1283,9 @@ pub enum TagState {
     Behind,
     /// An alias that is left alone, with the reason.
     Kept(String),
+    /// An alias without a version that points to the trusted predecessor's release, whose tool
+    /// pushed it; it moves to this release once, named by the predecessor's version tag.
+    TakeOver(String),
     /// An alias whose state could not be read; it is left alone and repaired by a later run.
     Unknown(String),
     Conflicting(String),
@@ -1298,6 +1301,9 @@ pub struct OciImagePublisher {
     /// The image of each platform, by store path; read only while it is pushed.
     platforms: BTreeMap<Platform, PathBuf>,
     compression: Compression,
+    /// The version of a trusted predecessor released by another tool, whose aliases this release
+    /// takes over.
+    predecessor: Option<Version>,
 }
 
 /// An index the registry already holds for this release, which further tags point to.
@@ -1347,7 +1353,16 @@ impl OciImagePublisher {
             aliases,
             platforms,
             compression,
+            predecessor: None,
         })
+    }
+
+    /// Take over the aliases that another tool pushed for the trusted predecessor `version`, as
+    /// recorded in the release commit, when they still point to its release.
+    #[must_use]
+    pub fn with_trusted_predecessor(mut self, version: Option<Version>) -> Self {
+        self.predecessor = version;
+        self
     }
 
     fn reference(&self, tag: &str) -> String {
@@ -1452,7 +1467,16 @@ impl OciImagePublisher {
                     return Ok((TagState::Kept("pre-release".into()), None));
                 }
                 let state = match annotated_version(&manifest) {
-                    None => TagState::Kept(format!("points to {actual} without a version")),
+                    None => match predecessor_tag(
+                        &self.registry,
+                        &self.tags,
+                        self.predecessor.as_ref(),
+                        &actual,
+                    ) {
+                        Ok(Some(tag)) => TagState::TakeOver(tag),
+                        Ok(None) => TagState::Kept(format!("points to {actual} without a version")),
+                        Err(error) => TagState::Unknown(error.to_string()),
+                    },
                     Some(current) if current > release.version => {
                         TagState::Kept(format!("{current} is higher"))
                     }
@@ -1497,24 +1521,26 @@ impl OciImagePublisher {
         Ok((image, step))
     }
 
-    /// Point an alias at the index if it still needs to move; the error is the warning text.
+    /// Point an alias at the index if it still needs to move, and tell whether it was taken over
+    /// from the trusted predecessor; the error is the warning text.
     fn move_alias(
         &self,
         tag: &OciTag,
         release: &Release,
         index: &RemoteIndex,
-    ) -> Result<(), String> {
-        match self
+    ) -> Result<bool, String> {
+        let state = self
             .tag_state(tag, release)
             .map_err(|error| error.to_string())?
-            .0
-        {
-            TagState::Missing | TagState::Behind => self
+            .0;
+        match state {
+            TagState::Missing | TagState::Behind | TagState::TakeOver(_) => self
                 .registry
                 .put_manifest(tag.name(), INDEX_MEDIA_TYPE, &index.bytes, &index.digest)
+                .map(|()| matches!(state, TagState::TakeOver(_)))
                 .map_err(|error| error.to_string()),
             TagState::Unknown(reason) | TagState::Conflicting(reason) => Err(reason),
-            TagState::Matching | TagState::Kept(_) => Ok(()),
+            TagState::Matching | TagState::Kept(_) => Ok(false),
         }
     }
 
@@ -1609,6 +1635,26 @@ pub(crate) fn annotated_version(manifest: &[u8]) -> Option<Version> {
     Version::parse(annotated.annotations.get(VERSION_ANNOTATION)?).ok()
 }
 
+/// The trusted predecessor's version tag that points to `digest`, so an alias without a version
+/// that points there was pushed for that release by the tool before Presswerk. Both digests come
+/// from the registry.
+fn predecessor_tag(
+    registry: &RegistryClient,
+    tags: &[String],
+    predecessor: Option<&Version>,
+    digest: &str,
+) -> Result<Option<String>, PublicationError> {
+    let Some(predecessor) = predecessor else {
+        return Ok(None);
+    };
+    for tag in render_tags(tags, &[], predecessor).map_err(PublicationError::new)? {
+        if registry.manifest_digest(tag.name())?.as_deref() == Some(digest) {
+            return Ok(Some(tag.name().to_owned()));
+        }
+    }
+    Ok(None)
+}
+
 impl Publisher for OciImagePublisher {
     fn state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
         let inspection = self.inspect(release)?;
@@ -1656,23 +1702,29 @@ impl Publisher for OciImagePublisher {
         for ((tag, state), step) in inspection.tags.iter().zip(&mut steps[tag_steps..]) {
             if !matches!(
                 state,
-                TagState::Missing | TagState::Behind | TagState::Unknown(_)
+                TagState::Missing | TagState::Behind | TagState::TakeOver(_) | TagState::Unknown(_)
             ) {
                 continue;
             }
             if let OciTag::Alias(_) = tag {
                 // Aliases come last and are best effort: a failure is a warning that a rerun
                 // repairs, and never stops the release.
-                if let Err(reason) = self.move_alias(tag, release, &index) {
-                    step.step = AssetStep::Warning(reason);
-                } else if let Ok((state, _)) = self.tag_state(tag, release) {
+                let taken_over = match self.move_alias(tag, release, &index) {
+                    Ok(taken_over) => taken_over,
+                    Err(reason) => {
+                        step.step = AssetStep::Warning(reason);
+                        continue;
+                    }
+                };
+                if let Ok((state, _)) = self.tag_state(tag, release) {
                     step.step = match state {
+                        TagState::Matching if taken_over => AssetStep::TakenOver,
                         TagState::Matching => AssetStep::Uploaded,
                         TagState::Kept(reason) => AssetStep::Kept(reason),
                         TagState::Unknown(reason) | TagState::Conflicting(reason) => {
                             AssetStep::Warning(reason)
                         }
-                        TagState::Missing | TagState::Behind => {
+                        TagState::Missing | TagState::Behind | TagState::TakeOver(_) => {
                             AssetStep::Warning("the registry did not keep the alias".into())
                         }
                     };
@@ -1684,7 +1736,7 @@ impl Publisher for OciImagePublisher {
             // reported as pushed even if it reappeared meanwhile, such as when a registry restores
             // a deleted version's tags once its index is pushed again.
             match self.tag_state(tag, release)?.0 {
-                TagState::Missing | TagState::Behind => {
+                TagState::Missing | TagState::Behind | TagState::TakeOver(_) => {
                     self.registry.put_manifest(
                         tag.name(),
                         INDEX_MEDIA_TYPE,

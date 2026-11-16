@@ -122,6 +122,7 @@ fn run() -> Result<()> {
                         let status = match &artifact.step {
                             AssetStep::Uploaded => done.to_owned(),
                             AssetStep::AlreadyUploaded => already.to_owned(),
+                            AssetStep::TakenOver => "taken over".to_owned(),
                             AssetStep::Kept(reason) => format!("kept ({reason})"),
                             AssetStep::Warning(reason) => {
                                 format!("not moved: {reason}; rerun to repair")
