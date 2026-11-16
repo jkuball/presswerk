@@ -1,7 +1,7 @@
 use presswerk::declaration::{Compression, Username};
 use presswerk::oci::{
-    BlobData, Credentials, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, Image, OciImagePublisher,
-    RegistryClient, ZSTD_LAYER_MEDIA_TYPE, image_index,
+    BlobData, Credentials, ForeignAlias, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, Image,
+    OciImagePublisher, RegistryClient, ZSTD_LAYER_MEDIA_TYPE, foreign_aliases, image_index,
 };
 use presswerk::publication::{
     ArtifactKind, ArtifactStep, AssetStep, Publisher, PublisherState, Release,
@@ -1560,6 +1560,68 @@ fn an_alias_is_kept_without_a_trusted_predecessor() {
         AssetStep::Kept(format!("points to {foreign} without a version"))
     );
     assert_eq!(registry.tag("latest"), Some(foreign));
+}
+
+#[test]
+fn foreign_aliases_are_found_before_anything_is_written() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    let repository = registry.repository();
+    registry
+        .publisher(images.platforms(), &["{version}"], &["1"])
+        .publish(&release("1.0.0"))
+        .unwrap();
+    let predecessor = registry.push_foreign("old tool", &["1.0.0-old", "latest"]);
+    let foreign = registry.push_foreign("hand-pushed", &["stable"]);
+    let writes = registry.writes();
+
+    let strings = |values: &[&str]| {
+        values
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<Vec<_>>()
+    };
+    let tags = strings(&["{version}", "{version}-old"]);
+    let aliases = strings(&["1", "latest", "stable", "edge"]);
+    registry.state.lock().unwrap().public = true;
+    let client = registry.anonymous_client();
+    let found = |version: &str, predecessor: Option<&Version>| {
+        foreign_aliases(
+            &client,
+            &repository,
+            &tags,
+            &aliases,
+            &Version::parse(version).unwrap(),
+            predecessor,
+        )
+        .unwrap()
+    };
+
+    // Without a trusted predecessor, both foreign aliases are kept; Presswerk's own `1` and the
+    // missing `edge` are no concern.
+    assert_eq!(
+        found("1.0.1", None),
+        vec![
+            ForeignAlias {
+                reference: format!("{repository}:latest"),
+                digest: predecessor.clone(),
+                predecessor_tag: None,
+            },
+            ForeignAlias {
+                reference: format!("{repository}:stable"),
+                digest: foreign.clone(),
+                predecessor_tag: None,
+            },
+        ]
+    );
+    // The trusted predecessor's tag names the alias that is taken over.
+    assert_eq!(
+        found("1.0.1", Some(&Version::new(1, 0, 0)))[0].predecessor_tag,
+        Some("1.0.0-old".into())
+    );
+    // A pre-release moves no alias.
+    assert_eq!(found("1.0.1-rc.1", None), Vec::new());
+    assert_eq!(registry.writes(), writes, "nothing is written");
 }
 
 #[test]
