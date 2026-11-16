@@ -95,11 +95,30 @@ no commit since the last tag is release-worthy; pass the flag again on the first
 From the next release on, the predecessor is an ordinary Presswerk release and `prepare` needs no
 flag. Continue with the flow of your [release mode](../release-modes/).
 
-## Aliases
+## Changelog
 
-Presswerk moves an OCI image alias such as `latest` only when the index it points to carries a
-version annotation (`org.opencontainers.image.version`), which other tools often do not write. Such an alias would stay on the old
-release, so the first release takes it over: if the release commit trusts a predecessor, an alias
+An existing changelog keeps its older sections as they are. If Presswerk recognizes none of its
+version headings, it inserts its first section before the first level-2 heading:
+
+```markdown title="CHANGELOG.md"
+# Changelog
+
+## [0.39.0] - 2026-11-20
+…
+
+## v0.38.2 (2026-11-10)
+…
+```
+
+From then on, the newest heading is Presswerk's and new sections go above it. To have Presswerk
+recognize the older headings too, declare their format with `changelog.heading`.
+
+## OCI image aliases
+
+This applies only if the project publishes [OCI images](/reference/publishers/oci-image/) with
+aliases such as `latest`. Presswerk moves an alias only when the index it points to carries a
+version annotation (`org.opencontainers.image.version`), which other tools often do not write.
+Such an alias would stay on the old release, so the first release takes it over: if the release commit trusts a predecessor, an alias
 without a version annotation moves when it points to the same digest as the predecessor's version
 tag in the same repository. The predecessor's tag is one of the publisher's `tags`, rendered with
 the trusted version, such as `0.38.2`. Both digests are read from the registry. `publish` reports
@@ -127,21 +146,3 @@ $ skopeo copy --all --preserve-digests docker://ghcr.io/owner/project:0.38.3 doc
 ```
 
 From the next release on, Presswerk moves it.
-
-## Changelog
-
-An existing changelog keeps its older sections as they are. If Presswerk recognizes none of its
-version headings, it inserts its first section before the first level-2 heading:
-
-```markdown title="CHANGELOG.md"
-# Changelog
-
-## [0.39.0] - 2026-11-20
-…
-
-## v0.38.2 (2026-11-10)
-…
-```
-
-From then on, the newest heading is Presswerk's and new sections go above it. To have Presswerk
-recognize the older headings too, declare their format with `changelog.heading`.

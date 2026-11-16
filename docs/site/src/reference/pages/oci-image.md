@@ -90,7 +90,7 @@ stays at `2.0.0`. A pre-release moves no alias, and an alias that points to a ma
 version annotation was pushed by something else and stays as well. An alias left alone is reported
 as `kept`.
 
-The one exception is the first release after [adopting a project](/guide/adoption/#aliases): if
+The one exception is the first release after [adopting a project](/guide/adoption/#oci-image-aliases): if
 its release commit trusts a predecessor, an alias without a version annotation moves when it points
 to the same digest as one of the predecessor's `tags` in the same repository. It is reported as
 `taken over`. `plan` and `prepare` read the aliases of the next release beforehand and warn about
