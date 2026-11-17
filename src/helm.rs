@@ -305,7 +305,23 @@ impl Publisher for OciHelmPublisher {
         })
     }
 
-    fn publish(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
+    fn publish_with_progress(
+        &self,
+        release: &Release,
+        progress: &mut dyn FnMut(&ArtifactStep),
+    ) -> Result<ArtifactSteps, PublicationError> {
+        let steps = self.push_chart(release)?;
+        steps.iter().for_each(progress);
+        Ok(steps)
+    }
+
+    fn complete_steps(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
+        Ok(self.tag_step(release, AssetStep::AlreadyUploaded))
+    }
+}
+
+impl OciHelmPublisher {
+    fn push_chart(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
         if !self.is_missing(release)? {
             return Ok(self.tag_step(release, AssetStep::AlreadyUploaded));
         }
@@ -345,10 +361,6 @@ impl Publisher for OciHelmPublisher {
             )));
         }
         Ok(self.tag_step(release, AssetStep::Uploaded))
-    }
-
-    fn complete_steps(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
-        Ok(self.tag_step(release, AssetStep::AlreadyUploaded))
     }
 }
 
@@ -645,7 +657,11 @@ mod tests {
                 writes: tag_writes.clone(),
             },
             &release,
-            &[Box::new(conflicting)],
+            &[(
+                "test".to_owned(),
+                Box::new(conflicting) as Box<dyn Publisher>,
+            )],
+            &mut |_| {},
         )
         .unwrap_err()
         .to_string();

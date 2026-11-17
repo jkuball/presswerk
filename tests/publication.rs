@@ -9,13 +9,13 @@ use presswerk::declaration::{
 use presswerk::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GITHUB_RELEASE_BODY_LIMIT,
     GitTagPublisher, GithubClient, GithubPublisher, GithubReleaseReader, GithubReleaseState,
-    LocalAsset, PublicationError, Publisher, PublisherState, PublisherStep, Release, RemoteState,
-    TagPublisher, TagStep, UnreadableDeclaration, is_valid_successor, publish_ordered,
+    LocalAsset, PublicationError, PublishEvent, Publisher, PublisherState, PublisherStep, Release,
+    RemoteState, TagPublisher, TagStep, UnreadableDeclaration, is_valid_successor, publish_ordered,
     validate_new_release, verify_predecessor_with, verify_predecessor_with_oci_helm,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::process::Command;
@@ -87,7 +87,11 @@ impl Publisher for FakePublisher {
         Ok(self.state.borrow().clone())
     }
 
-    fn publish(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
+    fn publish_with_progress(
+        &self,
+        _release: &Release,
+        _progress: &mut dyn FnMut(&ArtifactStep),
+    ) -> Result<ArtifactSteps, PublicationError> {
         self.writes.borrow_mut().push("release");
         *self.state.borrow_mut() = PublisherState::Published;
         Ok(Vec::new())
@@ -109,7 +113,8 @@ fn publishes_the_tag_before_completing_missing_publishers() {
     let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[Box::new(publisher)],
+        &[("test".to_owned(), Box::new(publisher) as Box<dyn Publisher>)],
+        &mut |_| {},
     )
     .unwrap();
 
@@ -120,6 +125,84 @@ fn publishes_the_tag_before_completing_missing_publishers() {
             TagStep::Pushed,
             vec![(PublisherStep::DraftCompleted, Vec::new())]
         )
+    );
+}
+
+#[test]
+fn reports_each_step_as_soon_as_it_completes() {
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Missing)),
+        writes: log.clone(),
+    };
+
+    struct Streaming {
+        log: Rc<RefCell<Vec<&'static str>>>,
+        published: Cell<bool>,
+    }
+    impl Publisher for Streaming {
+        fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+            Ok(if self.published.get() {
+                PublisherState::Published
+            } else {
+                PublisherState::Missing
+            })
+        }
+        fn publish_with_progress(
+            &self,
+            _release: &Release,
+            progress: &mut dyn FnMut(&ArtifactStep),
+        ) -> Result<ArtifactSteps, PublicationError> {
+            let steps: ArtifactSteps = ["a", "b"]
+                .into_iter()
+                .map(|name| ArtifactStep {
+                    kind: ArtifactKind::Asset,
+                    name: name.into(),
+                    step: AssetStep::Uploaded,
+                })
+                .collect();
+            for step in &steps {
+                self.log.borrow_mut().push("upload");
+                progress(step);
+            }
+            self.published.set(true);
+            Ok(steps)
+        }
+    }
+
+    let publishers = [(
+        "github-release.default".to_owned(),
+        Box::new(Streaming {
+            log: log.clone(),
+            published: Cell::new(false),
+        }) as Box<dyn Publisher>,
+    )];
+    publish_ordered(
+        &tag,
+        &release("0123456789012345678901234567890123456789".into()),
+        &publishers,
+        &mut |event| {
+            log.borrow_mut().push(match event {
+                PublishEvent::Started { .. } => "started",
+                PublishEvent::Tag { .. } => "tag reported",
+                PublishEvent::Artifact(_) => "upload reported",
+                PublishEvent::Publisher { .. } => "publisher reported",
+            });
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        *log.borrow(),
+        [
+            "tag",
+            "tag reported",
+            "upload",
+            "upload reported",
+            "upload",
+            "upload reported",
+            "publisher reported",
+        ]
     );
 }
 
@@ -141,7 +224,11 @@ fn pending_aliases_do_not_keep_a_release_from_completing() {
         fn state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
             self.0.state(release)
         }
-        fn publish(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
+        fn publish_with_progress(
+            &self,
+            _release: &Release,
+            _progress: &mut dyn FnMut(&ArtifactStep),
+        ) -> Result<ArtifactSteps, PublicationError> {
             self.0.writes.borrow_mut().push("aliases");
             Ok(Vec::new())
         }
@@ -150,7 +237,11 @@ fn pending_aliases_do_not_keep_a_release_from_completing() {
     let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[Box::new(Stuck(publisher))],
+        &[(
+            "test".to_owned(),
+            Box::new(Stuck(publisher)) as Box<dyn Publisher>,
+        )],
+        &mut |_| {},
     )
     .unwrap();
     assert_eq!(writes.borrow().last(), Some(&"aliases"));
@@ -175,7 +266,8 @@ fn reports_complete_publication_without_writing_again() {
     let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[Box::new(publisher)],
+        &[("test".to_owned(), Box::new(publisher) as Box<dyn Publisher>)],
+        &mut |_| {},
     )
     .unwrap();
 
@@ -201,6 +293,7 @@ fn a_release_without_publishers_only_pushes_its_tag() {
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
         &[],
+        &mut |_| {},
     )
     .unwrap();
 
@@ -225,7 +318,8 @@ fn preflight_conflicts_stop_before_the_tag_is_written() {
     let error = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[Box::new(publisher)],
+        &[("test".to_owned(), Box::new(publisher) as Box<dyn Publisher>)],
+        &mut |_| {},
     )
     .unwrap_err();
 
@@ -1251,7 +1345,8 @@ fn github_reports_a_published_release_with_a_different_body_as_already_published
     let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[Box::new(publisher)],
+        &[("test".to_owned(), Box::new(publisher) as Box<dyn Publisher>)],
+        &mut |_| {},
     )
     .unwrap();
 

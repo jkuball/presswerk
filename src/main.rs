@@ -7,7 +7,7 @@ use presswerk::preparation::{
     prepare_release, render_plan,
 };
 use presswerk::publication::{
-    ArtifactKind, AssetStep, PublishOutcome, PublisherStep, TagStep, publish,
+    ArtifactKind, AssetStep, PublishEvent, PublishOutcome, PublisherStep, TagStep, publish,
 };
 use presswerk::release_commit::TrustedPredecessor;
 
@@ -90,50 +90,13 @@ fn run() -> Result<()> {
                 None => println!("Nothing to prepare."),
             }
         }
-        Command::Publish { revision } => match publish(".", &revision)? {
+        Command::Publish { revision } => match publish(".", &revision, &mut print_publish_event)? {
             PublishOutcome::NothingToDo { commit } => println!(
                 "Nothing to publish: {} is not a release commit.",
                 short_commit(&commit)
             ),
             PublishOutcome::Published(report) => {
                 let commit = short_commit(&report.commit);
-                println!("Publishing {} from {commit}", report.tag);
-                let tag_status = match report.tag_step {
-                    TagStep::Pushed => "pushed",
-                    TagStep::AlreadyPushed => "already pushed",
-                };
-                let mut rows = vec![["tag".into(), report.tag.clone(), tag_status.into()]];
-                for (name, step, artifacts) in &report.publisher_steps {
-                    let registry = name.starts_with("oci-image.") || name.starts_with("oci-helm.");
-                    let status = match step {
-                        PublisherStep::Published => "published",
-                        PublisherStep::DraftCompleted => "draft completed",
-                        PublisherStep::ArtifactsCompleted if registry => "tags completed",
-                        PublisherStep::ArtifactsCompleted => "assets completed",
-                        PublisherStep::AlreadyPublished => "already published",
-                    };
-                    let kind = if registry { "registry" } else { "release" };
-                    rows.push([kind.into(), name.clone(), status.into()]);
-                    rows.extend(artifacts.iter().map(|artifact| {
-                        let (kind, done, already) = match artifact.kind {
-                            ArtifactKind::Asset => ("asset", "uploaded", "already uploaded"),
-                            ArtifactKind::Image => ("image", "pushed", "already pushed"),
-                            ArtifactKind::Tag => ("tag", "pushed", "already pushed"),
-                            ArtifactKind::Alias => ("alias", "set", "already set"),
-                        };
-                        let status = match &artifact.step {
-                            AssetStep::Uploaded => done.to_owned(),
-                            AssetStep::AlreadyUploaded => already.to_owned(),
-                            AssetStep::TakenOver => "taken over".to_owned(),
-                            AssetStep::Kept(reason) => format!("kept ({reason})"),
-                            AssetStep::Warning(reason) => {
-                                format!("not moved: {reason}; rerun to repair")
-                            }
-                        };
-                        [kind.into(), artifact.name.clone(), status]
-                    }));
-                }
-                print!("{}", render_steps(&rows));
                 let warnings = report.warnings();
                 if !warnings.is_empty() {
                     eprintln!(
@@ -185,6 +148,57 @@ fn print_alias_notes(plan: &ReleasePlan) {
     for (publisher, reason) in &plan.unchecked_aliases {
         eprintln!("warning: could not check the aliases of {publisher}: {reason}");
     }
+}
+
+/// Prints each step of `publish` as soon as it completes. Kind and status come from fixed sets,
+/// so their columns align without knowing the names that follow.
+fn print_publish_event(event: PublishEvent<'_>) {
+    let (kind, status, target) = match event {
+        PublishEvent::Started { tag, commit } => {
+            println!("Publishing {tag} from {}", short_commit(commit));
+            return;
+        }
+        PublishEvent::Tag { tag, step } => {
+            let status = match step {
+                TagStep::Pushed => "pushed",
+                TagStep::AlreadyPushed => "already pushed",
+            };
+            ("tag", status, tag.to_owned())
+        }
+        PublishEvent::Publisher { name, step } => {
+            let registry = name.starts_with("oci-image.") || name.starts_with("oci-helm.");
+            let status = match step {
+                PublisherStep::Published => "published",
+                PublisherStep::DraftCompleted => "draft completed",
+                PublisherStep::ArtifactsCompleted if registry => "tags completed",
+                PublisherStep::ArtifactsCompleted => "assets completed",
+                PublisherStep::AlreadyPublished => "already published",
+            };
+            let kind = if registry { "registry" } else { "release" };
+            (kind, status, name.to_owned())
+        }
+        PublishEvent::Artifact(artifact) => {
+            let (kind, done, already) = match artifact.kind {
+                ArtifactKind::Asset => ("asset", "uploaded", "already uploaded"),
+                ArtifactKind::Image => ("image", "pushed", "already pushed"),
+                ArtifactKind::Tag => ("tag", "pushed", "already pushed"),
+                ArtifactKind::Alias => ("alias", "set", "already set"),
+            };
+            let name = &artifact.name;
+            match &artifact.step {
+                AssetStep::Uploaded => (kind, done, name.clone()),
+                AssetStep::AlreadyUploaded => (kind, already, name.clone()),
+                AssetStep::TakenOver => (kind, "taken over", name.clone()),
+                AssetStep::Kept(reason) => (kind, "kept", format!("{name} ({reason})")),
+                AssetStep::Warning(reason) => (
+                    kind,
+                    "not moved",
+                    format!("{name} ({reason}; rerun to repair)"),
+                ),
+            }
+        }
+    };
+    println!("  {kind:<8}  {status:<17}  {target}");
 }
 
 /// Renders one indented line per step with aligned kind and target columns.

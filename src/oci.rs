@@ -1546,6 +1546,69 @@ impl OciImagePublisher {
         }
     }
 
+    /// Push or move one tag that the inspection found, and record what happened in `step`.
+    fn complete_tag(
+        &self,
+        tag: &OciTag,
+        state: &TagState,
+        step: &mut AssetStep,
+        release: &Release,
+        index: &RemoteIndex,
+    ) -> Result<(), PublicationError> {
+        if !matches!(
+            state,
+            TagState::Missing | TagState::Behind | TagState::TakeOver(_) | TagState::Unknown(_)
+        ) {
+            return Ok(());
+        }
+        if let OciTag::Alias(_) = tag {
+            // Aliases come last and are best effort: a failure is a warning that a rerun
+            // repairs, and never stops the release.
+            let taken_over = match self.move_alias(tag, release, index) {
+                Ok(taken_over) => taken_over,
+                Err(reason) => {
+                    *step = AssetStep::Warning(reason);
+                    return Ok(());
+                }
+            };
+            if let Ok((state, _)) = self.tag_state(tag, release) {
+                *step = match state {
+                    TagState::Matching if taken_over => AssetStep::TakenOver,
+                    TagState::Matching => AssetStep::Uploaded,
+                    TagState::Kept(reason) => AssetStep::Kept(reason),
+                    TagState::Unknown(reason) | TagState::Conflicting(reason) => {
+                        AssetStep::Warning(reason)
+                    }
+                    TagState::Missing | TagState::Behind | TagState::TakeOver(_) => {
+                        AssetStep::Warning("the registry did not keep the alias".into())
+                    }
+                };
+            }
+            return Ok(());
+        }
+        // Look again right before writing: a concurrent run may have pushed the tag, and a
+        // tag that now points elsewhere must not be overwritten. A tag that was missing is
+        // reported as pushed even if it reappeared meanwhile, such as when a registry restores
+        // a deleted version's tags once its index is pushed again.
+        match self.tag_state(tag, release)?.0 {
+            TagState::Missing | TagState::Behind | TagState::TakeOver(_) => {
+                self.registry.put_manifest(
+                    tag.name(),
+                    INDEX_MEDIA_TYPE,
+                    &index.bytes,
+                    &index.digest,
+                )?;
+                *step = AssetStep::Uploaded;
+            }
+            TagState::Matching => *step = AssetStep::Uploaded,
+            TagState::Kept(reason) => *step = AssetStep::Kept(reason),
+            TagState::Conflicting(message) | TagState::Unknown(message) => {
+                return Err(PublicationError::new(message));
+            }
+        }
+        Ok(())
+    }
+
     fn steps(&self, inspection: &Inspection, images: Vec<AssetStep>) -> ArtifactSteps {
         let mut steps: ArtifactSteps = self
             .platforms
@@ -1578,8 +1641,12 @@ impl OciImagePublisher {
         &self,
         inspection: &Inspection,
         release: &Release,
+        progress: &mut dyn FnMut(&Platform, &AssetStep),
     ) -> Result<(RemoteIndex, Vec<AssetStep>), PublicationError> {
         if let Some(index) = &inspection.existing {
+            for platform in self.platforms.keys() {
+                progress(platform, &AssetStep::AlreadyUploaded);
+            }
             return Ok((
                 index.clone(),
                 vec![AssetStep::AlreadyUploaded; self.platforms.len()],
@@ -1588,8 +1655,12 @@ impl OciImagePublisher {
         let (images, steps): (Vec<_>, Vec<_>) = self
             .platforms
             .iter()
-            .map(|(platform, path)| self.push_image(platform, path))
-            .collect::<Result<Vec<_>, _>>()?
+            .map(|(platform, path)| {
+                let (image, step) = self.push_image(platform, path)?;
+                progress(platform, &step);
+                Ok((image, step))
+            })
+            .collect::<Result<Vec<_>, PublicationError>>()?
             .into_iter()
             .unzip();
         let (bytes, digest) = image_index(&images, &release.version);
@@ -1775,67 +1846,28 @@ impl Publisher for OciImagePublisher {
         )
     }
 
-    fn publish(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
+    fn publish_with_progress(
+        &self,
+        release: &Release,
+        progress: &mut dyn FnMut(&ArtifactStep),
+    ) -> Result<ArtifactSteps, PublicationError> {
         let inspection = self.inspect(release)?;
         if let Some(conflict) = inspection.conflict() {
             return Err(PublicationError::new(conflict));
         }
-        let (index, images) = self.release_index(&inspection, release)?;
+        let (index, images) = self.release_index(&inspection, release, &mut |platform, step| {
+            progress(&ArtifactStep {
+                kind: ArtifactKind::Image,
+                name: platform.to_string(),
+                step: step.clone(),
+            });
+        })?;
 
         let mut steps = self.steps(&inspection, images);
         let tag_steps = steps.len() - inspection.tags.len();
         for ((tag, state), step) in inspection.tags.iter().zip(&mut steps[tag_steps..]) {
-            if !matches!(
-                state,
-                TagState::Missing | TagState::Behind | TagState::TakeOver(_) | TagState::Unknown(_)
-            ) {
-                continue;
-            }
-            if let OciTag::Alias(_) = tag {
-                // Aliases come last and are best effort: a failure is a warning that a rerun
-                // repairs, and never stops the release.
-                let taken_over = match self.move_alias(tag, release, &index) {
-                    Ok(taken_over) => taken_over,
-                    Err(reason) => {
-                        step.step = AssetStep::Warning(reason);
-                        continue;
-                    }
-                };
-                if let Ok((state, _)) = self.tag_state(tag, release) {
-                    step.step = match state {
-                        TagState::Matching if taken_over => AssetStep::TakenOver,
-                        TagState::Matching => AssetStep::Uploaded,
-                        TagState::Kept(reason) => AssetStep::Kept(reason),
-                        TagState::Unknown(reason) | TagState::Conflicting(reason) => {
-                            AssetStep::Warning(reason)
-                        }
-                        TagState::Missing | TagState::Behind | TagState::TakeOver(_) => {
-                            AssetStep::Warning("the registry did not keep the alias".into())
-                        }
-                    };
-                }
-                continue;
-            }
-            // Look again right before writing: a concurrent run may have pushed the tag, and a
-            // tag that now points elsewhere must not be overwritten. A tag that was missing is
-            // reported as pushed even if it reappeared meanwhile, such as when a registry restores
-            // a deleted version's tags once its index is pushed again.
-            match self.tag_state(tag, release)?.0 {
-                TagState::Missing | TagState::Behind | TagState::TakeOver(_) => {
-                    self.registry.put_manifest(
-                        tag.name(),
-                        INDEX_MEDIA_TYPE,
-                        &index.bytes,
-                        &index.digest,
-                    )?;
-                    step.step = AssetStep::Uploaded;
-                }
-                TagState::Matching => step.step = AssetStep::Uploaded,
-                TagState::Kept(reason) => step.step = AssetStep::Kept(reason),
-                TagState::Conflicting(message) | TagState::Unknown(message) => {
-                    return Err(PublicationError::new(message));
-                }
-            }
+            self.complete_tag(tag, state, &mut step.step, release, &index)?;
+            progress(step);
         }
 
         match self.state(release)? {

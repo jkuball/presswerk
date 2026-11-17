@@ -710,7 +710,21 @@ fn pushes_a_new_release_and_a_rerun_writes_nothing() {
     let release = release("1.0.0");
 
     assert_eq!(publisher.state(&release).unwrap(), PublisherState::Missing);
-    let steps = publisher.publish(&release).unwrap();
+    // Each step is reported as soon as it is complete, after its writes and before the next one's.
+    let mut streamed = Vec::new();
+    let steps = publisher
+        .publish_with_progress(&release, &mut |step| {
+            streamed.push((step.clone(), registry.writes().len()));
+        })
+        .unwrap();
+    assert_eq!(
+        streamed.iter().map(|(step, _)| step).collect::<Vec<_>>(),
+        steps.iter().collect::<Vec<_>>()
+    );
+    assert!(
+        streamed.windows(2).all(|pair| pair[0].1 < pair[1].1),
+        "{streamed:?}"
+    );
     assert_eq!(
         steps,
         [
