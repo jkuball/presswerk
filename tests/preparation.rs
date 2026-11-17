@@ -21,9 +21,11 @@ use std::collections::BTreeMap;
 use support::{GitRepo, conventional_catalog, gitmoji_catalog};
 
 fn declaration(version: &str) -> ReleaseDeclaration {
+    let version = Version::parse(version).unwrap();
     ReleaseDeclaration {
         schema_version: 0,
-        version: Version::parse(version).unwrap(),
+        stable: version.major >= 1,
+        version,
         version_files: vec![VersionFile::Toml(TomlVersionFile {
             path: "Cargo.toml".into(),
             toml: "package.version".into(),
@@ -151,6 +153,34 @@ fn plans_and_prepares_the_full_range_after_a_completed_release() {
     assert!(changelog.contains("## [0.2.0] - 2026-11-05"));
     assert!(changelog.contains("\n- Add full-range planning"));
     assert!(changelog.contains("\n- Document the feature"));
+}
+
+#[test]
+fn a_breaking_change_uses_the_declared_api_stability() {
+    for (stable, expected) in [(false, "0.5.0"), (true, "1.0.0")] {
+        let repository = GitRepo::new();
+        write_version(&repository, "0.4.2");
+        repository.write("breaking", "changed\n");
+        repository.commit("💥 Change the public API");
+        let mut evaluated = evaluated(&repository, "0.4.2");
+        evaluated.declaration.stable = stable;
+
+        let plan = build_release_plan(
+            repository.path(),
+            evaluated,
+            &GitCliffAnalyzer,
+            "2026-11-05",
+            |_, _, _| Ok(None),
+        )
+        .unwrap();
+
+        assert_eq!(plan.next_version, Some(Version::parse(expected).unwrap()));
+        let release = prepare_release(&plan).unwrap().unwrap();
+        assert_eq!(
+            repository.git(["show", &format!("{release}:Cargo.toml")]),
+            format!("[package]\nname = \"example\"\nversion = \"{expected}\"")
+        );
+    }
 }
 
 #[test]

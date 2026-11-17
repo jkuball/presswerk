@@ -74,7 +74,7 @@ tags of its own, and a tag is never moved once it is pushed. By default, a relea
 its version alone.
 
 `aliases` are what is often called floating or rolling tags, such as `latest`, `1`, or `1.2`. They
-must not contain `{version}` and follow the highest stable version, so they move from release to
+must not contain `{version}` and follow the highest final version, so they move from release to
 release. Presswerk keeps them apart from tags because it treats them differently: a tag belongs to
 its release, while an alias is only moved when it should be, and a failure to move it does not
 fail the release. There are no aliases by default.
@@ -83,7 +83,7 @@ Both are templates: `{version}` is replaced by the release version, and `{major}
 `{patch}` by its parts. Several publishers may push to the same repository, as long as they share no
 tag or alias.
 
-Presswerk moves an alias only to a higher stable version than the one it points to, as read from
+Presswerk moves an alias only to a higher final version than the one it points to, as read from
 the version annotation of that index. This also keeps `{major}` and `{major}.{minor}` within
 their line: after `2.0.0`, a maintenance release `1.4.1` moves `1` and `1.4`, while `latest`
 stays at `2.0.0`. A pre-release moves no alias, and an alias that points to a manifest without a

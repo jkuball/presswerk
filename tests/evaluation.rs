@@ -26,6 +26,7 @@ fn valid_flake(version: &str) -> String {
     presswerk.default = {
       schemaVersion = 0;
       version = "@VERSION@";
+      stable = true;
       versionFiles = [
         { path = "Cargo.toml"; toml = "package.version"; }
         { path = "Cargo.lock"; cargoLock = "presswerk"; }

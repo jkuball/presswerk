@@ -94,9 +94,11 @@ Presswerk follows SemVer. A fresh repository starts from an implicit `0.0.0` bas
 `0.0.0` and without a tag. For projects that already have a version, see
 [Adopt an existing project](../adoption/).
 
-Presswerk never moves to `1.0.0` by itself; that step must be acknowledged explicitly, and a way to
-choose the version for it is planned. Which level a commit selects, and how levels map to versions before `1.0.0`, is
-described under [Version levels](/reference/analyzers/#version-levels).
+Moving to `1.0.0` is explicit. Set [`stable = true`](/reference/options/#stable) in the `💥` commit
+that declares the public API stable, for example `💥 Declare the API stable`. That major-level commit
+then prepares `1.0.0`; without the setting, breaking changes on `0.x` continue to advance the minor
+component. The setting can stay or be removed afterward. Which level a commit selects, and how levels
+map to versions, is described under [Version levels](/reference/analyzers/#version-levels).
 
 How publication proceeds step by step, and what it does with existing releases, is described in the
 [GitHub Release publisher](/reference/publishers/github-release/#behavior) reference.

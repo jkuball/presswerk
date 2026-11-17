@@ -24,10 +24,12 @@ use std::thread;
 use support::GitRepo;
 
 fn declaration(version: &str, repository: &str) -> ReleaseDeclaration {
+    let stable = Version::parse(version).unwrap().major >= 1;
     ReleaseDeclaration::from_json(&format!(
         r#"{{
           "schemaVersion": 0,
           "version": "{version}",
+          "stable": {stable},
           "versionFiles": [],
           "tag": {{ "format": "v{{version}}" }},
           "analyzer": {{
@@ -343,6 +345,7 @@ fn validates_successors_changelog_and_the_analyzed_minimum() {
         &candidate,
         &parent,
         Some(&parent),
+        true,
         &analysis,
         changelog,
         &heading,
@@ -355,6 +358,7 @@ fn validates_successors_changelog_and_the_analyzed_minimum() {
             &too_small,
             &parent,
             Some(&parent),
+            true,
             &analysis,
             "## [1.2.4] - 2026-11-05\n\nFix.\n",
             &heading,
@@ -368,6 +372,7 @@ fn validates_successors_changelog_and_the_analyzed_minimum() {
             &Version::new(1, 4, 0),
             &parent,
             Some(&parent),
+            true,
             &analysis,
             "## [1.4.0] - 2026-11-05\n\nJump.\n",
             &heading,
@@ -381,6 +386,7 @@ fn validates_successors_changelog_and_the_analyzed_minimum() {
             &candidate,
             &parent,
             Some(&parent),
+            true,
             &analysis,
             "# Changelog\n",
             &heading,
@@ -392,7 +398,7 @@ fn validates_successors_changelog_and_the_analyzed_minimum() {
 }
 
 #[test]
-fn accepts_semver_prerelease_steps_and_stable_successors() {
+fn accepts_semver_prerelease_steps_and_final_successors() {
     assert!(is_valid_successor(
         &Version::parse("1.3.0-rc.1").unwrap(),
         &Version::parse("1.3.0-rc.2").unwrap()
