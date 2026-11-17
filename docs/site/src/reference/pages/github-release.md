@@ -59,6 +59,10 @@ publisher-specific instructions:
 Read longer templates with `builtins.readFile ./github-release.md.j2`. A retry of a draft uses the
 same body.
 
+GitHub rejects release bodies longer than 125,000 characters. When the rendered body is longer,
+for example for a first release that covers a long history, Presswerk uses a short body instead
+that links to the changelog file at the release tag, so the release can still be created.
+
 ## Assets
 
 `assets` attaches files to the release, keyed by asset name. Each value is a file in a flake

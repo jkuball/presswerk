@@ -7,11 +7,11 @@ use presswerk::declaration::{
     Compression, OciHelmPublisher, OciImagePublisher, ReleaseDeclaration, Token, Username,
 };
 use presswerk::publication::{
-    ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GitTagPublisher, GithubClient,
-    GithubPublisher, GithubReleaseReader, GithubReleaseState, LocalAsset, PublicationError,
-    Publisher, PublisherState, PublisherStep, Release, RemoteState, TagPublisher, TagStep,
-    UnreadableDeclaration, is_valid_successor, publish_ordered, validate_new_release,
-    verify_predecessor_with, verify_predecessor_with_oci_helm,
+    ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GITHUB_RELEASE_BODY_LIMIT,
+    GitTagPublisher, GithubClient, GithubPublisher, GithubReleaseReader, GithubReleaseState,
+    LocalAsset, PublicationError, Publisher, PublisherState, PublisherStep, Release, RemoteState,
+    TagPublisher, TagStep, UnreadableDeclaration, is_valid_successor, publish_ordered,
+    validate_new_release, verify_predecessor_with, verify_predecessor_with_oci_helm,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
@@ -1679,6 +1679,58 @@ fn github_creates_a_draft_then_publishes_and_verifies_it() {
     publisher
         .publish(&release("0123456789012345678901234567890123456789".into()))
         .unwrap();
+
+    server.join().unwrap();
+}
+
+#[test]
+fn github_links_the_changelog_when_the_body_exceeds_the_limit() {
+    const FALLBACK: &str = "The release notes are too long for a GitHub Release; read them in [docs/CHANGES.md](https://github.com/owner/project/blob/v0.1.0/docs/CHANGES.md).";
+    let repository = r#"{"html_url":"https://github.com/owner/project"}"#;
+    let created = leak(format!(
+        r#"{{"id":7,"draft":true,"prerelease":false,"body":{}}}"#,
+        serde_json::to_string(FALLBACK).unwrap()
+    ));
+    let published = leak(created.replace(r#""draft":true"#, r#""draft":false"#));
+    let (url, server) = mock_github_api(vec![
+        get("/repos/owner/project", 200, repository),
+        get("/repos/owner/project", 200, "{}"),
+        get("/repos/owner/project/releases/tags/v0.1.0", 404, "{}"),
+        get(
+            "/repos/owner/project/releases?per_page=100&page=1",
+            200,
+            "[]",
+        ),
+        ExpectedRequest {
+            method: "POST",
+            path: "/repos/owner/project/releases",
+            status: 201,
+            response: created,
+            body_contains: Some(leak(format!(
+                r#""body":{}"#,
+                serde_json::to_string(FALLBACK).unwrap()
+            ))),
+        },
+        ExpectedRequest {
+            method: "PATCH",
+            path: "/repos/owner/project/releases/7",
+            status: 200,
+            response: published,
+            body_contains: Some(r#""draft":false"#),
+        },
+        get("/repos/owner/project", 200, repository),
+        get("/repos/owner/project", 200, "{}"),
+        get("/repos/owner/project/releases/tags/v0.1.0", 200, published),
+    ]);
+    let publisher = GithubPublisher::new(
+        GithubClient::new(&url, "test-token").unwrap(),
+        "owner/project",
+    )
+    .with_changelog("docs/CHANGES.md");
+    let mut release = release("0123456789012345678901234567890123456789".into());
+    release.notes = "x".repeat(GITHUB_RELEASE_BODY_LIMIT + 1);
+
+    publisher.publish(&release).unwrap();
 
     server.join().unwrap();
 }
