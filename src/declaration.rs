@@ -26,6 +26,7 @@ pub const DEFAULT_GITHUB_RELEASE_BODY: &str = "{{ notes }}";
 pub struct ReleaseDeclaration {
     pub schema_version: u32,
     pub version: Version,
+    #[serde(default)]
     pub stable: bool,
     pub version_files: Vec<VersionFile>,
     pub tag: Tag,
@@ -65,12 +66,6 @@ impl ReleaseDeclaration {
                 self.schema_version,
             )));
         }
-        if !self.stable && self.version.major >= 1 {
-            return Err(DeclarationError::Invalid(
-                "stable may be false only while the version's major component is 0".into(),
-            ));
-        }
-
         for version_file in &self.version_files {
             version_file.validate()?;
         }
@@ -894,26 +889,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_stable_false_from_major_version_one() {
-        for version in ["1.2.3", "1.0.0-rc.1"] {
-            let invalid = declaration(|value| {
-                value["version"] = json!(version);
-                value["stable"] = json!(false);
-            });
-            assert!(
-                ReleaseDeclaration::from_json(&invalid)
-                    .unwrap_err()
-                    .to_string()
-                    .contains("major component is 0"),
-                "{version}"
-            );
-        }
-
-        ReleaseDeclaration::from_json(&declaration(|value| {
-            value["version"] = json!("0.9.0");
-            value["stable"] = json!(false);
-        }))
-        .unwrap();
+    fn old_declarations_default_to_initial_development() {
+        let legacy = declaration(|value| {
+            value["version"] = json!("0.18.0");
+            value.as_object_mut().unwrap().remove("stable");
+        });
+        assert!(!ReleaseDeclaration::from_json(&legacy).unwrap().stable);
     }
 
     fn conventional(value: &mut Value) {
