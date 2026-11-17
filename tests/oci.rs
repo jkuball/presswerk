@@ -1,7 +1,8 @@
 use presswerk::declaration::{Compression, Username};
 use presswerk::oci::{
-    BlobData, Credentials, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, Image, OciImagePublisher,
-    RegistryClient, ZSTD_LAYER_MEDIA_TYPE, image_index,
+    BlobData, Credentials, ForeignAlias, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, Image,
+    OciImagePublisher, RegistryClient, ZSTD_LAYER_MEDIA_TYPE, foreign_aliases, image_index,
+    missing_credentials,
 };
 use presswerk::publication::{
     ArtifactKind, ArtifactStep, AssetStep, Publisher, PublisherState, Release,
@@ -1299,7 +1300,7 @@ fn aliases_move_only_to_a_higher_stable_version() {
     );
     assert_eq!(registry.tag("latest"), registry.tag("1.2.0"));
 
-    // An alias pushed by something else, without a version, is not taken over.
+    // An alias pushed by something else, without a version annotation, is not taken over.
     registry.set_tag("stable", &latest);
     {
         let mut state = registry.state.lock().unwrap();
@@ -1317,7 +1318,7 @@ fn aliases_move_only_to_a_higher_stable_version() {
     let AssetStep::Kept(reason) = alias(steps) else {
         panic!("expected the foreign alias to be kept");
     };
-    assert!(reason.contains("without a version"), "{reason}");
+    assert!(reason.contains("without a version annotation"), "{reason}");
 }
 
 #[test]
@@ -1458,6 +1459,210 @@ fn an_unreadable_alias_is_a_warning_while_the_release_completes() {
         publisher.state(&release).unwrap(),
         PublisherState::AliasesPending
     );
+}
+
+impl MockRegistry {
+    /// Push an index without a version annotation, as a tool before Presswerk did, under `tags`.
+    fn push_foreign(&self, contents: &str, tags: &[&str]) -> String {
+        let foreign = json!({
+            "schemaVersion": 2,
+            "mediaType": INDEX_MEDIA_TYPE,
+            "manifests": [],
+            "annotations": { "org.opencontainers.image.description": contents },
+        })
+        .to_string()
+        .into_bytes();
+        let digest = digest(&foreign);
+        let mut state = self.state.lock().unwrap();
+        state
+            .manifests
+            .insert(digest.clone(), (INDEX_MEDIA_TYPE.into(), foreign));
+        for tag in tags {
+            state.tags.insert((*tag).into(), digest.clone());
+        }
+        digest
+    }
+}
+
+/// Publish `1.0.1` after a trusted predecessor `1.0.0` that another tool released.
+fn publish_after_foreign_predecessor(
+    registry: &MockRegistry,
+    images: &Images,
+    predecessor: Option<&str>,
+) -> AssetStep {
+    let publisher = registry
+        .publisher(images.platforms(), &["{version}"], &["latest"])
+        .with_trusted_predecessor(predecessor.map(|version| Version::parse(version).unwrap()));
+    let steps = publisher.publish(&release("1.0.1")).unwrap();
+    steps.last().unwrap().step.clone()
+}
+
+#[test]
+fn an_alias_of_the_trusted_predecessor_is_taken_over() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    let foreign = registry.push_foreign("old tool", &["1.0.0", "latest"]);
+
+    let step = publish_after_foreign_predecessor(&registry, &images, Some("1.0.0"));
+    assert_eq!(step, AssetStep::TakenOver);
+    assert_eq!(registry.tag("latest"), registry.tag("1.0.1"));
+    assert_eq!(registry.tag("1.0.0"), Some(foreign));
+
+    // From then on, the alias is Presswerk's own.
+    let rerun = registry
+        .publisher(images.platforms(), &["{version}"], &["latest"])
+        .with_trusted_predecessor(Some(Version::new(1, 0, 0)));
+    assert_eq!(
+        rerun.state(&release("1.0.1")).unwrap(),
+        PublisherState::Published
+    );
+    let steps = rerun.publish(&release("1.0.1")).unwrap();
+    assert_eq!(steps.last().unwrap().step, AssetStep::AlreadyUploaded);
+}
+
+#[test]
+fn an_alias_of_another_image_than_the_trusted_predecessor_is_kept() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    registry.push_foreign("old release", &["1.0.0"]);
+    let foreign = registry.push_foreign("hand-pushed", &["latest"]);
+
+    let step = publish_after_foreign_predecessor(&registry, &images, Some("1.0.0"));
+    assert_eq!(
+        step,
+        AssetStep::Kept(format!("points to {foreign} without a version annotation"))
+    );
+    assert_eq!(registry.tag("latest"), Some(foreign));
+}
+
+#[test]
+fn an_alias_is_kept_when_the_trusted_predecessor_has_no_tag() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    let foreign = registry.push_foreign("old tool", &["v1.0.0", "latest"]);
+
+    let step = publish_after_foreign_predecessor(&registry, &images, Some("1.0.0"));
+    assert_eq!(
+        step,
+        AssetStep::Kept(format!("points to {foreign} without a version annotation"))
+    );
+    assert_eq!(registry.tag("latest"), Some(foreign));
+}
+
+#[test]
+fn an_alias_is_kept_without_a_trusted_predecessor() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    let foreign = registry.push_foreign("old tool", &["1.0.0", "latest"]);
+
+    let step = publish_after_foreign_predecessor(&registry, &images, None);
+    assert_eq!(
+        step,
+        AssetStep::Kept(format!("points to {foreign} without a version annotation"))
+    );
+    assert_eq!(registry.tag("latest"), Some(foreign));
+}
+
+#[test]
+fn foreign_aliases_are_found_before_anything_is_written() {
+    let registry = MockRegistry::start();
+    let images = Images::new("hello");
+    let repository = registry.repository();
+    registry
+        .publisher(images.platforms(), &["{version}"], &["1"])
+        .publish(&release("1.0.0"))
+        .unwrap();
+    let predecessor = registry.push_foreign("old tool", &["1.0.0-old", "latest"]);
+    let foreign = registry.push_foreign("hand-pushed", &["stable"]);
+    let writes = registry.writes();
+
+    let strings = |values: &[&str]| {
+        values
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<Vec<_>>()
+    };
+    let tags = strings(&["{version}", "{version}-old"]);
+    let aliases = strings(&["1", "latest", "stable", "edge"]);
+    registry.state.lock().unwrap().public = true;
+    let client = registry.anonymous_client();
+    let found = |version: &str, predecessor: Option<&Version>| {
+        foreign_aliases(
+            &client,
+            &repository,
+            &tags,
+            &aliases,
+            &Version::parse(version).unwrap(),
+            predecessor,
+        )
+        .unwrap()
+    };
+
+    // Without a trusted predecessor, both foreign aliases are kept; Presswerk's own `1` and the
+    // missing `edge` are no concern.
+    assert_eq!(
+        found("1.0.1", None),
+        vec![
+            ForeignAlias {
+                reference: format!("{repository}:latest"),
+                digest: predecessor.clone(),
+                predecessor_tag: None,
+            },
+            ForeignAlias {
+                reference: format!("{repository}:stable"),
+                digest: foreign.clone(),
+                predecessor_tag: None,
+            },
+        ]
+    );
+    // The trusted predecessor's tag names the alias that is taken over.
+    assert_eq!(
+        found("1.0.1", Some(&Version::new(1, 0, 0)))[0].predecessor_tag,
+        Some("1.0.0-old".into())
+    );
+    // A pre-release moves no alias.
+    assert_eq!(found("1.0.1-rc.1", None), Vec::new());
+    assert_eq!(registry.writes(), writes, "nothing is written");
+}
+
+#[test]
+fn only_unset_credentials_of_a_private_repository_are_missing() {
+    let mut publisher = presswerk::declaration::OciImagePublisher {
+        repository: "ghcr.io/owner/project".into(),
+        platforms: [("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into())].into(),
+        tags: vec!["{version}".into()],
+        aliases: vec!["latest".into()],
+        public: false,
+        compression: Compression::default(),
+        username: Username::Secret("REGISTRY_USERNAME".into()),
+        password: presswerk::declaration::Token {
+            secret: "REGISTRY_TOKEN".into(),
+        },
+    };
+    let set = |names: &'static [&'static str]| {
+        move |name: &str| {
+            names
+                .contains(&name)
+                .then(|| if name == "REGISTRY_TOKEN" { "" } else { "set" }.to_owned())
+        }
+    };
+
+    assert_eq!(
+        missing_credentials(&publisher, set(&[])),
+        ["REGISTRY_USERNAME", "REGISTRY_TOKEN"]
+    );
+    // An empty variable counts as unset.
+    assert_eq!(
+        missing_credentials(&publisher, set(&["REGISTRY_USERNAME", "REGISTRY_TOKEN"])),
+        ["REGISTRY_TOKEN"]
+    );
+    publisher.username = Username::Value("oauth2accesstoken".into());
+    assert_eq!(
+        missing_credentials(&publisher, set(&[])),
+        ["REGISTRY_TOKEN"]
+    );
+    publisher.public = true;
+    assert!(missing_credentials(&publisher, set(&[])).is_empty());
 }
 
 #[test]

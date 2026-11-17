@@ -86,9 +86,15 @@ tag or alias.
 Presswerk moves an alias only to a higher stable version than the one it points to, as read from
 the version annotation of that index. This also keeps `{major}` and `{major}.{minor}` within
 their line: after `2.0.0`, a maintenance release `1.4.1` moves `1` and `1.4`, while `latest`
-stays at `2.0.0`. A pre-release moves no alias, and an alias that points to an index without a
+stays at `2.0.0`. A pre-release moves no alias, and an alias that points to a manifest without a
 version annotation was pushed by something else and stays as well. An alias left alone is reported
 as `kept`.
+
+The one exception is the first release after [adopting a project](/guide/adoption/#oci-image-aliases): if
+its release commit trusts a predecessor, an alias without a version annotation moves when it points
+to the same digest as one of the predecessor's `tags` in the same repository. It is reported as
+`taken over`. `plan` and `prepare` read the aliases of the next release beforehand and warn about
+each one that `publish` will keep this way, or note that it will be taken over.
 
 A version with SemVer build metadata such as `1.2.0+build.5` cannot be published yet, since OCI
 tags do not allow `+`.
@@ -100,8 +106,8 @@ with this release. An image tag matches the release when it points to the same v
 the same store paths; the pushed bytes themselves are not compared. Each image tag is then in one
 of four states:
 
-- **Missing:** the image tag does not exist, or an alias points to a lower version. Presswerk pushes
-  it.
+- **Missing:** the image tag does not exist, an alias points to a lower version, or an alias is
+  taken over from a trusted predecessor. Presswerk pushes it.
 - **Matching:** the image tag already points to an index of this release. It is left as it is.
 - **Conflicting:** one of the `tags`, or an alias for the same version, points to an index with
   other images. Presswerk stops before the Git tag is pushed and never overwrites it.
@@ -145,7 +151,9 @@ other option. The password always comes from an environment variable.
 previous release declared this publisher, since they read that release's tags. With
 `public = true;`, they read the tags anonymously instead, with pull access only, and never read the
 credential variables. If the registry refuses the anonymous read, Presswerk stops and reports that
-the repository does not seem to be publicly readable.
+the repository does not seem to be publicly readable. They read the aliases of the next release
+the same way, but never stop for them: if the repository is not public and its credential
+variables are unset, they warn and try an anonymous read, and a failed read is a warning too.
 
 Common registries take these credentials:
 

@@ -147,6 +147,9 @@ pub enum AssetStep {
     AlreadyUploaded,
     /// Deliberately left as it is, such as an alias that points to a higher version.
     Kept(String),
+    /// An alias that the tool before Presswerk pushed for the trusted predecessor, moved to this
+    /// release once.
+    TakenOver,
     /// A best-effort step that failed, such as an alias that could not be moved; a rerun repairs it.
     Warning(String),
 }
@@ -1249,11 +1252,11 @@ pub fn publish_to_remote(
     crate::artifacts::fetch(images.chain(charts).chain(assets))
         .map_err(|error| PublicationError::new(error.to_string()))?;
 
-    let tag_publisher = match tag_publisher.state(&release)? {
+    let (tag_publisher, trusted_predecessor) = match tag_publisher.state(&release)? {
         RemoteState::Missing => {
             // The tag is created last, so its tagger identity is checked with everything else.
             let tag_publisher = tag_publisher.with_tagger()?;
-            let parent_version =
+            let (parent_version, trusted_predecessor) =
                 verify_candidate_predecessor(repository_path, commit, &declaration, remote, true)?;
             validate_candidate(
                 repository_path,
@@ -1263,11 +1266,12 @@ pub fn publish_to_remote(
                 &changelog,
                 analyzer,
             )?;
-            tag_publisher
+            (tag_publisher, trusted_predecessor)
         }
         RemoteState::Matching => {
-            verify_candidate_predecessor(repository_path, commit, &declaration, remote, false)?;
-            tag_publisher
+            let (_, trusted_predecessor) =
+                verify_candidate_predecessor(repository_path, commit, &declaration, remote, false)?;
+            (tag_publisher, trusted_predecessor)
         }
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     };
@@ -1276,9 +1280,10 @@ pub fn publish_to_remote(
     let mut publishers: Vec<Box<dyn Publisher>> = Vec::new();
     let mut publisher_names = Vec::new();
     for (name, publisher) in &declaration.publishers.oci_image {
-        publishers.push(Box::new(crate::oci::OciImagePublisher::from_declaration(
-            publisher,
-        )?));
+        publishers.push(Box::new(
+            crate::oci::OciImagePublisher::from_declaration(publisher)?
+                .with_trusted_predecessor(trusted_predecessor.clone()),
+        ));
         publisher_names.push(format!("oci-image.{name}"));
     }
     for (name, publisher) in &declaration.publishers.oci_helm {
@@ -1417,13 +1422,15 @@ pub fn is_valid_successor(parent: &Version, candidate: &Version) -> bool {
             .is_some_and(|major| candidate_core == [major, 0, 0])
 }
 
+/// Verify the candidate's predecessor; returns the parent's version, and that version again if the
+/// release commit trusts it as a predecessor released by another tool.
 fn verify_candidate_predecessor(
     repository_path: &Path,
     commit: Oid,
     declaration: &ReleaseDeclaration,
     remote: &str,
     verify_completion: bool,
-) -> Result<Version, PublicationError> {
+) -> Result<(Version, Option<Version>), PublicationError> {
     let repository = Repository::open(repository_path).map_err(|error| {
         PublicationError::new(format!(
             "could not open Git repository {}: {error}",
@@ -1464,7 +1471,9 @@ fn verify_candidate_predecessor(
         trusted_predecessor.as_ref(),
         verify_completion,
     )?;
-    Ok(parent_version)
+    // The trusted tag was verified to be the parent version's tag.
+    let trusted_version = trusted_predecessor.map(|_| parent_version.clone());
+    Ok((parent_version, trusted_version))
 }
 
 fn validate_candidate(
