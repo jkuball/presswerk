@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.1] - 2026-11-17
+
+### 🐛 Fix a bug
+
+- (github-release): Link the changelog when the body exceeds GitHub's limit
+
 ## [0.17.0] - 2026-11-17
 
 ### ✨ Introduce new features
