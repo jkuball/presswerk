@@ -273,8 +273,8 @@ in
 
     "test a Cargo workspace's lock file defaults to the one next to its manifest" = {
       expr = (mkRelease {
-        sourceRoot = fixtureRoot;
-        stable = true;
+        sourceRoot = ./fixtures/workspace-defaults;
+        version = "1.2.3";
         versionFiles.cargoWorkspace = {
           root = { };
           backend.cargoToml = "services/backend/Cargo.toml";
