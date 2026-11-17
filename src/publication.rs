@@ -178,6 +178,22 @@ pub struct ArtifactStep {
 /// Each artifact of a publisher, with what happened to it.
 pub type ArtifactSteps = Vec<ArtifactStep>;
 
+/// One completed step of `publish`, reported as soon as it is done.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishEvent<'a> {
+    /// Publishing starts; nothing has been written yet.
+    Started { tag: &'a str, commit: &'a str },
+    /// The Git tag is complete.
+    Tag { tag: &'a str, step: TagStep },
+    /// One artifact of the publisher that runs now is complete.
+    Artifact(&'a ArtifactStep),
+    /// A publisher is complete, after all of its artifacts.
+    Publisher { name: &'a str, step: PublisherStep },
+}
+
+/// Receives each step of `publish` as soon as it completes.
+pub type Progress<'a> = dyn FnMut(PublishEvent<'_>) + 'a;
+
 pub trait TagPublisher {
     fn state(&self, release: &Release) -> Result<RemoteState, PublicationError>;
     fn publish(&self, release: &Release) -> Result<(), PublicationError>;
@@ -189,8 +205,17 @@ pub trait TagPublisher {
 
 pub trait Publisher {
     fn state(&self, release: &Release) -> Result<PublisherState, PublicationError>;
+    /// Create every missing part and report each artifact, passing each one to `progress` as
+    /// soon as it is complete.
+    fn publish_with_progress(
+        &self,
+        release: &Release,
+        progress: &mut dyn FnMut(&ArtifactStep),
+    ) -> Result<ArtifactSteps, PublicationError>;
     /// Create every missing part and report each artifact.
-    fn publish(&self, release: &Release) -> Result<ArtifactSteps, PublicationError>;
+    fn publish(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
+        self.publish_with_progress(release, &mut |_| {})
+    }
     /// Report the artifacts of a publisher whose state is already published, without writing.
     fn complete_steps(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
         Ok(Vec::new())
@@ -794,7 +819,11 @@ impl Publisher for GithubPublisher {
         self.checked_state(release)
     }
 
-    fn publish(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
+    fn publish_with_progress(
+        &self,
+        release: &Release,
+        progress: &mut dyn FnMut(&ArtifactStep),
+    ) -> Result<ArtifactSteps, PublicationError> {
         let body = self.body(release)?;
         let github_release = match self.client.release(&self.repository, &release.tag)? {
             None => self.client.create_draft(&self.repository, release, &body)?,
@@ -826,11 +855,13 @@ impl Publisher for GithubPublisher {
                     .upload_asset(&self.repository, release, &github_release, asset)?;
                 AssetStep::Uploaded
             };
-            steps.push(ArtifactStep {
+            let step = ArtifactStep {
                 kind: ArtifactKind::Asset,
                 name: asset.name.clone(),
                 step,
-            });
+            };
+            progress(&step);
+            steps.push(step);
         }
         if github_release.draft {
             self.client
@@ -1221,12 +1252,14 @@ pub enum PublisherStep {
 pub fn publish(
     repository_path: impl AsRef<Path>,
     revision: &str,
+    progress: &mut Progress<'_>,
 ) -> Result<PublishOutcome, PublicationError> {
     publish_to_remote(
         repository_path.as_ref(),
         revision,
         "origin",
         &GitCliffAnalyzer,
+        progress,
     )
 }
 
@@ -1235,6 +1268,7 @@ pub fn publish_to_remote(
     revision: &str,
     remote: &str,
     analyzer: &dyn Analyzer,
+    progress: &mut Progress<'_>,
 ) -> Result<PublishOutcome, PublicationError> {
     let evaluated = evaluate_release_declaration(repository_path, revision)
         .map_err(|error| PublicationError::new(error.to_string()))?;
@@ -1341,62 +1375,77 @@ pub fn publish_to_remote(
     };
 
     // The forge release comes last, so it never announces a release whose images are missing.
-    let mut publishers: Vec<Box<dyn Publisher>> = Vec::new();
-    let mut publisher_names = Vec::new();
+    let mut publishers: Vec<(String, Box<dyn Publisher>)> = Vec::new();
     for (name, publisher) in &declaration.publishers.oci_image {
-        publishers.push(Box::new(
-            crate::oci::OciImagePublisher::from_declaration(publisher)?
-                .with_trusted_predecessor(trusted_predecessor.clone()),
+        publishers.push((
+            format!("oci-image.{name}"),
+            Box::new(
+                crate::oci::OciImagePublisher::from_declaration(publisher)?
+                    .with_trusted_predecessor(trusted_predecessor.clone()),
+            ),
         ));
-        publisher_names.push(format!("oci-image.{name}"));
     }
     for (name, publisher) in &declaration.publishers.oci_helm {
-        publishers.push(Box::new(crate::helm::OciHelmPublisher::from_declaration(
-            publisher,
-            &release.version,
-        )?));
-        publisher_names.push(format!("oci-helm.{name}"));
+        publishers.push((
+            format!("oci-helm.{name}"),
+            Box::new(crate::helm::OciHelmPublisher::from_declaration(
+                publisher,
+                &release.version,
+            )?),
+        ));
     }
     for (name, publisher) in &declaration.publishers.github_release {
-        publishers.push(Box::new(GithubPublisher::from_declaration(
-            publisher,
-            &declaration.changelog.path,
-        )?));
-        publisher_names.push(format!("github-release.{name}"));
+        publishers.push((
+            format!("github-release.{name}"),
+            Box::new(GithubPublisher::from_declaration(
+                publisher,
+                &declaration.changelog.path,
+            )?),
+        ));
     }
-    let (tag_step, steps) = publish_ordered(&tag_publisher, &release, &publishers)?;
+    progress(PublishEvent::Started {
+        tag: &release.tag,
+        commit: &release.commit,
+    });
+    let (tag_step, steps) = publish_ordered(&tag_publisher, &release, &publishers, progress)?;
     Ok(PublishOutcome::Published(PublishReport {
         commit: release.commit,
         tag: release.tag,
         tag_step,
-        publisher_steps: publisher_names
+        publisher_steps: publishers
             .into_iter()
             .zip(steps)
-            .map(|(name, (step, artifacts))| (name, step, artifacts))
+            .map(|((name, _), (step, artifacts))| (name, step, artifacts))
             .collect(),
     }))
 }
 
-/// Publishes the tag, then completes every publisher, and reports what each step found.
+/// Publishes the tag, then completes every named publisher, and reports what each step found,
+/// passing each step to `progress` as soon as it is complete.
 pub fn publish_ordered(
     tag_publisher: &dyn TagPublisher,
     release: &Release,
-    publishers: &[Box<dyn Publisher>],
+    publishers: &[(String, Box<dyn Publisher>)],
+    progress: &mut Progress<'_>,
 ) -> Result<(TagStep, Vec<(PublisherStep, ArtifactSteps)>), PublicationError> {
     let tag_step = match tag_publisher.state(release)? {
         RemoteState::Missing => TagStep::Pushed,
         RemoteState::Matching => TagStep::AlreadyPushed,
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     };
-    for publisher in publishers {
+    for (_, publisher) in publishers {
         if let PublisherState::Conflicting(message) = publisher.state(release)? {
             return Err(PublicationError::new(message));
         }
     }
 
     tag_publisher.publish(release)?;
+    progress(PublishEvent::Tag {
+        tag: &release.tag,
+        step: tag_step,
+    });
     let mut publisher_steps = Vec::with_capacity(publishers.len());
-    for publisher in publishers {
+    for (name, publisher) in publishers {
         let step = match publisher.state(release)? {
             PublisherState::Published => PublisherStep::AlreadyPublished,
             PublisherState::Missing => PublisherStep::Published,
@@ -1407,10 +1456,17 @@ pub fn publish_ordered(
             PublisherState::Conflicting(message) => return Err(PublicationError::new(message)),
         };
         let artifacts = if step == PublisherStep::AlreadyPublished {
-            publisher.complete_steps(release)?
+            let artifacts = publisher.complete_steps(release)?;
+            for artifact in &artifacts {
+                progress(PublishEvent::Artifact(artifact));
+            }
+            artifacts
         } else {
-            publisher.publish(release)?
+            publisher.publish_with_progress(release, &mut |artifact| {
+                progress(PublishEvent::Artifact(artifact));
+            })?
         };
+        progress(PublishEvent::Publisher { name, step });
         publisher_steps.push((step, artifacts));
     }
 
@@ -1423,7 +1479,7 @@ pub fn publish_ordered(
             )));
         }
     }
-    for publisher in publishers {
+    for (_, publisher) in publishers {
         match publisher.state(release)? {
             PublisherState::Published | PublisherState::AliasesPending => {}
             state => {

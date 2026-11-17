@@ -34,14 +34,15 @@ Publish the exact release commit again:
 ```console
 $ presswerk publish RELEASE_COMMIT_SHA
 Publishing v0.3.0 from 7b3e5f1
-  tag      v0.3.0                  already pushed
-  release  github-release.default  draft completed
+  tag       already pushed     v0.3.0
+  release   draft completed    github-release.default
 Released v0.3.0 from 7b3e5f1.
 ```
 
 Presswerk keeps a matching tag, continues matching publisher state, creates what is missing, and
-verifies the final result. Each line reports whether that step was already complete. When all of
-them were, the last line says that nothing changed. Once `publish` succeeds, the release is complete
+verifies the final result. Each line reports whether that step was already complete, and appears as
+soon as the step is done, so a run that stops shows how far it got. When all of them were already
+complete, the last line says that nothing changed. Once `publish` succeeds, the release is complete
 and the rest of this page does not apply.
 
 When retrying, do not:
