@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.18.0] - 2026-11-17
+
+### ✨ Introduce new features
+
+- (publish): Print each step as soon as it completes
+
 ## [0.17.1] - 2026-11-17
 
 ### 🐛 Fix a bug
