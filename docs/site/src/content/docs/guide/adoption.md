@@ -118,9 +118,9 @@ recognize the older headings too, declare their format with `changelog.heading`.
 This applies only if the project publishes [OCI images](/reference/publishers/oci-image/) with
 aliases such as `latest`. Presswerk moves an alias only when the index it points to carries a
 version annotation (`org.opencontainers.image.version`), which other tools often do not write.
-Such an alias would stay on the old release, so the first release takes it over: if the release commit trusts a predecessor, an alias
-without a version annotation moves when it points to the same digest as the predecessor's version
-tag in the same repository. The predecessor's tag is one of the publisher's `tags`, rendered with
+Such an alias would stay on the old release, so the first release takes it over: if the release
+commit trusts a predecessor, an alias without a version annotation moves when it points to the
+same digest as the predecessor's version tag in the same repository. The predecessor's tag is one of the publisher's `tags`, rendered with
 the trusted version, such as `0.38.2`. Both digests are read from the registry. `publish` reports
 the alias as `taken over`, and from then on it moves like any other alias.
 
@@ -131,8 +131,8 @@ note: alias ghcr.io/owner/project:latest points to the trusted predecessor's tag
 ```
 
 If the alias points elsewhere, for example because the old tool tagged the release under another
-name or someone retagged it by hand, Presswerk leaves it alone and reports it as `kept`. `plan` and
-`prepare` warn about it beforehand:
+name or someone retagged it by hand, Presswerk leaves it alone and reports it as `kept`.
+`prepare --trust-predecessor` warns about it beforehand:
 
 ```console
 warning: alias ghcr.io/owner/project:latest points to sha256:d753bc… without a version annotation, so another tool pushed it; publish will keep it
