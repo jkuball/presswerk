@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.17.0] - 2026-11-17
+
+### ✨ Introduce new features
+
+- (plan): Warn before reading aliases without credentials
+- (plan): Warn about aliases that publish keeps or takes over
+- (oci): Take over aliases of a trusted predecessor
+
+### 📝 Add or update documentation
+
+- (adoption): Name the command that warns during an adoption
+- (adoption): Move OCI image aliases to the end as a special case
+- (oci): Describe alias reads without credentials
+- (oci): Document taken-over aliases and the alias warnings
+- (adoption): Describe how the first release takes over aliases
+
+### 💬 Add or update text and literals
+
+- (oci): Say that foreign aliases lack a version annotation
+
+### ✅ Add, update, or pass tests
+
+- (oci): Cover which credential variables are missing
+- (oci): Cover finding foreign aliases before anything is written
+- (oci): Cover the takeover of a trusted predecessor's aliases
+
 ## [0.16.1] - 2026-11-16
 
 ### 📝 Add or update documentation
