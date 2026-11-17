@@ -292,6 +292,32 @@ impl GithubClient {
             .set("User-Agent", "presswerk")
     }
 
+    /// The repository's web URL, e.g. `https://github.com/owner/project`.
+    fn repository_url(&self, repository: &str) -> Result<Url, PublicationError> {
+        #[derive(Deserialize)]
+        struct GithubRepository {
+            html_url: String,
+        }
+        let url = self.endpoint(repository, &[])?;
+        match self.request("GET", &url).call() {
+            Ok(response) => response
+                .into_json::<GithubRepository>()
+                .map_err(|error| error.to_string())
+                .and_then(|github| Url::parse(&github.html_url).map_err(|error| error.to_string()))
+                .map_err(|error| {
+                    PublicationError::new(format!(
+                        "could not decode GitHub repository {repository:?}: {error}"
+                    ))
+                }),
+            Err(ureq::Error::Status(status, _)) => Err(PublicationError::new(format!(
+                "GitHub repository {repository:?} is inaccessible (HTTP {status})"
+            ))),
+            Err(ureq::Error::Transport(error)) => Err(PublicationError::new(format!(
+                "could not inspect GitHub repository {repository:?}: {error}"
+            ))),
+        }
+    }
+
     fn validate_repository(&self, repository: &str) -> Result<(), PublicationError> {
         let url = self.endpoint(repository, &[])?;
         match self.request("GET", &url).call() {
@@ -600,13 +626,18 @@ pub struct GithubPublisher {
     client: GithubClient,
     repository: String,
     body: String,
+    changelog: String,
     assets: Vec<LocalAsset>,
 }
+
+/// GitHub rejects release bodies longer than this many characters.
+pub const GITHUB_RELEASE_BODY_LIMIT: usize = 125_000;
 
 impl GithubPublisher {
     /// Build the publisher from its declaration; its assets must already be fetched.
     pub fn from_declaration(
         declaration: &GithubReleaseDeclaration,
+        changelog: &str,
     ) -> Result<Self, PublicationError> {
         let assets = declaration
             .assets
@@ -620,6 +651,7 @@ impl GithubPublisher {
             )?,
             repository: declaration.repository.clone(),
             body: declaration.body.clone(),
+            changelog: changelog.into(),
             assets,
         })
     }
@@ -629,8 +661,15 @@ impl GithubPublisher {
             client,
             repository: repository.into(),
             body: crate::declaration::DEFAULT_GITHUB_RELEASE_BODY.into(),
+            changelog: "CHANGELOG.md".into(),
             assets: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_changelog(mut self, changelog: impl Into<String>) -> Self {
+        self.changelog = changelog.into();
+        self
     }
 
     #[must_use]
@@ -664,8 +703,33 @@ impl GithubPublisher {
             })
     }
 
-    fn checked_state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
+    /// The rendered body, or a link to the changelog at the tag when GitHub would reject it.
+    fn body(&self, release: &Release) -> Result<String, PublicationError> {
         let body = self.render_body(release)?;
+        if body.chars().count() <= GITHUB_RELEASE_BODY_LIMIT {
+            return Ok(body);
+        }
+        let mut changelog = self.client.repository_url(&self.repository)?;
+        changelog
+            .path_segments_mut()
+            .map_err(|()| {
+                PublicationError::new(format!(
+                    "GitHub repository URL of {} cannot contain path segments",
+                    self.repository
+                ))
+            })?
+            .pop_if_empty()
+            .push("blob")
+            .push(&release.tag)
+            .extend(self.changelog.split('/'));
+        Ok(format!(
+            "The release notes are too long for a GitHub Release; read them in [{}]({changelog}).",
+            self.changelog
+        ))
+    }
+
+    fn checked_state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
+        let body = self.body(release)?;
         let Some(github_release) = self.client.release(&self.repository, &release.tag)? else {
             return Ok(PublisherState::Missing);
         };
@@ -731,7 +795,7 @@ impl Publisher for GithubPublisher {
     }
 
     fn publish(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
-        let body = self.render_body(release)?;
+        let body = self.body(release)?;
         let github_release = match self.client.release(&self.repository, &release.tag)? {
             None => self.client.create_draft(&self.repository, release, &body)?,
             Some(existing) => existing,
@@ -1294,7 +1358,10 @@ pub fn publish_to_remote(
         publisher_names.push(format!("oci-helm.{name}"));
     }
     for (name, publisher) in &declaration.publishers.github_release {
-        publishers.push(Box::new(GithubPublisher::from_declaration(publisher)?));
+        publishers.push(Box::new(GithubPublisher::from_declaration(
+            publisher,
+            &declaration.changelog.path,
+        )?));
         publisher_names.push(format!("github-release.{name}"));
     }
     let (tag_step, steps) = publish_ordered(&tag_publisher, &release, &publishers)?;
