@@ -25,7 +25,7 @@ To change how release notes look, see the
 Each analyzer has a catalog that assigns every kind of commit a level: `"major"`, `"minor"`,
 `"patch"`, or `null`. Presswerk takes the highest level in the commit range. By default, while the
 version is `0.x`, both `minor` and `major` advance the minor component; `patch` advances the patch
-component. Existing projects therefore remain in initial development without extra configuration.
+component. A `0.x` project needs no configuration for this.
 
 Set [`stable = true`](/reference/options/#stable) in the `💥` commit that declares the public API
 stable, for example `💥 Declare the API stable`. With that setting, levels follow plain SemVer, so a

@@ -26,6 +26,7 @@ pub const DEFAULT_GITHUB_RELEASE_BODY: &str = "{{ notes }}";
 pub struct ReleaseDeclaration {
     pub schema_version: u32,
     pub version: Version,
+    // Declarations created before this option, such as predecessor release commits, omit it.
     #[serde(default)]
     pub stable: bool,
     pub version_files: Vec<VersionFile>,
@@ -66,6 +67,7 @@ impl ReleaseDeclaration {
                 self.schema_version,
             )));
         }
+
         for version_file in &self.version_files {
             version_file.validate()?;
         }
