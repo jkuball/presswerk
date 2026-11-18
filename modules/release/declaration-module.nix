@@ -76,13 +76,11 @@
           (name: publisher: lib.nameValuePair "${type}.${name}" publisher)
           publishers)
         canonicalPublishers));
-      rewrittenPublisherAfter = lib.mapAttrs
-        (address: publisher:
-          publisher.after
-          ++ builtins.filter
-            (other: builtins.elem address publisherNodes.${other}.before)
-            publisherAddresses)
-        publisherNodes;
+      resolvePublisherAfter = address:
+        publisherNodes.${address}.after
+        ++ builtins.filter
+          (other: builtins.elem address publisherNodes.${other}.before)
+          publisherAddresses;
       publisherReferences = lib.concatLists (lib.mapAttrsToList
         (address: publisher:
           map (reference: { inherit address reference; option = "after"; }) publisher.after
@@ -95,7 +93,7 @@
         ({ address, ... }: address)
         (builtins.filter ({ address, reference, ... }: address == reference) publisherReferences));
       sortedPublishers = lib.toposort
-        (dependency: publisher: builtins.elem dependency rewrittenPublisherAfter.${publisher})
+        (dependency: publisher: builtins.elem dependency publisherNodes.${publisher}.resolvedAfter)
         publisherAddresses;
       publisherLoop = if sortedPublishers ? loops then builtins.head sortedPublishers.loops else null;
       # `toposort.cycle` includes the path leading into the loop; diagnostics name only the loop.
@@ -373,6 +371,14 @@
             visible = false;
             description = "Hint appended when this publisher participates in a dependency cycle.";
           };
+
+          resolvedAfter = mkOption {
+            type = types.listOf types.nonEmptyStr;
+            readOnly = true;
+            internal = true;
+            visible = false;
+            description = "Publisher dependencies after rewriting `before` edges.";
+          };
         };
 
       # A file in a flake output: a derivation, or a string built from one, such as "${pkg}/bin/tool".
@@ -429,9 +435,12 @@
           };
         };
 
-        config.cycleHint = lib.mkIf
-          (!options.after.isDefined || options.after.highestPrio >= 1500)
-          (lib.mkDefault "github-release.${name}.after defaults to every other publisher; set it explicitly to change that");
+        config = {
+          cycleHint = lib.mkIf
+            (!options.after.isDefined || options.after.highestPrio >= 1500)
+            (lib.mkDefault "github-release.${name}.after defaults to every other publisher; set it explicitly to change that");
+          resolvedAfter = resolvePublisherAfter "github-release.${name}";
+        };
       };
 
       secretModule = what: example: {
@@ -486,7 +495,7 @@
           template: builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "0.0.0" "0" "0" "0" ] template) != null
         ) // { description = "OCI tag, optionally containing {version}, {major}, {minor}, or {patch}"; };
 
-      ociImageModule = { config, ... }: {
+      ociImageModule = { config, name, ... }: {
         options = registryPublisherOptions "images" // {
           platforms = mkOption {
             type = types.attrsOf artifactFile;
@@ -538,9 +547,10 @@
           };
 
         };
+        config.resolvedAfter = resolvePublisherAfter "oci-image.${name}";
       };
 
-      ociHelmModule = {
+      ociHelmModule = { name, ... }: {
         options = registryPublisherOptions "chart" // {
           chart = mkOption {
             type = artifactFile;
@@ -548,6 +558,7 @@
             description = "Chart archive written by `helm package`. `publish` fetches it from the local store or a substituter without building.";
           };
         };
+        config.resolvedAfter = resolvePublisherAfter "oci-helm.${name}";
       };
     in
     {
