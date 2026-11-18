@@ -1642,6 +1642,7 @@ fn foreign_aliases_are_found_before_anything_is_written() {
 #[test]
 fn only_unset_credentials_of_a_private_repository_are_missing() {
     let mut publisher = presswerk::declaration::OciImagePublisher {
+        after: Vec::new(),
         repository: "ghcr.io/owner/project".into(),
         platforms: [("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into())].into(),
         tags: vec!["{version}".into()],

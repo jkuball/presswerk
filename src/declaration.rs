@@ -542,6 +542,9 @@ pub struct Publishers {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OciHelmPublisher {
+    /// Publishers that must complete before this one starts.
+    #[serde(default)]
+    pub after: Vec<String>,
     /// Full registry repository path, ending in the chart name.
     pub repository: String,
     /// Chart archive written by `helm package`, as a path in the Nix store.
@@ -570,6 +573,9 @@ impl OciHelmPublisher {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OciImagePublisher {
+    /// Publishers that must complete before this one starts.
+    #[serde(default)]
+    pub after: Vec<String>,
     /// Registry host and repository path, such as `ghcr.io/owner/project`.
     pub repository: String,
     /// The image for each platform, such as `linux/amd64`, each a path in the Nix store.
@@ -655,6 +661,9 @@ fn validate_registry_credentials(username: &Username, password: &Token) -> Resul
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GithubReleasePublisher {
+    /// Publishers that must complete before this one starts.
+    #[serde(default)]
+    pub after: Vec<String>,
     pub api_url: String,
     pub repository: String,
     pub token: Token,

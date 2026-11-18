@@ -9,9 +9,10 @@ use presswerk::declaration::{
 use presswerk::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GITHUB_RELEASE_BODY_LIMIT,
     GitTagPublisher, GithubClient, GithubPublisher, GithubReleaseReader, GithubReleaseState,
-    LocalAsset, PublicationError, PublishEvent, Publisher, PublisherState, PublisherStep, Release,
-    RemoteState, TagPublisher, TagStep, UnreadableDeclaration, is_valid_successor, publish_ordered,
-    validate_new_release, verify_predecessor_with, verify_predecessor_with_oci_helm,
+    LocalAsset, PublicationError, PublishEvent, Publisher, PublisherNode, PublisherState,
+    PublisherStep, Release, RemoteState, TagPublisher, TagStep, UnreadableDeclaration,
+    is_valid_successor, publish_ordered, validate_new_release, verify_predecessor_with,
+    verify_predecessor_with_oci_helm,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
@@ -113,7 +114,7 @@ fn publishes_the_tag_before_completing_missing_publishers() {
     let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[("test".to_owned(), Box::new(publisher) as Box<dyn Publisher>)],
+        &[PublisherNode::new("test", Box::new(publisher), Vec::new())],
         &mut |_| {},
     )
     .unwrap();
@@ -170,12 +171,13 @@ fn reports_each_step_as_soon_as_it_completes() {
         }
     }
 
-    let publishers = [(
-        "github-release.default".to_owned(),
+    let publishers = [PublisherNode::new(
+        "github-release.default",
         Box::new(Streaming {
             log: log.clone(),
             published: Cell::new(false),
-        }) as Box<dyn Publisher>,
+        }),
+        Vec::new(),
     )];
     publish_ordered(
         &tag,
@@ -237,9 +239,10 @@ fn pending_aliases_do_not_keep_a_release_from_completing() {
     let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[(
-            "test".to_owned(),
-            Box::new(Stuck(publisher)) as Box<dyn Publisher>,
+        &[PublisherNode::new(
+            "test",
+            Box::new(Stuck(publisher)),
+            Vec::new(),
         )],
         &mut |_| {},
     )
@@ -266,7 +269,7 @@ fn reports_complete_publication_without_writing_again() {
     let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[("test".to_owned(), Box::new(publisher) as Box<dyn Publisher>)],
+        &[PublisherNode::new("test", Box::new(publisher), Vec::new())],
         &mut |_| {},
     )
     .unwrap();
@@ -318,7 +321,7 @@ fn preflight_conflicts_stop_before_the_tag_is_written() {
     let error = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[("test".to_owned(), Box::new(publisher) as Box<dyn Publisher>)],
+        &[PublisherNode::new("test", Box::new(publisher), Vec::new())],
         &mut |_| {},
     )
     .unwrap_err();
@@ -874,6 +877,7 @@ fn oci_image_predecessor(tags: &[&str], aliases: &[&str]) -> ReleaseDeclaration 
     declaration.publishers.oci_image.insert(
         "default".into(),
         OciImagePublisher {
+            after: Vec::new(),
             repository: "ghcr.io/owner/project".into(),
             platforms: [("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into())].into(),
             tags: tags.iter().map(|tag| (*tag).into()).collect(),
@@ -1030,6 +1034,7 @@ fn an_oci_helm_predecessor_needs_its_version_tag_and_store_path() {
     previous_declaration.publishers.oci_helm.insert(
         "default".into(),
         OciHelmPublisher {
+            after: Vec::new(),
             repository: "ghcr.io/owner/charts/project".into(),
             chart: "/nix/store/abc-project-0.1.0.tgz".into(),
             public: true,
@@ -1345,7 +1350,7 @@ fn github_reports_a_published_release_with_a_different_body_as_already_published
     let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[("test".to_owned(), Box::new(publisher) as Box<dyn Publisher>)],
+        &[PublisherNode::new("test", Box::new(publisher), Vec::new())],
         &mut |_| {},
     )
     .unwrap();

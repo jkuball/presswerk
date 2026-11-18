@@ -13,6 +13,7 @@ use minijinja::{Environment, UndefinedBehavior, context};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -219,6 +220,23 @@ pub trait Publisher {
     /// Report the artifacts of a publisher whose state is already published, without writing.
     fn complete_steps(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
         Ok(Vec::new())
+    }
+}
+
+/// One publisher in the declared dependency graph.
+pub struct PublisherNode {
+    pub name: String,
+    pub after: Vec<String>,
+    pub publisher: Box<dyn Publisher>,
+}
+
+impl PublisherNode {
+    pub fn new(name: impl Into<String>, publisher: Box<dyn Publisher>, after: Vec<String>) -> Self {
+        Self {
+            name: name.into(),
+            after,
+            publisher,
+        }
     }
 }
 
@@ -1374,33 +1392,35 @@ pub fn publish_to_remote(
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     };
 
-    // The forge release comes last, so it never announces a release whose images are missing.
-    let mut publishers: Vec<(String, Box<dyn Publisher>)> = Vec::new();
+    let mut publishers = Vec::new();
     for (name, publisher) in &declaration.publishers.oci_image {
-        publishers.push((
+        publishers.push(PublisherNode::new(
             format!("oci-image.{name}"),
             Box::new(
                 crate::oci::OciImagePublisher::from_declaration(publisher)?
                     .with_trusted_predecessor(trusted_predecessor.clone()),
             ),
+            publisher.after.clone(),
         ));
     }
     for (name, publisher) in &declaration.publishers.oci_helm {
-        publishers.push((
+        publishers.push(PublisherNode::new(
             format!("oci-helm.{name}"),
             Box::new(crate::helm::OciHelmPublisher::from_declaration(
                 publisher,
                 &release.version,
             )?),
+            publisher.after.clone(),
         ));
     }
     for (name, publisher) in &declaration.publishers.github_release {
-        publishers.push((
+        publishers.push(PublisherNode::new(
             format!("github-release.{name}"),
             Box::new(GithubPublisher::from_declaration(
                 publisher,
                 &declaration.changelog.path,
             )?),
+            publisher.after.clone(),
         ));
     }
     progress(PublishEvent::Started {
@@ -1415,7 +1435,7 @@ pub fn publish_to_remote(
         publisher_steps: publishers
             .into_iter()
             .zip(steps)
-            .map(|((name, _), (step, artifacts))| (name, step, artifacts))
+            .map(|(publisher, (step, artifacts))| (publisher.name, step, artifacts))
             .collect(),
     }))
 }
@@ -1425,7 +1445,7 @@ pub fn publish_to_remote(
 pub fn publish_ordered(
     tag_publisher: &dyn TagPublisher,
     release: &Release,
-    publishers: &[(String, Box<dyn Publisher>)],
+    publishers: &[PublisherNode],
     progress: &mut Progress<'_>,
 ) -> Result<(TagStep, Vec<(PublisherStep, ArtifactSteps)>), PublicationError> {
     let tag_step = match tag_publisher.state(release)? {
@@ -1433,10 +1453,13 @@ pub fn publish_ordered(
         RemoteState::Matching => TagStep::AlreadyPushed,
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     };
-    for (_, publisher) in publishers {
-        if let PublisherState::Conflicting(message) = publisher.state(release)? {
+    let mut states = Vec::with_capacity(publishers.len());
+    for publisher in publishers {
+        let state = publisher.publisher.state(release)?;
+        if let PublisherState::Conflicting(message) = state {
             return Err(PublicationError::new(message));
         }
+        states.push(state);
     }
 
     tag_publisher.publish(release)?;
@@ -1444,30 +1467,118 @@ pub fn publish_ordered(
         tag: &release.tag,
         step: tag_step,
     });
-    let mut publisher_steps = Vec::with_capacity(publishers.len());
-    for (name, publisher) in publishers {
-        let step = match publisher.state(release)? {
+
+    enum Execution {
+        Pending,
+        Succeeded,
+        Failed(PublicationError),
+        Skipped(PublicationError),
+    }
+
+    let indexes: HashMap<&str, usize> = publishers
+        .iter()
+        .enumerate()
+        .map(|(index, publisher)| (publisher.name.as_str(), index))
+        .collect();
+    let mut executions: Vec<_> = publishers.iter().map(|_| Execution::Pending).collect();
+    let mut publisher_steps: Vec<Option<(PublisherStep, ArtifactSteps)>> =
+        publishers.iter().map(|_| None).collect();
+
+    while executions
+        .iter()
+        .any(|execution| matches!(execution, Execution::Pending))
+    {
+        for index in 0..publishers.len() {
+            if !matches!(executions[index], Execution::Pending) {
+                continue;
+            }
+            let blocked = publishers[index].after.iter().find_map(|dependency| {
+                let dependency = indexes.get(dependency.as_str())?;
+                match &executions[*dependency] {
+                    Execution::Failed(error) | Execution::Skipped(error) => Some(error.clone()),
+                    _ => None,
+                }
+            });
+            if let Some(error) = blocked {
+                executions[index] = Execution::Skipped(error);
+            }
+        }
+
+        let ready = publishers
+            .iter()
+            .enumerate()
+            .find_map(|(index, publisher)| {
+                if !matches!(executions[index], Execution::Pending) {
+                    return None;
+                }
+                publisher
+                    .after
+                    .iter()
+                    .all(|dependency| {
+                        indexes.get(dependency.as_str()).is_some_and(|dependency| {
+                            matches!(executions[*dependency], Execution::Succeeded)
+                        })
+                    })
+                    .then_some(index)
+            });
+        let Some(index) = ready else {
+            if executions
+                .iter()
+                .any(|execution| matches!(execution, Execution::Pending))
+            {
+                return Err(PublicationError::new(
+                    "publisher dependency graph did not become ready",
+                ));
+            }
+            break;
+        };
+
+        let publisher = &publishers[index];
+        let step = match states[index] {
             PublisherState::Published => PublisherStep::AlreadyPublished,
             PublisherState::Missing => PublisherStep::Published,
             PublisherState::Draft => PublisherStep::DraftCompleted,
             PublisherState::Incomplete | PublisherState::AliasesPending => {
                 PublisherStep::ArtifactsCompleted
             }
-            PublisherState::Conflicting(message) => return Err(PublicationError::new(message)),
+            PublisherState::Conflicting(_) => unreachable!("conflicts were checked before the tag"),
         };
-        let artifacts = if step == PublisherStep::AlreadyPublished {
-            let artifacts = publisher.complete_steps(release)?;
-            for artifact in &artifacts {
-                progress(PublishEvent::Artifact(artifact));
+        let published = (|| {
+            let artifacts = if step == PublisherStep::AlreadyPublished {
+                let artifacts = publisher.publisher.complete_steps(release)?;
+                for artifact in &artifacts {
+                    progress(PublishEvent::Artifact(artifact));
+                }
+                artifacts
+            } else {
+                publisher
+                    .publisher
+                    .publish_with_progress(release, &mut |artifact| {
+                        progress(PublishEvent::Artifact(artifact));
+                    })?
+            };
+            match publisher.publisher.state(release)? {
+                PublisherState::Published | PublisherState::AliasesPending => {}
+                state => {
+                    return Err(PublicationError::new(format!(
+                        "publisher {} did not complete {:?}: {state:?}",
+                        publisher.name, release.tag
+                    )));
+                }
             }
-            artifacts
-        } else {
-            publisher.publish_with_progress(release, &mut |artifact| {
-                progress(PublishEvent::Artifact(artifact));
-            })?
-        };
-        progress(PublishEvent::Publisher { name, step });
-        publisher_steps.push((step, artifacts));
+            Ok(artifacts)
+        })();
+        match published {
+            Ok(artifacts) => {
+                progress(PublishEvent::Publisher {
+                    name: &publisher.name,
+                    step,
+                });
+                publisher_steps[index] = Some((step, artifacts));
+                executions[index] = Execution::Succeeded;
+            }
+            Err(error) => executions[index] = Execution::Failed(error),
+        }
     }
 
     match tag_publisher.state(release)? {
@@ -1479,18 +1590,19 @@ pub fn publish_ordered(
             )));
         }
     }
-    for (_, publisher) in publishers {
-        match publisher.state(release)? {
-            PublisherState::Published | PublisherState::AliasesPending => {}
-            state => {
-                return Err(PublicationError::new(format!(
-                    "publisher did not complete {:?}: {state:?}",
-                    release.tag
-                )));
-            }
-        }
+    if let Some(error) = executions.iter().find_map(|execution| match execution {
+        Execution::Failed(error) => Some(error.clone()),
+        _ => None,
+    }) {
+        return Err(error);
     }
-    Ok((tag_step, publisher_steps))
+    Ok((
+        tag_step,
+        publisher_steps
+            .into_iter()
+            .map(|step| step.expect("every successful publisher has a step"))
+            .collect(),
+    ))
 }
 
 pub fn validate_new_release(
