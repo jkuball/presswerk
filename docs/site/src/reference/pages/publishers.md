@@ -46,10 +46,6 @@ Publishers form a dependency graph. Name a publisher as `<type>.<name>` in [`aft
 [`before`](/reference/options/#publishers.github-release.name.before) expresses the same edge from
 the other side. Unknown publisher names and cycles fail module evaluation.
 
-A GitHub Release runs after every non-GitHub publisher by default, so it does not announce a release
-whose images or charts are still missing. Defining its `after` option replaces that default
-entirely. Set it to `[ ]` to remove the ordering, or declare the exact dependencies you need.
-
 ## Publishing
 
 Before anything is written, `presswerk publish` checks the release tag and the state of every

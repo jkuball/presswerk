@@ -28,6 +28,12 @@ An existing release is never edited; at most a draft is published. So a retry of
 completes missing state and keeps everything that already matches. After publishing, Presswerk
 reads every release back and fails unless it is published.
 
+## Ordering
+
+A GitHub Release runs after every non-GitHub publisher by default, so it does not announce a release
+whose images or charts are still missing. Defining its `after` option replaces that default
+entirely. Set it to `[ ]` to remove the ordering, or declare the exact dependencies you need.
+
 ## Body
 
 [`body`](/reference/options/#publishers.github-release.name.body) is a MiniJinja string. Its context
