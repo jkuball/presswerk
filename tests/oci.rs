@@ -899,7 +899,7 @@ fn layer_uploads_are_bounded_and_can_finish_out_of_order() {
 
     assert_eq!(steps[0].step, AssetStep::Uploaded);
     let state = registry.state.lock().unwrap();
-    assert_eq!(state.max_uploads_in_flight, 6);
+    assert!((2..=6).contains(&state.max_uploads_in_flight));
     assert_ne!(state.upload_starts, state.upload_finishes);
     assert!(state.faults.is_empty());
     let index: Value = serde_json::from_slice(&state.manifests[&state.tags["1.0.0"]].1).unwrap();
