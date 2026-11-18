@@ -753,6 +753,100 @@ impl Publisher for CoordinatedPublisher {
     }
 }
 
+struct OrderedPublisher {
+    name: &'static str,
+    published: AtomicBool,
+    wait_for: Option<Arc<AtomicBool>>,
+    completed: Arc<AtomicBool>,
+}
+
+impl Publisher for OrderedPublisher {
+    fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+        Ok(if self.published.load(Ordering::SeqCst) {
+            PublisherState::Published
+        } else {
+            PublisherState::Missing
+        })
+    }
+
+    fn publish_with_progress(
+        &self,
+        _release: &Release,
+        progress: &mut dyn FnMut(&ArtifactStep),
+    ) -> Result<ArtifactSteps, PublicationError> {
+        if let Some(wait_for) = &self.wait_for {
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            while !wait_for.load(Ordering::SeqCst) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "publisher did not run concurrently"
+                );
+                thread::yield_now();
+            }
+        }
+        self.published.store(true, Ordering::SeqCst);
+        self.completed.store(true, Ordering::SeqCst);
+        let step = ArtifactStep {
+            kind: ArtifactKind::Asset,
+            name: self.name.into(),
+            step: AssetStep::Uploaded,
+        };
+        progress(&step);
+        Ok(vec![step])
+    }
+}
+
+#[test]
+fn live_events_follow_completion_order_while_the_report_keeps_declaration_order() {
+    let fast_completed = Arc::new(AtomicBool::new(false));
+    let publishers = [
+        PublisherNode::new(
+            "slow",
+            Box::new(OrderedPublisher {
+                name: "slow",
+                published: AtomicBool::new(false),
+                wait_for: Some(fast_completed.clone()),
+                completed: Arc::new(AtomicBool::new(false)),
+            }),
+            Vec::new(),
+        ),
+        PublisherNode::new(
+            "fast",
+            Box::new(OrderedPublisher {
+                name: "fast",
+                published: AtomicBool::new(false),
+                wait_for: None,
+                completed: fast_completed,
+            }),
+            Vec::new(),
+        ),
+    ];
+    let completed = Arc::new(Mutex::new(Vec::new()));
+    let progress = completed.clone();
+
+    let (_, steps) = publish_ordered_with_jobs(
+        &fake_tag(RemoteState::Matching),
+        &release("0123456789012345678901234567890123456789".into()),
+        &publishers,
+        NonZeroUsize::new(2).unwrap(),
+        &mut move |event| {
+            if let PublishEvent::Publisher { name, .. } = event {
+                progress.lock().unwrap().push(name.to_owned());
+            }
+        },
+    )
+    .unwrap();
+
+    assert_eq!(*completed.lock().unwrap(), ["fast", "slow"]);
+    assert_eq!(
+        steps
+            .iter()
+            .map(|(_, artifacts)| artifacts[0].name.as_str())
+            .collect::<Vec<_>>(),
+        ["slow", "fast"]
+    );
+}
+
 #[test]
 fn fail_fast_starts_nothing_new_while_running_publishers_finish() {
     let running_started = Arc::new(AtomicBool::new(false));
