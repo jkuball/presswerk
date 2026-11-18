@@ -1,6 +1,22 @@
 { config, lib, self, ... }:
 let
   version = (builtins.fromTOML (builtins.readFile (self.outPath + "/Cargo.toml"))).package.version;
+  canonicalPublishers = publishers: builtins.removeAttrs publishers [ "oci" ];
+  publisherAddresses = publishers: lib.concatLists (lib.mapAttrsToList
+    (type: named: map (name: "${type}.${name}") (builtins.attrNames named))
+    (canonicalPublishers publishers));
+  publisherNodes = publishers: builtins.listToAttrs (lib.concatLists (lib.mapAttrsToList
+    (type: named: lib.mapAttrsToList
+      (name: publisher: lib.nameValuePair "${type}.${name}" publisher)
+      named)
+    (canonicalPublishers publishers)));
+  normalizePublisher = publishers: address: publisher:
+    builtins.removeAttrs
+      (publisher // {
+        after = publisher.after ++ builtins.filter
+          (other: builtins.elem address (publisherNodes publishers).${other}.before)
+          (publisherAddresses publishers);
+      }) [ "before" "cycleHint" ];
 in
 {
   flake.lib.mkRelease =
@@ -102,9 +118,11 @@ in
             (lib.filterAttrs (_identifier: entry: entry != null) releaseConfig.analyzer.gitmoji.catalog);
         };
       changelog = releaseConfig.changelog;
-      publishers.github-release = releaseConfig.publishers.github-release;
+      publishers.github-release = lib.mapAttrs
+        (name: publisher: normalizePublisher releaseConfig.publishers "github-release.${name}" publisher)
+        releaseConfig.publishers.github-release;
       publishers.oci-image = lib.mapAttrs
-        (_name: oci: oci // {
+        (name: oci: normalizePublisher releaseConfig.publishers "oci-image.${name}" oci // {
           compression =
             if oci.compression.zstd.enable then { zstd.level = oci.compression.zstd.level; }
             else { gzip.level = oci.compression.gzip.level; };
@@ -112,7 +130,7 @@ in
         })
         releaseConfig.publishers.oci-image;
       publishers.oci-helm = lib.mapAttrs
-        (_name: helm: helm // {
+        (name: helm: normalizePublisher releaseConfig.publishers "oci-helm.${name}" helm // {
           username = lib.filterAttrs (_source: value: value != null) helm.username;
         })
         releaseConfig.publishers.oci-helm;

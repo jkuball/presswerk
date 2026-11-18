@@ -20,6 +20,9 @@ pub enum Command {
     },
     /// Publish an exact release candidate.
     Publish {
+        /// Stop starting publishers after the first failure.
+        #[arg(long)]
+        fail_fast: bool,
         /// Revision of the release candidate to publish.
         #[arg(default_value = "HEAD")]
         revision: String,

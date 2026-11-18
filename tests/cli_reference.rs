@@ -25,7 +25,7 @@ fn reference_lists_every_command_with_its_usage() {
     );
     assert_eq!(
         subcommand(&reference, "presswerk publish").usage,
-        "presswerk publish [REVISION]"
+        "presswerk publish [OPTIONS] [REVISION]"
     );
 }
 
@@ -33,11 +33,17 @@ fn reference_lists_every_command_with_its_usage() {
 fn reference_describes_arguments_and_options() {
     let reference = reference();
 
-    let revision = &subcommand(&reference, "presswerk publish").arguments[0];
+    let publish = subcommand(&reference, "presswerk publish");
+    let revision = &publish.arguments[0];
     assert_eq!(revision.id, "revision");
     assert_eq!(revision.value_names, ["REVISION"]);
     assert_eq!(revision.defaults, ["HEAD"]);
     assert!(!revision.required);
+
+    let fail_fast = &publish.options[0];
+    assert_eq!(fail_fast.long.as_deref(), Some("fail-fast"));
+    assert!(fail_fast.value_names.is_empty());
+    assert!(!fail_fast.required);
 
     let prepare = subcommand(&reference, "presswerk prepare");
     assert!(prepare.arguments.is_empty());

@@ -190,6 +190,10 @@ pub enum PublishEvent<'a> {
     Artifact(&'a ArtifactStep),
     /// A publisher is complete, after all of its artifacts.
     Publisher { name: &'a str, step: PublisherStep },
+    /// A publisher failed after the tag was pushed.
+    PublisherFailed { name: &'a str, reason: &'a str },
+    /// A publisher did not run because a dependency failed or fail-fast stopped the graph.
+    PublisherSkipped { name: &'a str, reason: &'a str },
 }
 
 /// Receives each step of `publish` as soon as it completes.
@@ -1222,18 +1226,21 @@ pub struct PublishReport {
     pub commit: String,
     pub tag: String,
     pub tag_step: TagStep,
-    /// One step per publisher, named like its declaration, such as `github-release.default`,
-    /// with one step per artifact of that publisher.
-    pub publisher_steps: Vec<(String, PublisherStep, ArtifactSteps)>,
+    /// One outcome per publisher, named like its declaration, such as `github-release.default`.
+    pub publisher_outcomes: Vec<(String, PublisherOutcome)>,
 }
 
 impl PublishReport {
     /// The best-effort steps that failed, by artifact name, with their reason.
     #[must_use]
     pub fn warnings(&self) -> Vec<(&str, &str)> {
-        self.publisher_steps
+        self.publisher_outcomes
             .iter()
-            .flat_map(|(_, _, artifacts)| artifacts)
+            .filter_map(|(_, outcome)| match outcome {
+                PublisherOutcome::Published { artifacts, .. } => Some(artifacts),
+                PublisherOutcome::Failed { .. } | PublisherOutcome::Skipped { .. } => None,
+            })
+            .flatten()
             .filter_map(|artifact| match &artifact.step {
                 AssetStep::Warning(reason) => Some((artifact.name.as_str(), reason.as_str())),
                 _ => None,
@@ -1245,11 +1252,51 @@ impl PublishReport {
     #[must_use]
     pub fn changed_nothing(&self) -> bool {
         self.tag_step == TagStep::AlreadyPushed
-            && self
-                .publisher_steps
-                .iter()
-                .all(|(_, step, _)| *step == PublisherStep::AlreadyPublished)
+            && self.publisher_outcomes.iter().all(|(_, outcome)| {
+                matches!(
+                    outcome,
+                    PublisherOutcome::Published {
+                        step: PublisherStep::AlreadyPublished,
+                        ..
+                    }
+                )
+            })
     }
+
+    #[must_use]
+    pub fn failed(&self) -> usize {
+        self.publisher_outcomes
+            .iter()
+            .filter(|(_, outcome)| matches!(outcome, PublisherOutcome::Failed { .. }))
+            .count()
+    }
+
+    #[must_use]
+    pub fn skipped(&self) -> usize {
+        self.publisher_outcomes
+            .iter()
+            .filter(|(_, outcome)| matches!(outcome, PublisherOutcome::Skipped { .. }))
+            .count()
+    }
+
+    #[must_use]
+    pub fn complete(&self) -> bool {
+        self.failed() == 0 && self.skipped() == 0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PublisherOutcome {
+    Published {
+        step: PublisherStep,
+        artifacts: ArtifactSteps,
+    },
+    Failed {
+        reason: String,
+    },
+    Skipped {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1270,6 +1317,7 @@ pub enum PublisherStep {
 pub fn publish(
     repository_path: impl AsRef<Path>,
     revision: &str,
+    fail_fast: bool,
     progress: &mut Progress<'_>,
 ) -> Result<PublishOutcome, PublicationError> {
     publish_to_remote(
@@ -1277,6 +1325,7 @@ pub fn publish(
         revision,
         "origin",
         &GitCliffAnalyzer,
+        fail_fast,
         progress,
     )
 }
@@ -1286,6 +1335,7 @@ pub fn publish_to_remote(
     revision: &str,
     remote: &str,
     analyzer: &dyn Analyzer,
+    fail_fast: bool,
     progress: &mut Progress<'_>,
 ) -> Result<PublishOutcome, PublicationError> {
     let evaluated = evaluate_release_declaration(repository_path, revision)
@@ -1427,15 +1477,16 @@ pub fn publish_to_remote(
         tag: &release.tag,
         commit: &release.commit,
     });
-    let (tag_step, steps) = publish_ordered(&tag_publisher, &release, &publishers, progress)?;
+    let (tag_step, outcomes) =
+        publish_ordered(&tag_publisher, &release, &publishers, fail_fast, progress)?;
     Ok(PublishOutcome::Published(PublishReport {
         commit: release.commit,
         tag: release.tag,
         tag_step,
-        publisher_steps: publishers
+        publisher_outcomes: publishers
             .into_iter()
-            .zip(steps)
-            .map(|(publisher, (step, artifacts))| (publisher.name, step, artifacts))
+            .zip(outcomes)
+            .map(|(publisher, outcome)| (publisher.name, outcome))
             .collect(),
     }))
 }
@@ -1446,21 +1497,29 @@ pub fn publish_ordered(
     tag_publisher: &dyn TagPublisher,
     release: &Release,
     publishers: &[PublisherNode],
+    fail_fast: bool,
     progress: &mut Progress<'_>,
-) -> Result<(TagStep, Vec<(PublisherStep, ArtifactSteps)>), PublicationError> {
-    let tag_step = match tag_publisher.state(release)? {
+) -> Result<(TagStep, Vec<PublisherOutcome>), PublicationError> {
+    let tag_state = tag_publisher.state(release);
+    let states: Vec<_> = publishers
+        .iter()
+        .map(|publisher| publisher.publisher.state(release))
+        .collect();
+    let tag_step = match tag_state? {
         RemoteState::Missing => TagStep::Pushed,
         RemoteState::Matching => TagStep::AlreadyPushed,
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     };
-    let mut states = Vec::with_capacity(publishers.len());
-    for publisher in publishers {
-        let state = publisher.publisher.state(release)?;
-        if let PublisherState::Conflicting(message) = state {
-            return Err(PublicationError::new(message));
+    for state in &states {
+        match state {
+            Ok(PublisherState::Conflicting(message)) => {
+                return Err(PublicationError::new(message));
+            }
+            Err(error) => return Err(error.clone()),
+            Ok(_) => {}
         }
-        states.push(state);
     }
+    let states: Vec<_> = states.into_iter().map(Result::unwrap).collect();
 
     tag_publisher.publish(release)?;
     progress(PublishEvent::Tag {
@@ -1471,8 +1530,8 @@ pub fn publish_ordered(
     enum Execution {
         Pending,
         Succeeded,
-        Failed(PublicationError),
-        Skipped(PublicationError),
+        Failed,
+        Skipped { failed: String },
     }
 
     let indexes: HashMap<&str, usize> = publishers
@@ -1481,8 +1540,8 @@ pub fn publish_ordered(
         .map(|(index, publisher)| (publisher.name.as_str(), index))
         .collect();
     let mut executions: Vec<_> = publishers.iter().map(|_| Execution::Pending).collect();
-    let mut publisher_steps: Vec<Option<(PublisherStep, ArtifactSteps)>> =
-        publishers.iter().map(|_| None).collect();
+    let mut outcomes: Vec<Option<PublisherOutcome>> = publishers.iter().map(|_| None).collect();
+    let mut first_failure = None;
 
     while executions
         .iter()
@@ -1492,15 +1551,30 @@ pub fn publish_ordered(
             if !matches!(executions[index], Execution::Pending) {
                 continue;
             }
-            let blocked = publishers[index].after.iter().find_map(|dependency| {
-                let dependency = indexes.get(dependency.as_str())?;
-                match &executions[*dependency] {
-                    Execution::Failed(error) | Execution::Skipped(error) => Some(error.clone()),
-                    _ => None,
-                }
-            });
-            if let Some(error) = blocked {
-                executions[index] = Execution::Skipped(error);
+            let failed = if fail_fast {
+                first_failure.clone()
+            } else {
+                publishers[index].after.iter().find_map(|dependency| {
+                    let dependency = indexes.get(dependency.as_str())?;
+                    match &executions[*dependency] {
+                        Execution::Failed => Some(publishers[*dependency].name.clone()),
+                        Execution::Skipped { failed } => Some(failed.clone()),
+                        Execution::Pending | Execution::Succeeded => None,
+                    }
+                })
+            };
+            if let Some(failed) = failed {
+                let reason = if fail_fast {
+                    format!("skipped: fail-fast after {failed} failed")
+                } else {
+                    format!("skipped: {failed} failed")
+                };
+                progress(PublishEvent::PublisherSkipped {
+                    name: &publishers[index].name,
+                    reason: &reason,
+                });
+                outcomes[index] = Some(PublisherOutcome::Skipped { reason });
+                executions[index] = Execution::Skipped { failed };
             }
         }
 
@@ -1574,10 +1648,19 @@ pub fn publish_ordered(
                     name: &publisher.name,
                     step,
                 });
-                publisher_steps[index] = Some((step, artifacts));
+                outcomes[index] = Some(PublisherOutcome::Published { step, artifacts });
                 executions[index] = Execution::Succeeded;
             }
-            Err(error) => executions[index] = Execution::Failed(error),
+            Err(error) => {
+                let reason = error.to_string();
+                progress(PublishEvent::PublisherFailed {
+                    name: &publisher.name,
+                    reason: &reason,
+                });
+                outcomes[index] = Some(PublisherOutcome::Failed { reason });
+                executions[index] = Execution::Failed;
+                first_failure.get_or_insert_with(|| publisher.name.clone());
+            }
         }
     }
 
@@ -1590,17 +1673,11 @@ pub fn publish_ordered(
             )));
         }
     }
-    if let Some(error) = executions.iter().find_map(|execution| match execution {
-        Execution::Failed(error) => Some(error.clone()),
-        _ => None,
-    }) {
-        return Err(error);
-    }
     Ok((
         tag_step,
-        publisher_steps
+        outcomes
             .into_iter()
-            .map(|step| step.expect("every successful publisher has a step"))
+            .map(|outcome| outcome.expect("every publisher has an outcome"))
             .collect(),
     ))
 }

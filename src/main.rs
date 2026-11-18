@@ -90,7 +90,10 @@ fn run() -> Result<()> {
                 None => println!("Nothing to prepare."),
             }
         }
-        Command::Publish { revision } => match publish(".", &revision, &mut print_publish_event)? {
+        Command::Publish {
+            revision,
+            fail_fast,
+        } => match publish(".", &revision, fail_fast, &mut print_publish_event)? {
             PublishOutcome::NothingToDo { commit } => println!(
                 "Nothing to publish: {} is not a release commit.",
                 short_commit(&commit)
@@ -109,7 +112,20 @@ fn run() -> Result<()> {
                         report.tag
                     );
                 }
-                if report.changed_nothing() {
+                if !report.complete() {
+                    let failed = report.failed();
+                    let skipped = report.skipped();
+                    println!(
+                        "Published {} from {commit} partially; {failed} {}, {skipped} skipped.",
+                        report.tag,
+                        if failed == 1 {
+                            "publisher failed"
+                        } else {
+                            "publishers failed"
+                        }
+                    );
+                    std::process::exit(1);
+                } else if report.changed_nothing() {
                     println!(
                         "{} from {commit} was already released; nothing changed.",
                         report.tag
@@ -176,6 +192,12 @@ fn print_publish_event(event: PublishEvent<'_>) {
             };
             let kind = if registry { "registry" } else { "release" };
             (kind, status, name.to_owned())
+        }
+        PublishEvent::PublisherFailed { name, reason } => {
+            ("publisher", "failed", format!("{name} ({reason})"))
+        }
+        PublishEvent::PublisherSkipped { name, reason } => {
+            ("publisher", "skipped", format!("{name} ({reason})"))
         }
         PublishEvent::Artifact(artifact) => {
             let (kind, done, already) = match artifact.kind {

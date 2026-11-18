@@ -147,7 +147,8 @@ fn publish_help_documents_the_optional_revision() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success());
-    assert!(stdout.contains("Usage: presswerk publish [REVISION]"));
+    assert!(stdout.contains("Usage: presswerk publish [OPTIONS] [REVISION]"));
+    assert!(stdout.contains("--fail-fast"));
     assert!(stdout.contains("default: HEAD"));
 }
 

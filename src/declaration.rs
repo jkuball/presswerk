@@ -888,6 +888,11 @@ mod tests {
             declaration.publishers.github_release["default"].body,
             DEFAULT_GITHUB_RELEASE_BODY
         );
+        assert!(
+            declaration.publishers.github_release["default"]
+                .after
+                .is_empty()
+        );
         let Analyzer::Gitmoji { gitmoji } = &declaration.analyzer else {
             panic!("expected the Gitmoji analyzer");
         };
@@ -1049,6 +1054,19 @@ mod tests {
         assert!(declaration.publishers.github_release.is_empty());
         assert!(declaration.publishers.oci_image.is_empty());
         assert!(declaration.publishers.oci_helm.is_empty());
+    }
+
+    #[test]
+    fn decodes_publisher_dependencies() {
+        let declaration = declaration(|value| {
+            value["publishers"]["github-release"]["default"]["after"] = json!(["oci-image.api"]);
+        });
+        let decoded = ReleaseDeclaration::from_json(&declaration).unwrap();
+
+        assert_eq!(
+            decoded.publishers.github_release["default"].after,
+            ["oci-image.api"]
+        );
     }
 
     #[test]
@@ -1415,6 +1433,7 @@ mod tests {
         ))
         .unwrap();
         let publisher = &decoded.publishers.oci_helm["default"];
+        assert!(publisher.after.is_empty());
         assert!(publisher.public);
         assert_eq!(publisher.chart, "/nix/store/abc-project-1.2.3.tgz");
 
@@ -1451,7 +1470,7 @@ mod tests {
         });
         let legacy = declaration(|value| value["publishers"]["oci"] = publishers.clone());
         let decoded = ReleaseDeclaration::from_json(&legacy).unwrap();
-        assert!(decoded.publishers.oci_image.contains_key("default"));
+        assert!(decoded.publishers.oci_image["default"].after.is_empty());
         let normalized = serde_json::to_value(decoded).unwrap();
         assert!(normalized["publishers"].get("oci").is_none());
         assert!(normalized["publishers"].get("oci-image").is_some());

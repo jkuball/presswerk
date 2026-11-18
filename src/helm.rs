@@ -662,6 +662,7 @@ mod tests {
                 Box::new(conflicting),
                 Vec::new(),
             )],
+            false,
             &mut |_| {},
         )
         .unwrap_err()
