@@ -413,11 +413,15 @@ struct ImageConfig {
     variant: Option<String>,
 }
 
-/// The largest compressed layer kept in memory; a larger one goes to a temporary file.
+/// The largest compressed layer kept in memory during ordinary conversion.
 const SPOOL_LIMIT: usize = 64 << 20;
 
-/// Layers uploaded concurrently within one image. One rendezvous channel per worker keeps the
-/// number of compressed blobs waiting or uploading bounded by the same limit.
+/// The per-layer in-memory limit while uploads are pipelined. Six workers plus the producer can
+/// retain seven compressed blobs, so larger layers spill to disk to keep the total bound modest.
+const PIPELINED_SPOOL_LIMIT: usize = 16 << 20;
+
+/// Layers uploaded concurrently within one image. Each worker has a rendezvous channel, so no
+/// additional compressed blobs queue behind the workers.
 const BLOB_UPLOAD_LIMIT: usize = 6;
 
 /// How much of an archive's JSON files, such as `manifest.json` and the image config, is kept in
@@ -497,6 +501,7 @@ impl Members {
     fn read(
         reader: impl Read,
         compression: Compression,
+        spool_limit: usize,
         put: &mut dyn FnMut(OwnedBlob) -> Result<(), String>,
     ) -> Result<Self, ReadError> {
         let mut members = Self::default();
@@ -563,7 +568,7 @@ impl Members {
                     .ok_or_else(too_large)?;
                 Member::Metadata(bytes.into())
             } else {
-                let (digest, size, data) = compress(&mut entry, compression)?;
+                let (digest, size, data) = compress(&mut entry, compression, spool_limit)?;
                 put(OwnedBlob {
                     digest: digest.clone(),
                     size,
@@ -641,7 +646,7 @@ impl Image {
         compression: Compression,
         put: &mut dyn FnMut(&Blob<'_>) -> Result<(), String>,
     ) -> Result<Self, String> {
-        Self::convert_owned(platform, path, compression, &mut |blob| {
+        Self::convert_owned(platform, path, compression, SPOOL_LIMIT, &mut |blob| {
             put(&blob.borrowed())
         })
     }
@@ -650,6 +655,7 @@ impl Image {
         platform: &str,
         path: impl AsRef<Path>,
         compression: Compression,
+        spool_limit: usize,
         put: &mut dyn FnMut(OwnedBlob) -> Result<(), String>,
     ) -> Result<Self, String> {
         let path = path.as_ref();
@@ -670,7 +676,7 @@ impl Image {
                 &"not a file; expected an image archive or an executable that streams one",
             ));
         }
-        let mut read = |reader: &mut dyn Read| Members::read(reader, compression, put);
+        let mut read = |reader: &mut dyn Read| Members::read(reader, compression, spool_limit, put);
 
         let members = if metadata.permissions().mode() & 0o111 != 0 {
             let mut child = Command::new(path)
@@ -826,14 +832,15 @@ impl<T: io::Write> io::Write for Hashing<T> {
     }
 }
 
-/// Compress a stream, in memory up to `SPOOL_LIMIT` and in a temporary file beyond; the digest
-/// and size of what was written, and the compressed bytes.
+/// Compress a stream, in memory up to `spool_limit` and in a temporary file beyond; the digest and
+/// size of what was written, and the compressed bytes.
 fn compress(
     mut source: impl Read,
     compression: Compression,
+    spool_limit: usize,
 ) -> io::Result<(String, u64, SpooledData)> {
     let target = Hashing {
-        inner: io::BufWriter::new(tempfile::SpooledTempFile::new(SPOOL_LIMIT)),
+        inner: io::BufWriter::new(tempfile::SpooledTempFile::new(spool_limit)),
         hasher: Sha256::new(),
         size: 0,
     };
@@ -1582,8 +1589,12 @@ impl OciImagePublisher {
             let mut pushed = false;
             let mut upload_error: Option<(usize, PublicationError)> = None;
             let mut sequence = 0;
-            let image =
-                Image::convert_owned(&platform.to_string(), path, self.compression, &mut |blob| {
+            let image = Image::convert_owned(
+                &platform.to_string(),
+                path,
+                self.compression,
+                PIPELINED_SPOOL_LIMIT,
+                &mut |blob| {
                     while let Ok(result) = completed.try_recv() {
                         record_upload_result(result, &mut pending, &mut pushed, &mut upload_error);
                     }
@@ -1593,13 +1604,20 @@ impl OciImagePublisher {
                     let worker = ready
                         .recv()
                         .map_err(|_| "a blob upload worker stopped unexpectedly".to_owned())?;
+                    while let Ok(result) = completed.try_recv() {
+                        record_upload_result(result, &mut pending, &mut pushed, &mut upload_error);
+                    }
+                    if let Some((_, error)) = &upload_error {
+                        return Err(error.to_string());
+                    }
                     workers[worker]
                         .send((sequence, blob))
                         .map_err(|_| "a blob upload worker stopped unexpectedly".to_owned())?;
                     sequence += 1;
                     pending += 1;
                     Ok(())
-                });
+                },
+            );
             drop(workers);
             while pending > 0 {
                 let result = completed.recv().map_err(|_| {
