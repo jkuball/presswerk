@@ -730,6 +730,21 @@ in
       ];
     };
 
+    "test publisher dependencies reject self references" = {
+      expr = map
+        (edge: failedAssertion {
+          publishers.oci-image.image = imagePublisher // edge;
+        })
+        [
+          { after = [ "oci-image.image" ]; }
+          { before = [ "oci-image.image" ]; }
+        ];
+      expected = [
+        "publishers form a cycle: oci-image.image → oci-image.image"
+        "publishers form a cycle: oci-image.image → oci-image.image"
+      ];
+    };
+
     "test publisher dependency cycles include the default hint only while it applies" = {
       expr = {
         default = failedAssertion {
@@ -747,10 +762,26 @@ in
             after = [ "github-release.default" ];
           };
         };
+        mkDefault = failedAssertion {
+          publishers.github-release.default = {
+            repository = "owner/project";
+            after = lib.mkDefault [ "oci-image.image" ];
+          };
+          publishers.oci-image.image = imagePublisher // {
+            after = [ "github-release.default" ];
+          };
+        };
+        unrelated = failedAssertion {
+          publishers.github-release.default.repository = "owner/project";
+          publishers.oci-image.a = imagePublisher // { after = [ "oci-image.b" ]; };
+          publishers.oci-image.b = imagePublisher // { after = [ "oci-image.a" ]; };
+        };
       };
       expected = {
         default = "publishers form a cycle: github-release.default → oci-image.image → github-release.default (github-release.default.after defaults to every other publisher; set it explicitly to change that)";
         explicit = "publishers form a cycle: github-release.default → oci-image.image → github-release.default";
+        mkDefault = "publishers form a cycle: github-release.default → oci-image.image → github-release.default";
+        unrelated = "publishers form a cycle: oci-image.a → oci-image.b → oci-image.a";
       };
     };
 

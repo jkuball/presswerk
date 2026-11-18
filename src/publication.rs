@@ -1547,34 +1547,41 @@ pub fn publish_ordered(
         .iter()
         .any(|execution| matches!(execution, Execution::Pending))
     {
-        for index in 0..publishers.len() {
-            if !matches!(executions[index], Execution::Pending) {
-                continue;
-            }
-            let failed = if fail_fast {
-                first_failure.clone()
-            } else {
-                publishers[index].after.iter().find_map(|dependency| {
-                    let dependency = indexes.get(dependency.as_str())?;
-                    match &executions[*dependency] {
-                        Execution::Failed => Some(publishers[*dependency].name.clone()),
-                        Execution::Skipped { failed } => Some(failed.clone()),
-                        Execution::Pending | Execution::Succeeded => None,
-                    }
-                })
-            };
-            if let Some(failed) = failed {
-                let reason = if fail_fast {
-                    format!("skipped: fail-fast after {failed} failed")
+        loop {
+            let mut skipped_any = false;
+            for index in 0..publishers.len() {
+                if !matches!(executions[index], Execution::Pending) {
+                    continue;
+                }
+                let failed = if fail_fast {
+                    first_failure.clone()
                 } else {
-                    format!("skipped: {failed} failed")
+                    publishers[index].after.iter().find_map(|dependency| {
+                        let dependency = indexes.get(dependency.as_str())?;
+                        match &executions[*dependency] {
+                            Execution::Failed => Some(publishers[*dependency].name.clone()),
+                            Execution::Skipped { failed } => Some(failed.clone()),
+                            Execution::Pending | Execution::Succeeded => None,
+                        }
+                    })
                 };
-                progress(PublishEvent::PublisherSkipped {
-                    name: &publishers[index].name,
-                    reason: &reason,
-                });
-                outcomes[index] = Some(PublisherOutcome::Skipped { reason });
-                executions[index] = Execution::Skipped { failed };
+                if let Some(failed) = failed {
+                    let reason = if fail_fast {
+                        format!("skipped: fail-fast after {failed} failed")
+                    } else {
+                        format!("skipped: {failed} failed")
+                    };
+                    progress(PublishEvent::PublisherSkipped {
+                        name: &publishers[index].name,
+                        reason: &reason,
+                    });
+                    outcomes[index] = Some(PublisherOutcome::Skipped { reason });
+                    executions[index] = Execution::Skipped { failed };
+                    skipped_any = true;
+                }
+            }
+            if !skipped_any {
+                break;
             }
         }
 

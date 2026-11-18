@@ -479,6 +479,45 @@ fn a_failed_publisher_skips_descendants_but_not_independent_publishers() {
 }
 
 #[test]
+fn a_failed_publisher_skips_transitive_descendants_before_it_in_node_order() {
+    let writes = Rc::new(RefCell::new(Vec::new()));
+    let tag = FakeTagPublisher {
+        state: Rc::new(RefCell::new(RemoteState::Missing)),
+        writes: writes.clone(),
+    };
+    let publishers = [
+        ordered_node("app", &["lib"], writes.clone(), false),
+        ordered_node("lib", &["zbase"], writes.clone(), false),
+        ordered_node("zbase", &[], writes.clone(), true),
+    ];
+
+    let (_, outcomes) = publish_ordered(
+        &tag,
+        &release("0123456789012345678901234567890123456789".into()),
+        &publishers,
+        false,
+        &mut |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(*writes.borrow(), ["tag", "zbase"]);
+    assert_eq!(
+        outcomes,
+        [
+            PublisherOutcome::Skipped {
+                reason: "skipped: zbase failed".into(),
+            },
+            PublisherOutcome::Skipped {
+                reason: "skipped: zbase failed".into(),
+            },
+            PublisherOutcome::Failed {
+                reason: "zbase broke".into(),
+            },
+        ]
+    );
+}
+
+#[test]
 fn fail_fast_skips_every_publisher_after_the_first_failure() {
     let writes = Rc::new(RefCell::new(Vec::new()));
     let tag = FakeTagPublisher {

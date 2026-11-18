@@ -36,7 +36,7 @@ A partial run names the failed publisher, the descendants it skipped, and how mu
 Publishing v0.3.0 from 7b3e5f1
   tag        pushed             v0.3.0
   publisher  failed             oci-image.worker (registry request timed out)
-  publisher  skipped            github-release.default (skipped: oci-image.worker failed)
+  publisher  skipped            github-release.default (oci-image.worker failed)
 Published v0.3.0 from 7b3e5f1 partially; 1 publisher failed, 1 skipped.
 ```
 
@@ -45,9 +45,9 @@ Publish the exact release commit again:
 ```console
 $ presswerk publish RELEASE_COMMIT_SHA
 Publishing v0.3.0 from 7b3e5f1
-  tag       already pushed     v0.3.0
-  registry  published          oci-image.worker
-  release   published          github-release.default
+  tag        already pushed     v0.3.0
+  registry   published          oci-image.worker
+  release    published          github-release.default
 Released v0.3.0 from 7b3e5f1.
 ```
 

@@ -201,9 +201,14 @@ fn print_publish_event(event: PublishEvent<'_>) {
         PublishEvent::PublisherFailed { name, reason } => {
             ("publisher", "failed", format!("{name} ({reason})"))
         }
-        PublishEvent::PublisherSkipped { name, reason } => {
-            ("publisher", "skipped", format!("{name} ({reason})"))
-        }
+        PublishEvent::PublisherSkipped { name, reason } => (
+            "publisher",
+            "skipped",
+            format!(
+                "{name} ({})",
+                reason.strip_prefix("skipped: ").unwrap_or(reason)
+            ),
+        ),
         PublishEvent::Artifact(artifact) => {
             let (kind, done, already) = match artifact.kind {
                 ArtifactKind::Asset => ("asset", "uploaded", "already uploaded"),
@@ -225,7 +230,7 @@ fn print_publish_event(event: PublishEvent<'_>) {
             }
         }
     };
-    println!("  {kind:<8}  {status:<17}  {target}");
+    println!("  {kind:<9}  {status:<17}  {target}");
 }
 
 /// Renders one indented line per step with aligned kind and target columns.

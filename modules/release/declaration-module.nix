@@ -91,11 +91,21 @@
       unknownPublisherReferences = builtins.filter
         ({ reference, ... }: !(builtins.elem reference publisherAddresses))
         publisherReferences;
+      selfDependentPublishers = lib.unique (map
+        ({ address, ... }: address)
+        (builtins.filter ({ address, reference, ... }: address == reference) publisherReferences));
       sortedPublishers = lib.toposort
         (dependency: publisher: builtins.elem dependency rewrittenPublisherAfter.${publisher})
         publisherAddresses;
-      publisherCycle = sortedPublishers.cycle or [ ];
-      publisherCyclePath = publisherCycle ++ lib.optionals (publisherCycle != [ ]) [ (builtins.head publisherCycle) ];
+      publisherLoop = if sortedPublishers ? loops then builtins.head sortedPublishers.loops else null;
+      # `toposort.cycle` includes the path leading into the loop; diagnostics name only the loop.
+      publisherCycle =
+        if publisherLoop == null then [ ]
+        else
+          lib.drop
+            (lib.lists.findFirstIndex (address: address == publisherLoop) 0 sortedPublishers.cycle)
+            sortedPublishers.cycle;
+      publisherCyclePath = publisherCycle ++ lib.optionals (publisherCycle != [ ]) [ publisherLoop ];
       publisherCycleHints = lib.unique (builtins.filter (hint: hint != null)
         (map (address: publisherNodes.${address}.cycleHint) publisherCycle));
 
@@ -420,7 +430,7 @@
         };
 
         config.cycleHint = lib.mkIf
-          (!options.after.isDefined || options.after.highestPrio >= 1000)
+          (!options.after.isDefined || options.after.highestPrio >= 1500)
           (lib.mkDefault "github-release.${name}.after defaults to every other publisher; set it explicitly to change that");
       };
 
@@ -779,6 +789,12 @@
             message = "publishers.${address}.${option} references unknown publisher ${builtins.toJSON reference}";
           })
           unknownPublisherReferences
+        ++ map
+          (address: {
+            assertion = false;
+            message = "publishers form a cycle: ${address} → ${address}";
+          })
+          selfDependentPublishers
         ++ [
           {
             assertion = publisherCycle == [ ];
