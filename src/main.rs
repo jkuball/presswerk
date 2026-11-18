@@ -98,7 +98,8 @@ fn run() -> Result<bool> {
         Command::Publish {
             revision,
             fail_fast,
-        } => match publish(".", &revision, fail_fast, &mut print_publish_event)? {
+            jobs,
+        } => match publish(".", &revision, jobs, fail_fast, &mut print_publish_event)? {
             PublishOutcome::NothingToDo { commit } => println!(
                 "Nothing to publish: {} is not a release commit.",
                 short_commit(&commit)

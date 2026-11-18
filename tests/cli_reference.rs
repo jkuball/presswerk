@@ -45,6 +45,12 @@ fn reference_describes_arguments_and_options() {
     assert!(fail_fast.value_names.is_empty());
     assert!(!fail_fast.required);
 
+    let jobs = &publish.options[1];
+    assert_eq!(jobs.long.as_deref(), Some("jobs"));
+    assert_eq!(jobs.value_names, ["N"]);
+    assert_eq!(jobs.defaults, ["8"]);
+    assert!(jobs.help.as_deref().unwrap().contains("publisher nodes"));
+
     let prepare = subcommand(&reference, "presswerk prepare");
     assert!(prepare.arguments.is_empty());
     let trust = &prepare.options[0];

@@ -1,5 +1,6 @@
 use clap::{ArgAction, CommandFactory, Parser, Subcommand};
 use serde::Serialize;
+use std::num::NonZeroUsize;
 
 #[derive(Parser)]
 #[command(name = "presswerk", version, about)]
@@ -26,6 +27,9 @@ pub enum Command {
         /// Revision of the release candidate to publish.
         #[arg(default_value = "HEAD")]
         revision: String,
+        /// Maximum number of publisher nodes to check or publish at once.
+        #[arg(long, default_value = "8", value_name = "N")]
+        jobs: NonZeroUsize,
     },
 }
 

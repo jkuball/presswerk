@@ -51,12 +51,14 @@ the other side. Unknown publisher names and cycles fail module evaluation.
 Before anything is written, `presswerk publish` checks the release tag and the state of every
 publisher. A tag that is lightweight or points to another commit is conflicting, and so is any
 conflicting state a publisher reports. `publish` then stops without writing anything. Otherwise it
-pushes the tag and runs ready publishers serially in topological order.
+pushes the tag and runs every publisher whose dependencies are complete, with up to eight publisher
+nodes running at once by default. `--jobs` changes that limit and also controls the concurrent
+publisher checks.
 
 If a publisher fails after the tag is pushed, its descendants are skipped and independent branches
 continue. The command reports each failure and skip immediately, exits non-zero after the graph has
-settled, and can be rerun to complete the release. `--fail-fast` instead starts no publisher after
-the first failure.
+settled, and can be rerun to complete the release. `--fail-fast` instead starts no new publisher
+after the first failure; publishers already running finish.
 
 `publish` never builds anything, and evaluating an output for another system does not build it
 either. Before anything is written, `publish` fetches every artifact a publisher needs from the
