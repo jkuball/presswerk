@@ -16,6 +16,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 fn digest(bytes: &[u8]) -> String {
     format!("sha256:{}", hex(&Sha256::digest(bytes)))
@@ -61,6 +62,52 @@ fn docker_archive(architecture: &str, contents: &str) -> Vec<u8> {
         ("first/layer.tar", &first),
         ("second/layer.tar", &second),
     ])
+}
+
+fn docker_archive_with_layers(architecture: &str, count: usize) -> Vec<u8> {
+    let layers: Vec<_> = (0..count)
+        .map(|index| {
+            (
+                format!("{index}/layer.tar"),
+                tar(&[("payload", format!("layer {index}").as_bytes())]),
+            )
+        })
+        .collect();
+    let config = serde_json::to_vec(&json!({
+        "architecture": architecture,
+        "os": "linux",
+        "rootfs": {
+            "type": "layers",
+            "diff_ids": layers.iter().map(|(_, layer)| digest(layer)).collect::<Vec<_>>(),
+        },
+    }))
+    .unwrap();
+    let config_name = format!("{}.json", &digest(&config)[7..]);
+    let manifest = serde_json::to_vec(&json!([{
+        "Config": config_name,
+        "RepoTags": ["image:latest"],
+        "Layers": layers.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+    }]))
+    .unwrap();
+    let mut archive = tar::Builder::new(Vec::new());
+    for (name, bytes) in &layers {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        archive
+            .append_data(&mut header, name, bytes.as_slice())
+            .unwrap();
+    }
+    for (name, bytes) in [
+        (config_name.as_str(), config.as_slice()),
+        ("manifest.json", manifest.as_slice()),
+    ] {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        archive.append_data(&mut header, name, bytes).unwrap();
+    }
+    archive.into_inner().unwrap()
 }
 
 fn write(directory: &Path, name: &str, bytes: &[u8]) -> PathBuf {
@@ -299,6 +346,8 @@ enum Fault {
     RejectTag(&'static str),
     /// Answer every inspection of this tag with 500.
     UnreadableTag(&'static str),
+    /// Reject the PUT for this numbered blob upload without storing it.
+    RejectUpload(usize),
 }
 
 #[derive(Default)]
@@ -313,6 +362,11 @@ struct RegistryState {
     public: bool,
     /// The query and `Authorization` header of every token request.
     token_requests: Vec<(String, Option<String>)>,
+    delay_uploads: bool,
+    uploads_in_flight: usize,
+    max_uploads_in_flight: usize,
+    upload_starts: Vec<usize>,
+    upload_finishes: Vec<usize>,
 }
 
 struct MockRegistry {
@@ -395,6 +449,10 @@ impl MockRegistry {
 
     fn fault(&self, fault: Fault) {
         self.state.lock().unwrap().faults.push(fault);
+    }
+
+    fn delay_uploads(&self) {
+        self.state.lock().unwrap().delay_uploads = true;
     }
 }
 
@@ -480,6 +538,28 @@ fn handle(mut stream: TcpStream, state: &Mutex<RegistryState>, realm: &str) {
             b"",
         );
         return;
+    }
+
+    if method == "PUT"
+        && let Some(upload) = path
+            .strip_prefix("/v2/team/app/blobs/uploads/")
+            .and_then(|upload| upload.parse::<usize>().ok())
+    {
+        let delay = {
+            let mut state = state.lock().unwrap();
+            state.uploads_in_flight += 1;
+            state.max_uploads_in_flight = state.max_uploads_in_flight.max(state.uploads_in_flight);
+            state.upload_starts.push(upload);
+            state
+                .delay_uploads
+                .then(|| Duration::from_millis((7_usize.saturating_sub(upload.min(6)) * 40) as u64))
+        };
+        if let Some(delay) = delay {
+            thread::sleep(delay);
+        }
+        let mut state = state.lock().unwrap();
+        state.uploads_in_flight -= 1;
+        state.upload_finishes.push(upload);
     }
 
     let path = path.strip_prefix("/v2/team/app/").expect("repository path");
@@ -611,6 +691,13 @@ fn handle(mut stream: TcpStream, state: &Mutex<RegistryState>, realm: &str) {
                 assert!(!blob.is_empty());
                 assert!(query.starts_with("state=opaque&digest="), "{query}");
                 let expected = query.split("digest=").nth(1).unwrap().replace("%3A", ":");
+                if let Some(Fault::RejectUpload(upload)) = fault
+                    && blob.parse::<usize>() == Ok(upload)
+                {
+                    take_fault(state);
+                    respond(&mut stream, 500, &[], b"");
+                    return;
+                }
                 if digest(&body) != expected {
                     respond(&mut stream, 400, &[], b"");
                     return;
@@ -786,6 +873,52 @@ fn pushes_a_new_release_and_a_rerun_writes_nothing() {
     );
     rerun.publish(&release).unwrap();
     assert_eq!(registry.writes().len(), writes);
+}
+
+#[test]
+fn layer_uploads_are_bounded_and_can_finish_out_of_order() {
+    let registry = MockRegistry::start();
+    registry.delay_uploads();
+    let directory = tempfile::tempdir().unwrap();
+    let image = write(
+        directory.path(),
+        "many-layers.tar",
+        &docker_archive_with_layers("amd64", 8),
+    );
+    let steps = registry
+        .publisher(vec![("linux/amd64".into(), image)], &["{version}"], &[])
+        .publish(&release("1.0.0"))
+        .unwrap();
+
+    assert_eq!(steps[0].step, AssetStep::Uploaded);
+    let state = registry.state.lock().unwrap();
+    assert_eq!(state.max_uploads_in_flight, 6);
+    assert_ne!(state.upload_starts, state.upload_finishes);
+    assert!(state.faults.is_empty());
+    assert!(!state.manifests.is_empty() && !state.tags.is_empty());
+}
+
+#[test]
+fn a_failed_layer_upload_fails_the_image_without_writing_its_manifest() {
+    let registry = MockRegistry::start();
+    registry.fault(Fault::RejectUpload(3));
+    let directory = tempfile::tempdir().unwrap();
+    let image = write(
+        directory.path(),
+        "many-layers.tar",
+        &docker_archive_with_layers("amd64", 8),
+    );
+    let error = registry
+        .publisher(vec![("linux/amd64".into(), image)], &["{version}"], &[])
+        .publish(&release("1.0.0"))
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("could not upload blob"), "{error}");
+    assert!(error.contains("HTTP 500"), "{error}");
+    let state = registry.state.lock().unwrap();
+    assert!(state.faults.is_empty());
+    assert!(state.manifests.is_empty() && state.tags.is_empty());
 }
 
 #[test]
