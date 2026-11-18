@@ -753,14 +753,15 @@ impl Publisher for CoordinatedPublisher {
     }
 }
 
-struct OrderedPublisher {
+struct CompletionPublisher {
     name: &'static str,
     published: AtomicBool,
     wait_for: Option<Arc<AtomicBool>>,
     completed: Arc<AtomicBool>,
+    delay: Duration,
 }
 
-impl Publisher for OrderedPublisher {
+impl Publisher for CompletionPublisher {
     fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
         Ok(if self.published.load(Ordering::SeqCst) {
             PublisherState::Published
@@ -784,6 +785,7 @@ impl Publisher for OrderedPublisher {
                 thread::yield_now();
             }
         }
+        thread::sleep(self.delay);
         self.published.store(true, Ordering::SeqCst);
         self.completed.store(true, Ordering::SeqCst);
         let step = ArtifactStep {
@@ -802,21 +804,23 @@ fn live_events_follow_completion_order_while_the_report_keeps_declaration_order(
     let publishers = [
         PublisherNode::new(
             "slow",
-            Box::new(OrderedPublisher {
+            Box::new(CompletionPublisher {
                 name: "slow",
                 published: AtomicBool::new(false),
                 wait_for: Some(fast_completed.clone()),
                 completed: Arc::new(AtomicBool::new(false)),
+                delay: Duration::from_millis(20),
             }),
             Vec::new(),
         ),
         PublisherNode::new(
             "fast",
-            Box::new(OrderedPublisher {
+            Box::new(CompletionPublisher {
                 name: "fast",
                 published: AtomicBool::new(false),
                 wait_for: None,
                 completed: fast_completed,
+                delay: Duration::ZERO,
             }),
             Vec::new(),
         ),
@@ -824,11 +828,12 @@ fn live_events_follow_completion_order_while_the_report_keeps_declaration_order(
     let completed = Arc::new(Mutex::new(Vec::new()));
     let progress = completed.clone();
 
-    let (_, steps) = publish_ordered_with_jobs(
+    let (_, outcomes) = publish_ordered_with_jobs(
         &fake_tag(RemoteState::Matching),
         &release("0123456789012345678901234567890123456789".into()),
         &publishers,
         NonZeroUsize::new(2).unwrap(),
+        false,
         &mut move |event| {
             if let PublishEvent::Publisher { name, .. } = event {
                 progress.lock().unwrap().push(name.to_owned());
@@ -839,9 +844,14 @@ fn live_events_follow_completion_order_while_the_report_keeps_declaration_order(
 
     assert_eq!(*completed.lock().unwrap(), ["fast", "slow"]);
     assert_eq!(
-        steps
+        outcomes
             .iter()
-            .map(|(_, artifacts)| artifacts[0].name.as_str())
+            .map(|outcome| match outcome {
+                PublisherOutcome::Published { artifacts, .. } => artifacts[0].name.as_str(),
+                PublisherOutcome::Failed { .. } | PublisherOutcome::Skipped { .. } => {
+                    panic!("publisher did not complete")
+                }
+            })
             .collect::<Vec<_>>(),
         ["slow", "fast"]
     );
