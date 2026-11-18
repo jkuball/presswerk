@@ -44,9 +44,7 @@ Publishers form a dependency graph. Name a publisher as `<type>.<name>` in [`aft
 ```
 
 [`before`](/reference/options/#publishers.github-release.name.before) expresses the same edge from
-the other side. `oci-image.api.before = [ "oci-helm.chart" ]` is rewritten into
-`oci-helm.chart.after = [ "oci-image.api" ]` in the declaration. Unknown publisher names and cycles
-fail module evaluation.
+the other side. Unknown publisher names and cycles fail module evaluation.
 
 A GitHub Release runs after every non-GitHub publisher by default, so it does not announce a release
 whose images or charts are still missing. Defining its `after` option replaces that default

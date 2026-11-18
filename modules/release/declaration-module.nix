@@ -361,7 +361,7 @@
             type = types.listOf types.nonEmptyStr;
             default = [ ];
             example = [ "github-release.default" ];
-            description = "Publishers that start only after this publisher completes. This is rewritten into their `after` declarations.";
+            description = "Publishers that start only after this publisher completes.";
           };
 
           cycleHint = mkOption {
