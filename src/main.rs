@@ -12,20 +12,25 @@ use presswerk::publication::{
 use presswerk::release_commit::TrustedPredecessor;
 
 fn main() {
-    if let Err(error) = run() {
-        eprintln!("error: {error:#}");
-        std::process::exit(1);
+    match run() {
+        Ok(true) => {}
+        Ok(false) => std::process::exit(1),
+        Err(error) => {
+            eprintln!("error: {error:#}");
+            std::process::exit(1);
+        }
     }
 }
 
-fn run() -> Result<()> {
+fn run() -> Result<bool> {
     let cli = Cli::parse();
     let Some(command) = cli.command else {
         Cli::command().print_help()?;
         println!();
-        return Ok(());
+        return Ok(true);
     };
 
+    let mut successful = true;
     match command {
         Command::Plan => {
             let dirty = is_worktree_dirty(".")?;
@@ -124,7 +129,7 @@ fn run() -> Result<()> {
                             "publishers failed"
                         }
                     );
-                    std::process::exit(1);
+                    successful = false;
                 } else if report.changed_nothing() {
                     println!(
                         "{} from {commit} was already released; nothing changed.",
@@ -136,7 +141,7 @@ fn run() -> Result<()> {
             }
         },
     }
-    Ok(())
+    Ok(successful)
 }
 
 /// Tells before anything is written which aliases another tool pushed: `publish` keeps them, or
