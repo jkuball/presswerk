@@ -128,9 +128,13 @@ impl Analysis {
         Self { bump, commits }
     }
 
-    pub fn next_version(&self, current: Option<&Version>) -> Result<Option<Version>, VersionError> {
+    pub fn next_version(
+        &self,
+        current: Option<&Version>,
+        stable: bool,
+    ) -> Result<Option<Version>, VersionError> {
         self.bump
-            .map(|bump| next_version(current, bump))
+            .map(|bump| next_version(current, bump, stable))
             .transpose()
     }
 }
@@ -709,11 +713,15 @@ fn conventional_type(
     }
 }
 
-pub fn next_version(current: Option<&Version>, bump: Bump) -> Result<Version, VersionError> {
+pub fn next_version(
+    current: Option<&Version>,
+    bump: Bump,
+    stable: bool,
+) -> Result<Version, VersionError> {
     let baseline = Version::new(0, 0, 0);
     let current = current.unwrap_or(&baseline);
 
-    if current.major == 0 {
+    if current.major == 0 && !stable {
         return match bump {
             Bump::Patch => Ok(Version::new(
                 0,
@@ -1010,7 +1018,7 @@ mod tests {
         }]);
 
         assert_eq!(analysis.bump, None);
-        assert_eq!(analysis.next_version(None).unwrap(), None);
+        assert_eq!(analysis.next_version(None, false).unwrap(), None);
     }
 
     #[test]
@@ -1026,52 +1034,82 @@ mod tests {
     }
 
     #[test]
-    fn computes_semver_successors_without_automatic_one_point_zero() {
+    fn computes_versions_from_levels_and_api_stability() {
         let cases = [
-            (
-                Some(Version::new(1, 2, 3)),
-                Bump::Patch,
-                Version::new(1, 2, 4),
-            ),
-            (
-                Some(Version::new(1, 2, 3)),
-                Bump::Minor,
-                Version::new(1, 3, 0),
-            ),
-            (
-                Some(Version::new(1, 2, 3)),
-                Bump::Major,
-                Version::new(2, 0, 0),
-            ),
             (
                 Some(Version::new(0, 4, 2)),
                 Bump::Patch,
+                false,
                 Version::new(0, 4, 3),
             ),
             (
                 Some(Version::new(0, 4, 2)),
                 Bump::Minor,
+                false,
                 Version::new(0, 5, 0),
             ),
             (
                 Some(Version::new(0, 4, 2)),
                 Bump::Major,
+                false,
                 Version::new(0, 5, 0),
             ),
-            (None, Bump::Patch, Version::new(0, 0, 1)),
-            (None, Bump::Minor, Version::new(0, 1, 0)),
-            (None, Bump::Major, Version::new(0, 1, 0)),
+            (
+                Some(Version::new(0, 4, 2)),
+                Bump::Patch,
+                true,
+                Version::new(0, 4, 3),
+            ),
+            (
+                Some(Version::new(0, 4, 2)),
+                Bump::Minor,
+                true,
+                Version::new(0, 5, 0),
+            ),
+            (
+                Some(Version::new(0, 4, 2)),
+                Bump::Major,
+                true,
+                Version::new(1, 0, 0),
+            ),
+            (None, Bump::Patch, false, Version::new(0, 0, 1)),
+            (None, Bump::Minor, false, Version::new(0, 1, 0)),
+            (None, Bump::Major, false, Version::new(0, 1, 0)),
+            (None, Bump::Patch, true, Version::new(0, 0, 1)),
+            (None, Bump::Minor, true, Version::new(0, 1, 0)),
+            (None, Bump::Major, true, Version::new(1, 0, 0)),
+            (
+                Some(Version::new(1, 2, 3)),
+                Bump::Patch,
+                false,
+                Version::new(1, 2, 4),
+            ),
+            (
+                Some(Version::new(1, 2, 3)),
+                Bump::Minor,
+                true,
+                Version::new(1, 3, 0),
+            ),
+            (
+                Some(Version::new(1, 2, 3)),
+                Bump::Major,
+                false,
+                Version::new(2, 0, 0),
+            ),
         ];
 
-        for (current, bump, expected) in cases {
-            assert_eq!(next_version(current.as_ref(), bump).unwrap(), expected);
+        for (current, bump, stable, expected) in cases {
+            assert_eq!(
+                next_version(current.as_ref(), bump, stable).unwrap(),
+                expected
+            );
         }
     }
 
     #[test]
     fn returns_no_successor_without_a_bumping_commit() {
         let analysis = Analysis::from_commits(vec![commit("1", "📝 Document behavior")]);
-        assert_eq!(analysis.next_version(None).unwrap(), None);
+        assert_eq!(analysis.next_version(None, false).unwrap(), None);
     }
 
     #[test]
@@ -1292,11 +1330,15 @@ mod tests {
 
         assert_eq!(analysis.bump, Some(Bump::Major));
         assert_eq!(
-            analysis.next_version(Some(&Version::new(1, 4, 2))).unwrap(),
+            analysis
+                .next_version(Some(&Version::new(1, 4, 2)), true)
+                .unwrap(),
             Some(Version::new(2, 0, 0))
         );
         assert_eq!(
-            analysis.next_version(Some(&Version::new(0, 4, 2))).unwrap(),
+            analysis
+                .next_version(Some(&Version::new(0, 4, 2)), false)
+                .unwrap(),
             Some(Version::new(0, 5, 0))
         );
     }
@@ -1317,7 +1359,7 @@ mod tests {
 
         let analysis = Analysis::from_commits(vec![conventional("1", "chore: Tidy up")]);
         assert_eq!(analysis.bump, None);
-        assert_eq!(analysis.next_version(None).unwrap(), None);
+        assert_eq!(analysis.next_version(None, false).unwrap(), None);
     }
 
     #[test]

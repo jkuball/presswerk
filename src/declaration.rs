@@ -26,6 +26,9 @@ pub const DEFAULT_GITHUB_RELEASE_BODY: &str = "{{ notes }}";
 pub struct ReleaseDeclaration {
     pub schema_version: u32,
     pub version: Version,
+    // Declarations created before this option, such as predecessor release commits, omit it.
+    #[serde(default)]
+    pub stable: bool,
     pub version_files: Vec<VersionFile>,
     pub tag: Tag,
     pub analyzer: Analyzer,
@@ -834,6 +837,7 @@ mod tests {
         let mut declaration = json!({
             "schemaVersion": 0,
             "version": "1.2.3",
+            "stable": true,
             "versionFiles": [
                 { "path": "Cargo.toml", "toml": "package.version" },
                 { "path": "Cargo.lock", "cargoLock": "presswerk" }
@@ -871,6 +875,7 @@ mod tests {
         let declaration = ReleaseDeclaration::from_json(&declaration(|_| {})).unwrap();
         assert_eq!(declaration.schema_version, 0);
         assert_eq!(declaration.version, Version::new(1, 2, 3));
+        assert!(declaration.stable);
         assert_eq!(
             declaration.changelog,
             Changelog {
@@ -897,6 +902,15 @@ mod tests {
             panic!("expected the Gitmoji analyzer");
         };
         assert_eq!(gitmoji.catalog["sparkles"].semver, Some(Bump::Minor));
+    }
+
+    #[test]
+    fn old_declarations_default_to_initial_development() {
+        let legacy = declaration(|value| {
+            value["version"] = json!("0.18.0");
+            value.as_object_mut().unwrap().remove("stable");
+        });
+        assert!(!ReleaseDeclaration::from_json(&legacy).unwrap().stable);
     }
 
     fn conventional(value: &mut Value) {

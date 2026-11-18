@@ -359,7 +359,7 @@ error: 1.4.0 is already published on pypi and cannot be freed.
 ## 11. Continuous release candidates
 
 CI runs `presswerk prepare --pre rc --push` on every push to main, and `publish` releases each
-candidate. A human promotes to a stable release by running `prepare` without `--pre`.
+candidate. A human promotes to a final release by running `prepare` without `--pre`.
 
 ```mermaid
 gitGraph
@@ -391,12 +391,12 @@ fail.
 After `publish` created `v1.4.0-rc.2`, the next push to main runs `prepare` normally, with
 `v1.4.0-rc.2` as the previous release.
 
-Later, a human promotes the candidate. The notes cover everything since the last stable
+Later, a human promotes the candidate. The notes cover everything since the last final
 release:
 
 ```console
 $ presswerk prepare --push
-previous release   v1.3.0 (9c0ffee)    highest stable ancestor, base of 1.4.0-rc.2
+previous release   v1.3.0 (9c0ffee)    highest final ancestor, base of 1.4.0-rc.2
 commits since      2  (1 feat, 1 fix)
 next version       1.4.0
 

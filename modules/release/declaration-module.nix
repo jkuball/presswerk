@@ -8,6 +8,7 @@
       conventionalCatalog = builtins.fromJSON (builtins.readFile ./conventional/catalog.json);
       variationSelector = builtins.fromJSON ''"\uFE0F"'';
       normalizedEmoji = emoji: builtins.replaceStrings [ variationSelector ] [ "" ] emoji;
+      versionMajor = lib.versions.major config.version;
       # The segments of a TOML dotted key, which also selects JSON keys. TOML parses it, as the CLI
       # does: the key must be one dotted key, so a newline or a value smuggled in with `=` fails.
       keySegments = option: key:
@@ -519,7 +520,7 @@
             type = types.listOf ociTag;
             default = [ ];
             example = [ "latest" "{major}" "{major}.{minor}" ];
-            description = "Floating tags, also called rolling tags, that follow the release line, such as `latest`, `{major}`, or `{major}.{minor}`. An alias may use `{major}`, `{minor}`, and `{patch}`, but not `{version}`. It moves only to a higher stable version than the one it points to, so `{major}` stays within its major version.";
+            description = "Floating tags, also called rolling tags, that follow the release line, such as `latest`, `{major}`, or `{major}.{minor}`. An alias may use `{major}`, `{minor}`, and `{patch}`, but not `{version}`. It moves only to a higher final version than the one it points to, so `{major}` stays within its major version.";
           };
 
           compression = {
@@ -583,6 +584,13 @@
           type = types.nonEmptyStr;
           defaultText = lib.literalMD "read from the [version files](https://presswerk.dev/reference/version-files/)";
           description = "Release version; every version file must declare the same one.";
+        };
+
+        stable = mkOption {
+          type = types.bool;
+          default = versionMajor != "0";
+          defaultText = lib.literalMD "`false` for `0.x` versions, `true` from major version 1";
+          description = "Whether the public API is stable. When true, analyzer levels follow plain SemVer, so a major level on `0.y.z` selects `1.0.0`; when false, major and minor levels both advance the minor component.";
         };
 
         versionFiles.cargo = mkOption {
@@ -850,6 +858,10 @@
           ])
           config.publishers.oci-helm)
         ++ [
+          {
+            assertion = config.stable || versionMajor == "0";
+            message = "stable may be false only while the version's major component is 0";
+          }
           {
             assertion = sharedRegistryTags == [ ];
             message =

@@ -51,6 +51,7 @@ fn ordinary_repository() -> GitRepo {
     presswerk.default = {
       schemaVersion = 0;
       version = "0.0.0";
+      stable = false;
       versionFiles = [];
       tag.format = "v{version}";
       analyzer = {
@@ -78,6 +79,7 @@ const RELEASE_FLAKE: &str = r#"{
     presswerk.default = {
       schemaVersion = 0;
       version = (builtins.fromTOML (builtins.readFile (self + "/Cargo.toml"))).package.version;
+      stable = false;
       versionFiles = [
         { path = "Cargo.toml"; toml = "package.version"; }
         { path = "Cargo.lock"; cargoLock = "example"; }

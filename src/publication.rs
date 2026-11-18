@@ -169,7 +169,7 @@ pub enum ArtifactKind {
     Image,
     /// An OCI image or Helm chart tag that names the version.
     Tag,
-    /// An OCI tag that follows the highest stable version, such as `latest`.
+    /// An OCI tag that follows the highest final version, such as `latest`.
     Alias,
 }
 
@@ -1812,7 +1812,8 @@ fn report_publish_event(progress: &Mutex<&mut Progress<'_>>, event: PublishEvent
 pub fn validate_new_release(
     version: &Version,
     parent_version: &Version,
-    stable_base: Option<&Version>,
+    final_base: Option<&Version>,
+    stable: bool,
     analysis: &Analysis,
     changelog: &str,
     heading: &ChangelogHeading,
@@ -1825,7 +1826,7 @@ pub fn validate_new_release(
         )));
     }
     if let Some(minimum) = analysis
-        .next_version(stable_base)
+        .next_version(final_base, stable)
         .map_err(|error| PublicationError::new(error.to_string()))?
         && version_core(version) < version_core(&minimum)
     {
@@ -1929,8 +1930,8 @@ fn validate_candidate(
             repository_path.display()
         ))
     })?;
-    let stable_base = stable_base(&repository, commit, declaration)?;
-    let range = stable_base
+    let final_base = final_base(&repository, commit, declaration)?;
+    let range = final_base
         .as_ref()
         .map_or_else(
             || CommitRange::initial(repository_path, commit.to_string()),
@@ -1944,7 +1945,8 @@ fn validate_candidate(
     validate_new_release(
         &declaration.version,
         parent_version,
-        stable_base.as_ref().map(|(version, _)| version),
+        final_base.as_ref().map(|(version, _)| version),
+        declaration.stable,
         &analysis,
         changelog,
         &declaration
@@ -2394,7 +2396,7 @@ fn verified_remote_predecessor(
     })
 }
 
-fn stable_base(
+fn final_base(
     repository: &Repository,
     candidate: Oid,
     declaration: &ReleaseDeclaration,
@@ -2402,7 +2404,7 @@ fn stable_base(
     let names = repository
         .tag_names(None)
         .map_err(|error| PublicationError::new(format!("could not list Git tags: {error}")))?;
-    let mut stable = None;
+    let mut final_release = None;
     for name in names.iter_bytes() {
         let Ok(name) = std::str::from_utf8(name) else {
             continue;
@@ -2435,14 +2437,14 @@ fn stable_base(
         if !version.pre.is_empty() || version == declaration.version {
             continue;
         }
-        if stable
+        if final_release
             .as_ref()
             .is_none_or(|(current, _): &(Version, Oid)| version > *current)
         {
-            stable = Some((version, commit));
+            final_release = Some((version, commit));
         }
     }
-    Ok(stable)
+    Ok(final_release)
 }
 
 fn local_tagged_commit(
@@ -2550,6 +2552,7 @@ mod tests {
             r#"{
               "schemaVersion": 0,
               "version": "0.1.0",
+              "stable": false,
               "versionFiles": [],
               "tag": { "format": "v{version}" },
               "analyzer": {

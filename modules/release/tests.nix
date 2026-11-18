@@ -128,6 +128,7 @@ in
       expected = {
         schemaVersion = 0;
         version = presswerkVersion;
+        stable = false;
         versionFiles = [
           {
             path = "Cargo.toml";
@@ -165,6 +166,36 @@ in
     "test sourceRoot is omitted from normalized data" = {
       expr = defaults ? sourceRoot;
       expected = false;
+    };
+
+    "test stable defaults from the version's major component" = {
+      expr = map
+        (version: (mkRelease { inherit sourceRoot version; }).stable)
+        [ "0.4.2" "1.2.3" ];
+      expected = [ false true ];
+    };
+
+    "test stable can be enabled before version 1" = {
+      expr = (mkRelease {
+        inherit sourceRoot;
+        version = "0.4.2";
+        stable = true;
+      }).stable;
+      expected = true;
+    };
+
+    "test stable cannot be disabled from version 1" = {
+      expr = map
+        (version: failedAssertion {
+          inherit version;
+          stable = false;
+          analyzer.gitmoji.enable = true;
+        })
+        [ "1.2.3" "1.0.0-rc.1" ];
+      expected = [
+        "stable may be false only while the version's major component is 0"
+        "stable may be false only while the version's major component is 0"
+      ];
     };
 
     "test Cargo overrides normalize both writers" = {
@@ -251,6 +282,8 @@ in
     "test a Cargo workspace's lock file defaults to the one next to its manifest" = {
       expr = (mkRelease {
         sourceRoot = fixtureRoot;
+        # An explicit stable keeps the default, and with it the version files, unevaluated.
+        stable = true;
         versionFiles.cargoWorkspace = {
           root = { };
           backend.cargoToml = "services/backend/Cargo.toml";

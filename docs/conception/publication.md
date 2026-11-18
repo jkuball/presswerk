@@ -292,7 +292,7 @@ version in its scope.
 
 | Alias | Scope |
 | --- | --- |
-| `latest` | highest stable version |
+| `latest` | highest final version |
 | `next` | highest pre-release |
 | `1.4` | highest `1.4.x` |
 

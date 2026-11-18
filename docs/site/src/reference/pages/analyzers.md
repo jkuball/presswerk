@@ -23,14 +23,20 @@ To change how release notes look, see the
 ## Version levels
 
 Each analyzer has a catalog that assigns every kind of commit a level: `"major"`, `"minor"`,
-`"patch"`, or `null`. Presswerk takes the highest level in the commit range. Before `1.0.0`, both
-`minor` and `major` advance the minor component; `patch` advances the patch component.
+`"patch"`, or `null`. Presswerk takes the highest level in the commit range. By default, while the
+version is `0.x`, both `minor` and `major` advance the minor component; `patch` advances the patch
+component. A `0.x` project needs no configuration for this.
+
+Set [`stable = true`](/reference/options/#stable) in a commit that declares the public API stable
+and selects the `major` level. For example, use `💥 Declare the API stable` with Gitmoji or
+`feat!: declare the API stable` with Conventional Commits. With that setting, levels follow plain
+SemVer, so a `major` level on `0.y.z` selects `1.0.0`. The setting alone does not select a version: a
+`minor` level still advances to the next `0.y.0`, and a commit without a level still prepares
+nothing. After `1.0.0`, the setting can stay or be removed because it defaults to `true` and no
+longer changes the mapping.
 
 Commits with the level `null` still appear in the release notes when another commit in the range
 selects a level. If none does, `plan` reports that there is nothing to prepare.
-
-No commit moves a project to `1.0.0`. That step must always be acknowledged explicitly; a way to
-choose the version for it is planned.
 
 ## History
 

@@ -184,7 +184,7 @@ pub fn build_release_plan(
         },
     )?;
     let analysis = analyzer.analyze(&range, &declaration.analyzer, &declaration.tag)?;
-    let next_version = analysis.next_version(Some(&declaration.version))?;
+    let next_version = analysis.next_version(Some(&declaration.version), declaration.stable)?;
     let heading = declaration.changelog.heading()?;
     let changelog = read_optional_text(&repository, &tree, &declaration.changelog.path)?;
     // A template without `unreleased` leaves the hand-written section untouched.

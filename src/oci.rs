@@ -204,7 +204,7 @@ impl fmt::Display for Platform {
 pub enum OciTag {
     /// A tag of this version, such as `1.2.0`; it is never moved once pushed.
     Version(String),
-    /// An alias, such as `latest` or `1.2`; it moves to a higher stable version.
+    /// An alias, such as `latest` or `1.2`; it moves to a higher final version.
     Alias(String),
 }
 
@@ -2113,7 +2113,7 @@ mod tests {
         assert!(validate(&["{version}"], &["{unknown}"]).is_err());
         assert!(validate(&["{version}", "{version}"], &[]).is_err());
         assert!(validate(&["{version}"], &["{major}", "{minor}"]).is_ok());
-        // Renders to the version tag of every stable release.
+        // Renders to the version tag of every final release.
         assert!(validate(&["{version}"], &["{major}.{minor}.{patch}"]).is_err());
         assert!(validate(&["-{version}"], &[]).is_err());
         validate(&["{version}"], &["latest", "{major}", "{major}.{minor}"]).unwrap();

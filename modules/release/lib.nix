@@ -26,7 +26,7 @@ in
     assert lib.assertMsg (failedAssertions == [ ]) "Release module assertions failed:\n${assertionMessage}";
     {
       schemaVersion = 0;
-      inherit (releaseConfig) version;
+      inherit (releaseConfig) version stable;
 
       versionFiles = lib.concatLists
         (lib.mapAttrsToList

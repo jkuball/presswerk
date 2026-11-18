@@ -214,6 +214,7 @@ in
         grep -Fq 'rel="alternate" type="text/markdown" href="/index.md"' "$site/index.html"
         grep -Fq 'rel="describedby" href="/llms.txt"' "$site/index.html"
         grep -Fq 'rel="alternate" type="text/markdown" href="/guide/walkthrough.md"' "$site/guide/walkthrough/index.html"
+        grep -q 'id="stable"' "$site/reference/options/index.html"
         grep -q 'id="tag.format"' "$site/reference/options/index.html"
         # Release options in Nix examples link to the options reference, filtered to the option.
         grep -q 'href="/reference/options/?filter=versionFiles.cargo" class="pw-code-link"' "$site/index.html"

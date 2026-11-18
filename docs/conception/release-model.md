@@ -53,12 +53,11 @@ configuration is open. It must produce one effective version and explicit consis
 
 Presswerk follows [SemVer](https://semver.org/) strictly. Item 4 of the specification says
 major version zero is for initial development and anything may change at any time; item 5 says
-`1.0.0` defines the public API. When that point is reached is a human decision, so Presswerk
-never bumps to `1.0.0` on its own. It only happens when the developer asks for it explicitly,
-possibly with `prepare --major` on a `0.y.z` version; the command interface is not settled.
+`1.0.0` defines the public API. When that point is reached is a human decision, represented by
+the top-level declaration option `stable`.
 
-SemVer does not prescribe how to bump within `0.x`. Presswerk maps the analyzer's bump levels
-as follows:
+SemVer does not prescribe how to bump within `0.x`. By default, `stable` is false while the
+major component is zero, and Presswerk maps the analyzer's bump levels as follows:
 
 | Analyzer recommendation | `0.4.2` becomes |
 | --- | --- |
@@ -67,12 +66,18 @@ as follows:
 | major or breaking | `0.5.0` |
 
 For Gitmoji, this uses the catalog's SemVer levels: a bug fix is a patch, a feature is a minor
-change, and a breaking change also increases the minor component until `1.0.0` is explicitly
-chosen.
+change, and a breaking change also increases the minor component during initial development.
 
-Without an override, analysis decides the bump, except that it never moves to `1.0.0` on its
-own. Explicit overrides are a later interface question; they must not select a lower bump than
-the analysis requires.
+To release `1.0.0`, set `stable = true` in the `💥` commit that declares the API stable, for
+example `💥 Declare the API stable`. The option makes levels follow plain SemVer, so that
+major-level commit selects `1.0.0`. The option alone does not select `1.0.0`; a minor-level
+commit still selects `0.5.0`. From major version 1 onward it defaults to true and can stay or be
+removed. Declaring it false there is rejected by checking the major component, not SemVer order.
+This includes a pre-release such as `1.0.0-rc.1`, even though SemVer orders it below `1.0.0`, so a
+project cannot step back from that series to `0.x`.
+
+Analysis still decides the bump. Choosing an arbitrary version explicitly remains a later
+interface question; such a choice must not select a lower bump than the analysis requires.
 
 ## Release flow
 
@@ -233,17 +238,17 @@ task at hand needs. It does the minimum work required for exactly what it is doi
 that a tag exists, or that it is an ancestor of `HEAD`, is a lookup, not a scan. Maintenance lines need no special handling: on `release/v1.2.x` the committed version is `1.2.0`, so the base is `v1.2.0`
 regardless of newer tags on main.
 
-For a stable release after pre-releases, the base is the last stable release instead: notes
+For a final release after pre-releases, the base is the last final release instead: notes
 for `1.4.0` cover everything since `v1.3.0`, not only since `v1.4.0-rc.2`, and a breaking
 change anywhere in that range still leads to a major bump.
 
-A pre-release version does not say which stable version its series started from: `1.4.0-rc.2`
+A pre-release version does not say which final version its series started from: `1.4.0-rc.2`
 could build on `1.3.0` or `1.3.7`. So when the committed version is a pre-release, Presswerk
-finds the stable base from the tags, without walking history and without recording anything
+finds the final base from the tags, without walking history and without recording anything
 extra:
 
 1. list the release tags, parsed through `tag.format`;
-1. keep only stable versions whose tags are ancestors of `HEAD`. Each check is a lookup Git
+1. keep only final versions whose tags are ancestors of `HEAD`. Each check is a lookup Git
    answers itself. This drops releases from other lines, such as `v1.3.1` on
    `release/v1.3.x`;
 1. of those, take the highest version below the committed one. This drops newer releases such
@@ -352,13 +357,13 @@ is a pre-release:
 | `prepare` | up to minor since `v1.3.0` | `1.4.0-rc.2` → `1.4.0` |
 | `prepare` | major since `v1.3.0` | `1.4.0-rc.2` → `2.0.0` |
 
-During a pre-release series, the analysis always covers the whole range since the last stable
+During a pre-release series, the analysis always covers the whole range since the last final
 release. The resulting version is the higher of the series' current target (`1.4.0`) and what
-the analysis requires from the stable base (`1.3.0`). A breaking change that lands after
+the analysis requires from the final base (`1.3.0`). A breaking change that lands after
 `rc.2` therefore leads to `2.0.0` or `2.0.0-rc.1`, never to `1.4.0`.
 
 This allows a fully automated flow: CI runs `prepare --pre rc` on every push to main, and a
-human promotes to a stable release by running `prepare` without `--pre` (see
+human promotes to a final release by running `prepare` without `--pre` (see
 [scenario 11](scenarios.md#11-continuous-release-candidates)).
 
 Pre-releases on separate branches would leave main's committed version behind, so the next

@@ -669,7 +669,7 @@ fn conventional_breaking_footers_in_commit_bodies_select_major() {
     assert!(analysis.commits[0].breaking);
     assert_eq!(
         analysis
-            .next_version(Some(&semver::Version::new(0, 3, 1)))
+            .next_version(Some(&semver::Version::new(0, 3, 1)), false)
             .unwrap(),
         Some(semver::Version::new(0, 4, 0))
     );
@@ -761,7 +761,7 @@ fn a_conventional_revert_of_a_released_commit_alone_selects_a_patch() {
     assert_eq!(analysis.bump, Some(Bump::Patch));
     assert_eq!(
         analysis
-            .next_version(Some(&semver::Version::new(0, 1, 0)))
+            .next_version(Some(&semver::Version::new(0, 1, 0)), false)
             .unwrap(),
         Some(semver::Version::new(0, 1, 1))
     );

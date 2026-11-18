@@ -375,7 +375,7 @@ fn rejects_invalid_heading_formats() {
 #[test]
 fn round_trips_headings_with_trailing_space_and_adjacent_or_hyphenated_dates() {
     let prerelease = Version::parse("1.2.3-rc.1").unwrap();
-    let stable = Version::new(1, 2, 3);
+    let final_version = Version::new(1, 2, 3);
     for format in [
         "## {version} ",
         "## {version}-{date}",
@@ -402,14 +402,14 @@ fn round_trips_headings_with_trailing_space_and_adjacent_or_hyphenated_dates() {
             Some(&changelog),
             &heading,
             Some(DEFAULT_UNRELEASED_HEADING),
-            &stable,
+            &final_version,
             "2026-11-05",
-            "Stable.\n",
+            "Final.\n",
         )
         .unwrap();
         assert_eq!(
-            read_version_section(&changelog, &heading, &stable).unwrap(),
-            "Stable.\n",
+            read_version_section(&changelog, &heading, &final_version).unwrap(),
+            "Final.\n",
             "{format}"
         );
         assert_eq!(
@@ -525,7 +525,7 @@ fn does_not_take_inline_code_for_a_code_fence() {
 #[test]
 fn renders_and_finds_headings_with_a_declared_date_format() {
     let prerelease = Version::parse("1.2.3-rc.1").unwrap();
-    let stable = Version::new(1, 2, 3);
+    let final_version = Version::new(1, 2, 3);
     for (format, rendered) in [
         ("## v{version} ({date:%Y-%m-%d})", "## v1.2.3 (2026-11-05)"),
         (
@@ -557,9 +557,9 @@ fn renders_and_finds_headings_with_a_declared_date_format() {
             Some(&changelog),
             &heading,
             Some(DEFAULT_UNRELEASED_HEADING),
-            &stable,
+            &final_version,
             "2026-11-05",
-            "Stable.\n",
+            "Final.\n",
         )
         .unwrap();
 
@@ -568,8 +568,8 @@ fn renders_and_finds_headings_with_a_declared_date_format() {
             "{changelog}"
         );
         assert_eq!(
-            read_version_section(&changelog, &heading, &stable).unwrap(),
-            "Stable.\n",
+            read_version_section(&changelog, &heading, &final_version).unwrap(),
+            "Final.\n",
             "{format}"
         );
         assert_eq!(

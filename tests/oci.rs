@@ -1409,7 +1409,7 @@ fn major_and_minor_aliases_follow_their_own_line() {
 }
 
 #[test]
-fn aliases_move_only_to_a_higher_stable_version() {
+fn aliases_move_only_to_a_higher_final_version() {
     let registry = MockRegistry::start();
     let images = Images::new("hello");
     let repository = registry.repository();
@@ -1440,7 +1440,7 @@ fn aliases_move_only_to_a_higher_stable_version() {
     assert_eq!(alias(steps), AssetStep::Kept("pre-release".into()));
     assert_eq!(registry.tag("latest"), Some(latest.clone()));
 
-    // A higher stable release moves it.
+    // A higher final release moves it.
     let newer = registry.publisher(images.platforms(), &tags, &aliases);
     assert_eq!(
         newer.state(&release("1.2.0")).unwrap(),
