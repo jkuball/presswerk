@@ -18,6 +18,7 @@ use std::env;
 use std::error::Error;
 use std::fmt;
 use std::num::NonZeroUsize;
+use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1644,7 +1645,15 @@ pub fn publish_ordered_with_jobs(
                 let publisher = &publishers[index];
                 let state = &states[index];
                 scope.spawn(move || {
-                    let result = complete_publisher(release, publisher, state, progress);
+                    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                        complete_publisher(release, publisher, state, progress)
+                    }))
+                    .unwrap_or_else(|_| {
+                        Err(PublicationError::new(format!(
+                            "publisher {} panicked",
+                            publisher.name
+                        )))
+                    });
                     completed
                         .send((index, result))
                         .expect("publication scheduler receives every result");
@@ -1795,7 +1804,9 @@ fn complete_publisher(
 }
 
 fn report_publish_event(progress: &Mutex<&mut Progress<'_>>, event: PublishEvent<'_>) {
-    progress.lock().expect("progress lock")(event);
+    progress
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())(event);
 }
 
 pub fn validate_new_release(

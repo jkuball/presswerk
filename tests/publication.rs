@@ -857,6 +857,47 @@ fn live_events_follow_completion_order_while_the_report_keeps_declaration_order(
     );
 }
 
+struct PanickingPublisher;
+
+impl Publisher for PanickingPublisher {
+    fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+        Ok(PublisherState::Missing)
+    }
+
+    fn publish_with_progress(
+        &self,
+        _release: &Release,
+        _progress: &mut dyn FnMut(&ArtifactStep),
+    ) -> Result<ArtifactSteps, PublicationError> {
+        panic!("boom")
+    }
+}
+
+#[test]
+fn a_panicking_publisher_is_reported_instead_of_hanging_the_scheduler() {
+    let publishers = [PublisherNode::new(
+        "broken",
+        Box::new(PanickingPublisher),
+        Vec::new(),
+    )];
+
+    let (_, outcomes) = publish_ordered(
+        &fake_tag(RemoteState::Matching),
+        &release("0123456789012345678901234567890123456789".into()),
+        &publishers,
+        false,
+        &mut |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcomes,
+        [PublisherOutcome::Failed {
+            reason: "publisher broken panicked".into(),
+        }]
+    );
+}
+
 #[test]
 fn fail_fast_starts_nothing_new_while_running_publishers_finish() {
     let running_started = Arc::new(AtomicBool::new(false));
