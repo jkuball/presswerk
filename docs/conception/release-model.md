@@ -72,7 +72,9 @@ To release `1.0.0`, set `stable = true` in the `💥` commit that declares the A
 example `💥 Declare the API stable`. The option makes levels follow plain SemVer, so that
 major-level commit selects `1.0.0`. The option alone does not select `1.0.0`; a minor-level
 commit still selects `0.5.0`. From major version 1 onward it defaults to true and can stay or be
-removed. Declaring it false there is rejected, including for a version such as `1.0.0-rc.1`.
+removed. Declaring it false there is rejected by checking the major component, not SemVer order.
+This includes a pre-release such as `1.0.0-rc.1`, even though SemVer orders it below `1.0.0`, so a
+project cannot step back from that series to `0.x`.
 
 Analysis still decides the bump. Choosing an arbitrary version explicitly remains a later
 interface question; such a choice must not select a lower bump than the analysis requires.
