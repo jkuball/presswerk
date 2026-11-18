@@ -11,13 +11,13 @@ use presswerk::publication::{
 };
 use presswerk::release_commit::TrustedPredecessor;
 
-fn main() {
+fn main() -> std::process::ExitCode {
     match run() {
-        Ok(true) => {}
-        Ok(false) => std::process::exit(1),
+        Ok(true) => std::process::ExitCode::SUCCESS,
+        Ok(false) => std::process::ExitCode::FAILURE,
         Err(error) => {
             eprintln!("error: {error:#}");
-            std::process::exit(1);
+            std::process::ExitCode::FAILURE
         }
     }
 }
