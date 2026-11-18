@@ -272,23 +272,31 @@ in
     };
 
     "test a Cargo workspace's lock file defaults to the one next to its manifest" = {
-      expr =
-        let
-          nestedWorkspaceToml = "store/${workspaceToml}";
-        in
-        (mkRelease {
-          sourceRoot = builtins.dirOf fixtureRoot;
-          version = "1.2.3";
-          versionFiles.cargoWorkspace.backend.cargoToml = nestedWorkspaceToml;
-        }).versionFiles;
+      expr = (mkRelease {
+        sourceRoot = fixtureRoot;
+        # An explicit stable keeps the default, and with it the version files, unevaluated.
+        stable = true;
+        versionFiles.cargoWorkspace = {
+          root = { };
+          backend.cargoToml = "services/backend/Cargo.toml";
+        };
+      }).versionFiles;
       expected = [
         {
-          path = "store/${workspaceToml}";
+          path = "services/backend/Cargo.toml";
           toml = "workspace.package.version";
         }
         {
-          path = "store/Cargo.lock";
-          cargoWorkspace = "store/${workspaceToml}";
+          path = "services/backend/Cargo.lock";
+          cargoWorkspace = "services/backend/Cargo.toml";
+        }
+        {
+          path = "Cargo.toml";
+          toml = "workspace.package.version";
+        }
+        {
+          path = "Cargo.lock";
+          cargoWorkspace = "Cargo.toml";
         }
       ];
     };
