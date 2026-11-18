@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.19.0] - 2026-11-18
+
+### ✨ Introduce new features
+
+- (publish): Run publishers with bounded jobs
+- (publish): Complete publisher graph semantics
+- (publish): Schedule publisher dependency graph
+
+### 🐛 Fix a bug
+
+- (oci): Bound pipelined upload memory
+- (publish): Report panicking publishers without hanging
+- (publish): Align completion test with graph outcomes
+- (publish): Fix graph failure propagation
+- (publish): Return the partial failure status
+- (publish): Flush partial summary before exiting
+
+### 📝 Add or update documentation
+
+- (oci): Document layer upload pipelining
+- (publish): Place GitHub ordering with its publisher
+- (publish): Present before as a normal option
+- (publish): Trim recovery guidance
+
+### ⚡️ Improve performance
+
+- (oci): Pipeline layer uploads
+
+### ✅ Add, update, or pass tests
+
+- (oci): Avoid timing-sensitive upload saturation
+- (publish): Cover concurrent transitive skips
+- (publish): Cover concurrent completion ordering
+
+### ♻️ Refactor code
+
+- (publish): Centralize dependency rewriting
+
 ## [0.18.0] - 2026-11-17
 
 ### ✨ Introduce new features
