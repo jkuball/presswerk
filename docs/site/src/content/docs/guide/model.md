@@ -6,6 +6,10 @@ description: The commits and remote state that make a Presswerk release exact, r
 Presswerk gives a few ordinary Git objects precise roles. The rules for them are strict for one
 reason: a version, its notes, its tag, and its published release must all come from the same commit.
 
+The examples use [Gitmoji commit subjects](/reference/analyzers/gitmoji/). [Conventional
+Commits](/reference/analyzers/conventional-commits/) provide the same release levels and behavior
+with different subject syntax.
+
 ## Terms
 
 - An **ordinary commit** is any commit that does not change the declared version. Your changes are
@@ -94,11 +98,12 @@ Presswerk follows SemVer. A fresh repository starts from an implicit `0.0.0` bas
 `0.0.0` and without a tag. For projects that already have a version, see
 [Adopt an existing project](../adoption/).
 
-Moving to `1.0.0` is explicit. Set [`stable = true`](/reference/options/#stable) in the `💥` commit
-that declares the public API stable, for example `💥 Declare the API stable`. That major-level commit
-then prepares `1.0.0`; without the setting, breaking changes on `0.x` continue to advance the minor
-component. The setting can stay or be removed afterward. Which level a commit selects, and how levels
-map to versions, is described under [Version levels](/reference/analyzers/#version-levels).
+Moving to `1.0.0` is explicit. Set [`stable = true`](/reference/options/#stable) in a commit that
+declares the public API stable and selects the `major` level, such as `💥 Declare the API stable` with
+Gitmoji or `feat!: declare the API stable` with Conventional Commits. That commit then prepares
+`1.0.0`; without the setting, breaking changes on `0.x` continue to advance the minor component. The
+setting can stay or be removed afterward. Which level a commit selects, and how levels map to
+versions, is described under [Version levels](/reference/analyzers/#version-levels).
 
 How publication proceeds step by step, and what it does with existing releases, is described in the
 [GitHub Release publisher](/reference/publishers/github-release/#behavior) reference.
