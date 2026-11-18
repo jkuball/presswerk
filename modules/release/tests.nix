@@ -272,30 +272,23 @@ in
     };
 
     "test a Cargo workspace's lock file defaults to the one next to its manifest" = {
-      expr = (mkRelease {
-        sourceRoot = ./fixtures/workspace-defaults;
-        version = "1.2.3";
-        versionFiles.cargoWorkspace = {
-          root = { };
-          backend.cargoToml = "services/backend/Cargo.toml";
-        };
-      }).versionFiles;
+      expr =
+        let
+          nestedWorkspaceToml = "store/${workspaceToml}";
+        in
+        (mkRelease {
+          sourceRoot = builtins.dirOf fixtureRoot;
+          version = "1.2.3";
+          versionFiles.cargoWorkspace.backend.cargoToml = nestedWorkspaceToml;
+        }).versionFiles;
       expected = [
         {
-          path = "services/backend/Cargo.toml";
+          path = "store/${workspaceToml}";
           toml = "workspace.package.version";
         }
         {
-          path = "services/backend/Cargo.lock";
-          cargoWorkspace = "services/backend/Cargo.toml";
-        }
-        {
-          path = "Cargo.toml";
-          toml = "workspace.package.version";
-        }
-        {
-          path = "Cargo.lock";
-          cargoWorkspace = "Cargo.toml";
+          path = "store/Cargo.lock";
+          cargoWorkspace = "store/${workspaceToml}";
         }
       ];
     };
