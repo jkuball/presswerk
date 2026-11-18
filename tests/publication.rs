@@ -502,10 +502,11 @@ fn a_failed_publisher_skips_transitive_descendants_before_it_in_node_order() {
         ordered_node("zbase", &[], writes.clone(), true),
     ];
 
-    let (_, outcomes) = publish_ordered(
+    let (_, outcomes) = publish_ordered_with_jobs(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
         &publishers,
+        NonZeroUsize::new(2).unwrap(),
         false,
         &mut |_| {},
     )
