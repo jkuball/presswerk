@@ -86,6 +86,19 @@ in
       expected = null;
     };
 
+    "test the GitHub Release dependency default is documented" = {
+      expr = (lib.findFirst (option: option.name == "publishers.github-release.<name>.after") null optionsReference).default;
+      expected = {
+        kind = "markdown";
+        text = "every publisher that is not a GitHub Release";
+      };
+    };
+
+    "test publisher cycle hints stay internal" = {
+      expr = lib.any (option: lib.hasSuffix ".cycleHint" option.name) optionsReference;
+      expected = false;
+    };
+
     "test declarations link to repository paths" = {
       expr = map (declaration: declaration.path) (lib.findFirst (option: option.name == "tag.format") null optionsReference).declarations;
       expected = [ "modules/release/declaration-module.nix" ];

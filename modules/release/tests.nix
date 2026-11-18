@@ -91,6 +91,13 @@ let
     publishers.github-release.default.repository = "owner/project";
   };
 
+  imagePublisher = {
+    repository = "ghcr.io/owner/project";
+    platforms."linux/amd64" = image;
+    username.secret = "REGISTRY_USERNAME";
+    password.secret = "REGISTRY_TOKEN";
+  };
+
   image = derivation {
     name = "image.tar.gz";
     system = "x86_64-linux";
@@ -143,6 +150,7 @@ in
           unreleasedHeading = "## [Unreleased]";
         };
         publishers.github-release.default = {
+          after = [ ];
           apiUrl = "https://api.github.com";
           repository = "owner/project";
           body = "{{ notes }}";
@@ -457,6 +465,7 @@ in
           };
         }).publishers.oci-image.default;
       expected = {
+        after = [ ];
         repository = "ghcr.io/owner/project";
         platforms."linux/amd64" = image.outPath;
         tags = [ "{version}" ];
@@ -483,6 +492,7 @@ in
           };
         }).publishers.oci-helm.default;
       expected = {
+        after = [ ];
         repository = "ghcr.io/owner/charts/project";
         chart = image.outPath;
         public = true;
@@ -663,6 +673,116 @@ in
           { debug = { tags = [ "{version}-debug" ]; aliases = [ "{major}.{minor}.{patch}" ]; }; }
         ];
       expected = [ true true true false false false ];
+    };
+
+    "test publisher dependencies normalize to after edges" = {
+      expr = {
+        githubDefault = (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.oci-image.image = imagePublisher;
+          publishers.oci-helm.chart = {
+            repository = "ghcr.io/owner/charts/project";
+            chart = image;
+            username.secret = "REGISTRY_USERNAME";
+            password.secret = "REGISTRY_TOKEN";
+          };
+        }).publishers.github-release.default.after;
+        githubOverride = (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.github-release.default.after = [ ];
+          publishers.oci-image.image = imagePublisher;
+        }).publishers.github-release.default.after;
+        rewrittenBefore = (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.github-release.default.after = [ ];
+          publishers.oci-image.image = imagePublisher // {
+            before = [ "github-release.default" ];
+          };
+        }).publishers.github-release.default.after;
+      };
+      expected = {
+        githubDefault = [ "oci-helm.chart" "oci-image.image" ];
+        githubOverride = [ ];
+        rewrittenBefore = [ "oci-image.image" ];
+      };
+    };
+
+    "test publisher dependencies reject unknown references" = {
+      expr = map
+        (edge: failedAssertion {
+          publishers.github-release.default = {
+            repository = "owner/project";
+          } // edge;
+        })
+        [
+          { after = [ "oci-image.missing" ]; }
+          { before = [ "oci-image.missing" ]; }
+        ];
+      expected = [
+        ''publishers.github-release.default.after references unknown publisher "oci-image.missing"''
+        ''publishers.github-release.default.before references unknown publisher "oci-image.missing"''
+      ];
+    };
+
+    "test publisher dependencies reject self references" = {
+      expr = map
+        (edge: failedAssertion {
+          publishers.oci-image.image = imagePublisher // edge;
+        })
+        [
+          { after = [ "oci-image.image" ]; }
+          { before = [ "oci-image.image" ]; }
+        ];
+      expected = [
+        "publishers form a cycle: oci-image.image → oci-image.image"
+        "publishers form a cycle: oci-image.image → oci-image.image"
+      ];
+    };
+
+    "test publisher dependency cycles include the default hint only while it applies" = {
+      expr = {
+        default = failedAssertion {
+          publishers.github-release.default.repository = "owner/project";
+          publishers.oci-image.image = imagePublisher // {
+            after = [ "github-release.default" ];
+          };
+        };
+        explicit = failedAssertion {
+          publishers.github-release.default = {
+            repository = "owner/project";
+            after = [ "oci-image.image" ];
+          };
+          publishers.oci-image.image = imagePublisher // {
+            after = [ "github-release.default" ];
+          };
+        };
+        mkDefault = failedAssertion {
+          publishers.github-release.default = {
+            repository = "owner/project";
+            after = lib.mkDefault [ "oci-image.image" ];
+          };
+          publishers.oci-image.image = imagePublisher // {
+            after = [ "github-release.default" ];
+          };
+        };
+        unrelated = failedAssertion {
+          publishers.github-release.default.repository = "owner/project";
+          publishers.oci-image.a = imagePublisher // { after = [ "oci-image.b" ]; };
+          publishers.oci-image.b = imagePublisher // { after = [ "oci-image.a" ]; };
+        };
+      };
+      expected = {
+        default = "publishers form a cycle: github-release.default → oci-image.image → github-release.default (github-release.default.after defaults to every other publisher; set it explicitly to change that)";
+        explicit = "publishers form a cycle: github-release.default → oci-image.image → github-release.default";
+        mkDefault = "publishers form a cycle: github-release.default → oci-image.image → github-release.default";
+        unrelated = "publishers form a cycle: oci-image.a → oci-image.b → oci-image.a";
+      };
     };
 
     "test a release needs no publishers" = {

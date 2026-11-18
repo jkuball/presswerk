@@ -9,18 +9,22 @@ use presswerk::declaration::{
 use presswerk::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GITHUB_RELEASE_BODY_LIMIT,
     GitTagPublisher, GithubClient, GithubPublisher, GithubReleaseReader, GithubReleaseState,
-    LocalAsset, PublicationError, PublishEvent, Publisher, PublisherState, PublisherStep, Release,
-    RemoteState, TagPublisher, TagStep, UnreadableDeclaration, is_valid_successor, publish_ordered,
+    LocalAsset, PublicationError, PublishEvent, Publisher, PublisherNode, PublisherOutcome,
+    PublisherState, PublisherStep, Release, RemoteState, TagPublisher, TagStep,
+    UnreadableDeclaration, is_valid_successor, publish_ordered, publish_ordered_with_jobs,
     validate_new_release, verify_predecessor_with, verify_predecessor_with_oci_helm,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::num::NonZeroUsize;
 use std::process::Command;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 use support::GitRepo;
 
 fn declaration(version: &str, repository: &str) -> ReleaseDeclaration {
@@ -60,31 +64,38 @@ fn release(commit: String) -> Release {
 
 #[derive(Clone)]
 struct FakeTagPublisher {
-    state: Rc<RefCell<RemoteState>>,
-    writes: Rc<RefCell<Vec<&'static str>>>,
+    state: Arc<Mutex<RemoteState>>,
+    writes: Arc<Mutex<Vec<&'static str>>>,
 }
 
 impl TagPublisher for FakeTagPublisher {
     fn state(&self, _release: &Release) -> Result<RemoteState, PublicationError> {
-        Ok(self.state.borrow().clone())
+        Ok(self.state.lock().unwrap().clone())
     }
 
     fn publish(&self, _release: &Release) -> Result<(), PublicationError> {
-        self.writes.borrow_mut().push("tag");
-        *self.state.borrow_mut() = RemoteState::Matching;
+        self.writes.lock().unwrap().push("tag");
+        *self.state.lock().unwrap() = RemoteState::Matching;
         Ok(())
+    }
+}
+
+fn fake_tag(state: RemoteState) -> FakeTagPublisher {
+    FakeTagPublisher {
+        state: Arc::new(Mutex::new(state)),
+        writes: Arc::new(Mutex::new(Vec::new())),
     }
 }
 
 #[derive(Clone)]
 struct FakePublisher {
-    state: Rc<RefCell<PublisherState>>,
-    writes: Rc<RefCell<Vec<&'static str>>>,
+    state: Arc<Mutex<PublisherState>>,
+    writes: Arc<Mutex<Vec<&'static str>>>,
 }
 
 impl Publisher for FakePublisher {
     fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
-        Ok(self.state.borrow().clone())
+        Ok(self.state.lock().unwrap().clone())
     }
 
     fn publish_with_progress(
@@ -92,57 +103,61 @@ impl Publisher for FakePublisher {
         _release: &Release,
         _progress: &mut dyn FnMut(&ArtifactStep),
     ) -> Result<ArtifactSteps, PublicationError> {
-        self.writes.borrow_mut().push("release");
-        *self.state.borrow_mut() = PublisherState::Published;
+        self.writes.lock().unwrap().push("release");
+        *self.state.lock().unwrap() = PublisherState::Published;
         Ok(Vec::new())
     }
 }
 
 #[test]
 fn publishes_the_tag_before_completing_missing_publishers() {
-    let writes = Rc::new(RefCell::new(Vec::new()));
+    let writes = Arc::new(Mutex::new(Vec::new()));
     let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Missing)),
+        state: Arc::new(Mutex::new(RemoteState::Missing)),
         writes: writes.clone(),
     };
     let publisher = FakePublisher {
-        state: Rc::new(RefCell::new(PublisherState::Draft)),
+        state: Arc::new(Mutex::new(PublisherState::Draft)),
         writes: writes.clone(),
     };
 
     let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[("test".to_owned(), Box::new(publisher) as Box<dyn Publisher>)],
+        &[PublisherNode::new("test", Box::new(publisher), Vec::new())],
+        false,
         &mut |_| {},
     )
     .unwrap();
 
-    assert_eq!(*writes.borrow(), ["tag", "release"]);
+    assert_eq!(*writes.lock().unwrap(), ["tag", "release"]);
     assert_eq!(
         steps,
         (
             TagStep::Pushed,
-            vec![(PublisherStep::DraftCompleted, Vec::new())]
+            vec![PublisherOutcome::Published {
+                step: PublisherStep::DraftCompleted,
+                artifacts: Vec::new(),
+            }]
         )
     );
 }
 
 #[test]
 fn reports_each_step_as_soon_as_it_completes() {
-    let log = Rc::new(RefCell::new(Vec::new()));
+    let log = Arc::new(Mutex::new(Vec::new()));
     let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Missing)),
+        state: Arc::new(Mutex::new(RemoteState::Missing)),
         writes: log.clone(),
     };
 
     struct Streaming {
-        log: Rc<RefCell<Vec<&'static str>>>,
-        published: Cell<bool>,
+        log: Arc<Mutex<Vec<&'static str>>>,
+        published: AtomicBool,
     }
     impl Publisher for Streaming {
         fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
-            Ok(if self.published.get() {
+            Ok(if self.published.load(Ordering::SeqCst) {
                 PublisherState::Published
             } else {
                 PublisherState::Missing
@@ -162,38 +177,42 @@ fn reports_each_step_as_soon_as_it_completes() {
                 })
                 .collect();
             for step in &steps {
-                self.log.borrow_mut().push("upload");
+                self.log.lock().unwrap().push("upload");
                 progress(step);
             }
-            self.published.set(true);
+            self.published.store(true, Ordering::SeqCst);
             Ok(steps)
         }
     }
 
-    let publishers = [(
-        "github-release.default".to_owned(),
+    let publishers = [PublisherNode::new(
+        "github-release.default",
         Box::new(Streaming {
             log: log.clone(),
-            published: Cell::new(false),
-        }) as Box<dyn Publisher>,
+            published: AtomicBool::new(false),
+        }),
+        Vec::new(),
     )];
     publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
         &publishers,
+        false,
         &mut |event| {
-            log.borrow_mut().push(match event {
+            log.lock().unwrap().push(match event {
                 PublishEvent::Started { .. } => "started",
                 PublishEvent::Tag { .. } => "tag reported",
                 PublishEvent::Artifact(_) => "upload reported",
                 PublishEvent::Publisher { .. } => "publisher reported",
+                PublishEvent::PublisherFailed { .. } => "publisher failed",
+                PublishEvent::PublisherSkipped { .. } => "publisher skipped",
             });
         },
     )
     .unwrap();
 
     assert_eq!(
-        *log.borrow(),
+        *log.lock().unwrap(),
         [
             "tag",
             "tag reported",
@@ -208,14 +227,14 @@ fn reports_each_step_as_soon_as_it_completes() {
 
 #[test]
 fn pending_aliases_do_not_keep_a_release_from_completing() {
-    let writes = Rc::new(RefCell::new(Vec::new()));
+    let writes = Arc::new(Mutex::new(Vec::new()));
     let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        state: Arc::new(Mutex::new(RemoteState::Matching)),
         writes: writes.clone(),
     };
     // A publisher whose aliases stay pending, such as after a failed `latest` update.
     let publisher = FakePublisher {
-        state: Rc::new(RefCell::new(PublisherState::AliasesPending)),
+        state: Arc::new(Mutex::new(PublisherState::AliasesPending)),
         writes: writes.clone(),
     };
 
@@ -229,7 +248,7 @@ fn pending_aliases_do_not_keep_a_release_from_completing() {
             _release: &Release,
             _progress: &mut dyn FnMut(&ArtifactStep),
         ) -> Result<ArtifactSteps, PublicationError> {
-            self.0.writes.borrow_mut().push("aliases");
+            self.0.writes.lock().unwrap().push("aliases");
             Ok(Vec::new())
         }
     }
@@ -237,36 +256,42 @@ fn pending_aliases_do_not_keep_a_release_from_completing() {
     let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[(
-            "test".to_owned(),
-            Box::new(Stuck(publisher)) as Box<dyn Publisher>,
+        &[PublisherNode::new(
+            "test",
+            Box::new(Stuck(publisher)),
+            Vec::new(),
         )],
+        false,
         &mut |_| {},
     )
     .unwrap();
-    assert_eq!(writes.borrow().last(), Some(&"aliases"));
+    assert_eq!(writes.lock().unwrap().last(), Some(&"aliases"));
     assert_eq!(
         steps.1,
-        vec![(PublisherStep::ArtifactsCompleted, Vec::new())]
+        vec![PublisherOutcome::Published {
+            step: PublisherStep::ArtifactsCompleted,
+            artifacts: Vec::new(),
+        }]
     );
 }
 
 #[test]
 fn reports_complete_publication_without_writing_again() {
-    let writes = Rc::new(RefCell::new(Vec::new()));
+    let writes = Arc::new(Mutex::new(Vec::new()));
     let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Matching)),
+        state: Arc::new(Mutex::new(RemoteState::Matching)),
         writes: writes.clone(),
     };
     let publisher = FakePublisher {
-        state: Rc::new(RefCell::new(PublisherState::Published)),
+        state: Arc::new(Mutex::new(PublisherState::Published)),
         writes: writes.clone(),
     };
 
     let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[("test".to_owned(), Box::new(publisher) as Box<dyn Publisher>)],
+        &[PublisherNode::new("test", Box::new(publisher), Vec::new())],
+        false,
         &mut |_| {},
     )
     .unwrap();
@@ -275,17 +300,20 @@ fn reports_complete_publication_without_writing_again() {
         steps,
         (
             TagStep::AlreadyPushed,
-            vec![(PublisherStep::AlreadyPublished, Vec::new())]
+            vec![PublisherOutcome::Published {
+                step: PublisherStep::AlreadyPublished,
+                artifacts: Vec::new(),
+            }]
         )
     );
-    assert_eq!(*writes.borrow(), ["tag"]);
+    assert_eq!(*writes.lock().unwrap(), ["tag"]);
 }
 
 #[test]
 fn a_release_without_publishers_only_pushes_its_tag() {
-    let writes = Rc::new(RefCell::new(Vec::new()));
+    let writes = Arc::new(Mutex::new(Vec::new()));
     let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Missing)),
+        state: Arc::new(Mutex::new(RemoteState::Missing)),
         writes: writes.clone(),
     };
 
@@ -293,23 +321,24 @@ fn a_release_without_publishers_only_pushes_its_tag() {
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
         &[],
+        false,
         &mut |_| {},
     )
     .unwrap();
 
     assert_eq!(steps, (TagStep::Pushed, Vec::new()));
-    assert_eq!(*writes.borrow(), ["tag"]);
+    assert_eq!(*writes.lock().unwrap(), ["tag"]);
 }
 
 #[test]
 fn preflight_conflicts_stop_before_the_tag_is_written() {
-    let writes = Rc::new(RefCell::new(Vec::new()));
+    let writes = Arc::new(Mutex::new(Vec::new()));
     let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Missing)),
+        state: Arc::new(Mutex::new(RemoteState::Missing)),
         writes: writes.clone(),
     };
     let publisher = FakePublisher {
-        state: Rc::new(RefCell::new(PublisherState::Conflicting(
+        state: Arc::new(Mutex::new(PublisherState::Conflicting(
             "wrong prerelease flag".into(),
         ))),
         writes: writes.clone(),
@@ -318,13 +347,626 @@ fn preflight_conflicts_stop_before_the_tag_is_written() {
     let error = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[("test".to_owned(), Box::new(publisher) as Box<dyn Publisher>)],
+        &[PublisherNode::new("test", Box::new(publisher), Vec::new())],
+        false,
         &mut |_| {},
     )
     .unwrap_err();
 
     assert!(error.to_string().contains("wrong prerelease flag"));
-    assert!(writes.borrow().is_empty());
+    assert!(writes.lock().unwrap().is_empty());
+}
+
+struct OrderedPublisher {
+    name: &'static str,
+    writes: Arc<Mutex<Vec<&'static str>>>,
+    published: AtomicBool,
+    fail: bool,
+}
+
+impl Publisher for OrderedPublisher {
+    fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+        Ok(if self.published.load(Ordering::SeqCst) {
+            PublisherState::Published
+        } else {
+            PublisherState::Missing
+        })
+    }
+
+    fn publish_with_progress(
+        &self,
+        _release: &Release,
+        _progress: &mut dyn FnMut(&ArtifactStep),
+    ) -> Result<ArtifactSteps, PublicationError> {
+        self.writes.lock().unwrap().push(self.name);
+        if self.fail {
+            return Err(PublicationError::new(format!("{} broke", self.name)));
+        }
+        self.published.store(true, Ordering::SeqCst);
+        Ok(Vec::new())
+    }
+}
+
+fn ordered_node(
+    name: &'static str,
+    after: &[&str],
+    writes: Arc<Mutex<Vec<&'static str>>>,
+    fail: bool,
+) -> PublisherNode {
+    PublisherNode::new(
+        name,
+        Box::new(OrderedPublisher {
+            name,
+            writes,
+            published: AtomicBool::new(false),
+            fail,
+        }),
+        after.iter().map(|name| (*name).to_owned()).collect(),
+    )
+}
+
+#[test]
+fn publishes_ready_nodes_serially_in_stable_topological_order() {
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let tag = FakeTagPublisher {
+        state: Arc::new(Mutex::new(RemoteState::Missing)),
+        writes: writes.clone(),
+    };
+    let publishers = [
+        ordered_node("b", &["a"], writes.clone(), false),
+        ordered_node("a", &[], writes.clone(), false),
+        ordered_node("c", &[], writes.clone(), false),
+    ];
+
+    let (_, outcomes) = publish_ordered(
+        &tag,
+        &release("0123456789012345678901234567890123456789".into()),
+        &publishers,
+        false,
+        &mut |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(*writes.lock().unwrap(), ["tag", "a", "b", "c"]);
+    assert!(outcomes.iter().all(|outcome| matches!(
+        outcome,
+        PublisherOutcome::Published {
+            step: PublisherStep::Published,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn a_failed_publisher_skips_descendants_but_not_independent_publishers() {
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let tag = FakeTagPublisher {
+        state: Arc::new(Mutex::new(RemoteState::Missing)),
+        writes: writes.clone(),
+    };
+    let publishers = [
+        ordered_node("worker", &[], writes.clone(), true),
+        ordered_node("release", &["worker"], writes.clone(), false),
+        ordered_node("docs", &[], writes.clone(), false),
+    ];
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let reported = events.clone();
+
+    let (_, outcomes) = publish_ordered(
+        &tag,
+        &release("0123456789012345678901234567890123456789".into()),
+        &publishers,
+        false,
+        &mut |event| match event {
+            PublishEvent::PublisherFailed { name, reason }
+            | PublishEvent::PublisherSkipped { name, reason } => {
+                reported.lock().unwrap().push(format!("{name}: {reason}"));
+            }
+            _ => {}
+        },
+    )
+    .unwrap();
+
+    assert_eq!(*writes.lock().unwrap(), ["tag", "worker", "docs"]);
+    assert_eq!(
+        outcomes,
+        [
+            PublisherOutcome::Failed {
+                reason: "worker broke".into(),
+            },
+            PublisherOutcome::Skipped {
+                reason: "skipped: worker failed".into(),
+            },
+            PublisherOutcome::Published {
+                step: PublisherStep::Published,
+                artifacts: Vec::new(),
+            },
+        ]
+    );
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["worker: worker broke", "release: skipped: worker failed"]
+    );
+}
+
+#[test]
+fn a_failed_publisher_skips_transitive_descendants_before_it_in_node_order() {
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let tag = FakeTagPublisher {
+        state: Arc::new(Mutex::new(RemoteState::Missing)),
+        writes: writes.clone(),
+    };
+    let publishers = [
+        ordered_node("app", &["lib"], writes.clone(), false),
+        ordered_node("lib", &["zbase"], writes.clone(), false),
+        ordered_node("zbase", &[], writes.clone(), true),
+    ];
+
+    let (_, outcomes) = publish_ordered_with_jobs(
+        &tag,
+        &release("0123456789012345678901234567890123456789".into()),
+        &publishers,
+        NonZeroUsize::new(2).unwrap(),
+        false,
+        &mut |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(*writes.lock().unwrap(), ["tag", "zbase"]);
+    assert_eq!(
+        outcomes,
+        [
+            PublisherOutcome::Skipped {
+                reason: "skipped: zbase failed".into(),
+            },
+            PublisherOutcome::Skipped {
+                reason: "skipped: zbase failed".into(),
+            },
+            PublisherOutcome::Failed {
+                reason: "zbase broke".into(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn fail_fast_skips_every_publisher_after_the_first_failure() {
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let tag = FakeTagPublisher {
+        state: Arc::new(Mutex::new(RemoteState::Missing)),
+        writes: writes.clone(),
+    };
+    let publishers = [
+        ordered_node("worker", &[], writes.clone(), true),
+        ordered_node("docs", &[], writes.clone(), false),
+    ];
+
+    let (_, outcomes) = publish_ordered(
+        &tag,
+        &release("0123456789012345678901234567890123456789".into()),
+        &publishers,
+        true,
+        &mut |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(*writes.lock().unwrap(), ["tag", "worker"]);
+    assert_eq!(
+        outcomes[1],
+        PublisherOutcome::Skipped {
+            reason: "skipped: fail-fast after worker failed".into(),
+        }
+    );
+}
+
+#[test]
+fn preflight_checks_every_publisher_before_rejecting_a_conflict() {
+    struct Checked {
+        calls: Arc<AtomicUsize>,
+        state: PublisherState,
+    }
+    impl Publisher for Checked {
+        fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.state.clone())
+        }
+        fn publish_with_progress(
+            &self,
+            _release: &Release,
+            _progress: &mut dyn FnMut(&ArtifactStep),
+        ) -> Result<ArtifactSteps, PublicationError> {
+            unreachable!()
+        }
+    }
+
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let tag = FakeTagPublisher {
+        state: Arc::new(Mutex::new(RemoteState::Missing)),
+        writes: writes.clone(),
+    };
+    let publishers = [
+        PublisherNode::new(
+            "first",
+            Box::new(Checked {
+                calls: calls.clone(),
+                state: PublisherState::Conflicting("conflict".into()),
+            }),
+            Vec::new(),
+        ),
+        PublisherNode::new(
+            "second",
+            Box::new(Checked {
+                calls: calls.clone(),
+                state: PublisherState::Missing,
+            }),
+            Vec::new(),
+        ),
+    ];
+
+    publish_ordered(
+        &tag,
+        &release("0123456789012345678901234567890123456789".into()),
+        &publishers,
+        false,
+        &mut |_| {},
+    )
+    .unwrap_err();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(writes.lock().unwrap().is_empty());
+}
+
+struct CountingPublisher {
+    name: String,
+    published: AtomicBool,
+    checking: Arc<AtomicUsize>,
+    max_checking: Arc<AtomicUsize>,
+    publishing: Arc<AtomicUsize>,
+    max_publishing: Arc<AtomicUsize>,
+}
+
+impl Publisher for CountingPublisher {
+    fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+        if self.published.load(Ordering::SeqCst) {
+            return Ok(PublisherState::Published);
+        }
+        count_concurrency(&self.checking, &self.max_checking);
+        Ok(PublisherState::Missing)
+    }
+
+    fn publish_with_progress(
+        &self,
+        _release: &Release,
+        progress: &mut dyn FnMut(&ArtifactStep),
+    ) -> Result<ArtifactSteps, PublicationError> {
+        count_concurrency(&self.publishing, &self.max_publishing);
+        self.published.store(true, Ordering::SeqCst);
+        let step = ArtifactStep {
+            kind: ArtifactKind::Asset,
+            name: self.name.clone(),
+            step: AssetStep::Uploaded,
+        };
+        progress(&step);
+        Ok(vec![step])
+    }
+}
+
+fn count_concurrency(active: &AtomicUsize, maximum: &AtomicUsize) {
+    let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+    maximum.fetch_max(current, Ordering::SeqCst);
+    thread::sleep(Duration::from_millis(20));
+    active.fetch_sub(1, Ordering::SeqCst);
+}
+
+#[test]
+fn jobs_limits_checks_and_publishers_and_keeps_the_report_in_declaration_order() {
+    let checking = Arc::new(AtomicUsize::new(0));
+    let max_checking = Arc::new(AtomicUsize::new(0));
+    let publishing = Arc::new(AtomicUsize::new(0));
+    let max_publishing = Arc::new(AtomicUsize::new(0));
+    let publishers: Vec<_> = (0..4)
+        .map(|index| {
+            PublisherNode::new(
+                format!("publisher.{index}"),
+                Box::new(CountingPublisher {
+                    name: index.to_string(),
+                    published: AtomicBool::new(false),
+                    checking: checking.clone(),
+                    max_checking: max_checking.clone(),
+                    publishing: publishing.clone(),
+                    max_publishing: max_publishing.clone(),
+                }),
+                Vec::new(),
+            )
+        })
+        .collect();
+
+    let (_, outcomes) = publish_ordered_with_jobs(
+        &fake_tag(RemoteState::Matching),
+        &release("0123456789012345678901234567890123456789".into()),
+        &publishers,
+        NonZeroUsize::new(2).unwrap(),
+        false,
+        &mut |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(max_checking.load(Ordering::SeqCst), 2);
+    assert_eq!(max_publishing.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        outcomes
+            .iter()
+            .map(|outcome| match outcome {
+                PublisherOutcome::Published { artifacts, .. } => artifacts[0].name.as_str(),
+                PublisherOutcome::Failed { .. } | PublisherOutcome::Skipped { .. } => {
+                    panic!("publisher did not complete")
+                }
+            })
+            .collect::<Vec<_>>(),
+        ["0", "1", "2", "3"]
+    );
+}
+
+struct CoordinatedPublisher {
+    published: AtomicBool,
+    attempts: Arc<AtomicUsize>,
+    signal: Option<Arc<AtomicBool>>,
+    wait_for: Option<Arc<AtomicBool>>,
+    delay: Duration,
+    fail: bool,
+}
+
+impl Publisher for CoordinatedPublisher {
+    fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+        Ok(if self.published.load(Ordering::SeqCst) {
+            PublisherState::Published
+        } else {
+            PublisherState::Missing
+        })
+    }
+
+    fn publish_with_progress(
+        &self,
+        _release: &Release,
+        _progress: &mut dyn FnMut(&ArtifactStep),
+    ) -> Result<ArtifactSteps, PublicationError> {
+        self.attempts.fetch_add(1, Ordering::SeqCst);
+        if let Some(signal) = &self.signal {
+            signal.store(true, Ordering::SeqCst);
+        }
+        if let Some(wait_for) = &self.wait_for {
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            while !wait_for.load(Ordering::SeqCst) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "publisher did not run concurrently"
+                );
+                thread::yield_now();
+            }
+        }
+        thread::sleep(self.delay);
+        if self.fail {
+            return Err(PublicationError::new("failed"));
+        }
+        self.published.store(true, Ordering::SeqCst);
+        Ok(Vec::new())
+    }
+}
+
+struct CompletionPublisher {
+    name: &'static str,
+    published: AtomicBool,
+    wait_for: Option<Arc<AtomicBool>>,
+    completed: Arc<AtomicBool>,
+    delay: Duration,
+}
+
+impl Publisher for CompletionPublisher {
+    fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+        Ok(if self.published.load(Ordering::SeqCst) {
+            PublisherState::Published
+        } else {
+            PublisherState::Missing
+        })
+    }
+
+    fn publish_with_progress(
+        &self,
+        _release: &Release,
+        progress: &mut dyn FnMut(&ArtifactStep),
+    ) -> Result<ArtifactSteps, PublicationError> {
+        if let Some(wait_for) = &self.wait_for {
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            while !wait_for.load(Ordering::SeqCst) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "publisher did not run concurrently"
+                );
+                thread::yield_now();
+            }
+        }
+        thread::sleep(self.delay);
+        self.published.store(true, Ordering::SeqCst);
+        self.completed.store(true, Ordering::SeqCst);
+        let step = ArtifactStep {
+            kind: ArtifactKind::Asset,
+            name: self.name.into(),
+            step: AssetStep::Uploaded,
+        };
+        progress(&step);
+        Ok(vec![step])
+    }
+}
+
+#[test]
+fn live_events_follow_completion_order_while_the_report_keeps_declaration_order() {
+    let fast_completed = Arc::new(AtomicBool::new(false));
+    let publishers = [
+        PublisherNode::new(
+            "slow",
+            Box::new(CompletionPublisher {
+                name: "slow",
+                published: AtomicBool::new(false),
+                wait_for: Some(fast_completed.clone()),
+                completed: Arc::new(AtomicBool::new(false)),
+                delay: Duration::from_millis(20),
+            }),
+            Vec::new(),
+        ),
+        PublisherNode::new(
+            "fast",
+            Box::new(CompletionPublisher {
+                name: "fast",
+                published: AtomicBool::new(false),
+                wait_for: None,
+                completed: fast_completed,
+                delay: Duration::ZERO,
+            }),
+            Vec::new(),
+        ),
+    ];
+    let completed = Arc::new(Mutex::new(Vec::new()));
+    let progress = completed.clone();
+
+    let (_, outcomes) = publish_ordered_with_jobs(
+        &fake_tag(RemoteState::Matching),
+        &release("0123456789012345678901234567890123456789".into()),
+        &publishers,
+        NonZeroUsize::new(2).unwrap(),
+        false,
+        &mut move |event| {
+            if let PublishEvent::Publisher { name, .. } = event {
+                progress.lock().unwrap().push(name.to_owned());
+            }
+        },
+    )
+    .unwrap();
+
+    assert_eq!(*completed.lock().unwrap(), ["fast", "slow"]);
+    assert_eq!(
+        outcomes
+            .iter()
+            .map(|outcome| match outcome {
+                PublisherOutcome::Published { artifacts, .. } => artifacts[0].name.as_str(),
+                PublisherOutcome::Failed { .. } | PublisherOutcome::Skipped { .. } => {
+                    panic!("publisher did not complete")
+                }
+            })
+            .collect::<Vec<_>>(),
+        ["slow", "fast"]
+    );
+}
+
+struct PanickingPublisher;
+
+impl Publisher for PanickingPublisher {
+    fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+        Ok(PublisherState::Missing)
+    }
+
+    fn publish_with_progress(
+        &self,
+        _release: &Release,
+        _progress: &mut dyn FnMut(&ArtifactStep),
+    ) -> Result<ArtifactSteps, PublicationError> {
+        panic!("boom")
+    }
+}
+
+#[test]
+fn a_panicking_publisher_is_reported_instead_of_hanging_the_scheduler() {
+    let publishers = [PublisherNode::new(
+        "broken",
+        Box::new(PanickingPublisher),
+        Vec::new(),
+    )];
+
+    let (_, outcomes) = publish_ordered(
+        &fake_tag(RemoteState::Matching),
+        &release("0123456789012345678901234567890123456789".into()),
+        &publishers,
+        false,
+        &mut |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcomes,
+        [PublisherOutcome::Failed {
+            reason: "publisher broken panicked".into(),
+        }]
+    );
+}
+
+#[test]
+fn fail_fast_starts_nothing_new_while_running_publishers_finish() {
+    let running_started = Arc::new(AtomicBool::new(false));
+    let failure_started = Arc::new(AtomicBool::new(false));
+    let failed_attempts = Arc::new(AtomicUsize::new(0));
+    let running_attempts = Arc::new(AtomicUsize::new(0));
+    let queued_attempts = Arc::new(AtomicUsize::new(0));
+    let node = |attempts, signal, wait_for, delay, fail| {
+        Box::new(CoordinatedPublisher {
+            published: AtomicBool::new(false),
+            attempts,
+            signal,
+            wait_for,
+            delay,
+            fail,
+        }) as Box<dyn Publisher>
+    };
+    let publishers = [
+        PublisherNode::new(
+            "worker",
+            node(
+                failed_attempts.clone(),
+                Some(failure_started.clone()),
+                Some(running_started.clone()),
+                Duration::ZERO,
+                true,
+            ),
+            Vec::new(),
+        ),
+        PublisherNode::new(
+            "running",
+            node(
+                running_attempts.clone(),
+                Some(running_started),
+                Some(failure_started),
+                Duration::from_millis(50),
+                false,
+            ),
+            Vec::new(),
+        ),
+        PublisherNode::new(
+            "queued",
+            node(queued_attempts.clone(), None, None, Duration::ZERO, false),
+            Vec::new(),
+        ),
+    ];
+
+    let (_, outcomes) = publish_ordered_with_jobs(
+        &fake_tag(RemoteState::Matching),
+        &release("0123456789012345678901234567890123456789".into()),
+        &publishers,
+        NonZeroUsize::new(2).unwrap(),
+        true,
+        &mut |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(failed_attempts.load(Ordering::SeqCst), 1);
+    assert_eq!(running_attempts.load(Ordering::SeqCst), 1);
+    assert_eq!(queued_attempts.load(Ordering::SeqCst), 0);
+    assert!(matches!(outcomes[0], PublisherOutcome::Failed { .. }));
+    assert!(matches!(outcomes[1], PublisherOutcome::Published { .. }));
+    assert_eq!(
+        outcomes[2],
+        PublisherOutcome::Skipped {
+            reason: "skipped: fail-fast after worker failed".into(),
+        }
+    );
 }
 
 #[test]
@@ -548,10 +1190,7 @@ fn predecessor_verification_uses_the_tagged_commits_own_publishers() {
     let candidate = repository.commit("✨ Change publisher");
     let current_declaration = declaration("0.1.0", "new/project");
     let previous_declaration = declaration("0.1.0", "old/project");
-    let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Matching)),
-        writes: Rc::new(RefCell::new(Vec::new())),
-    };
+    let tag = fake_tag(RemoteState::Matching);
     let repositories = RefCell::new(Vec::new());
 
     let verified = verify_predecessor_with(
@@ -606,10 +1245,7 @@ fn unreadable_predecessor_requires_the_exact_trust(unreadable: UnreadableDeclara
         }
     };
 
-    let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Matching)),
-        writes: Rc::new(RefCell::new(Vec::new())),
-    };
+    let tag = fake_tag(RemoteState::Matching);
     let error = verify_predecessor_with(
         repository.path(),
         candidate,
@@ -648,7 +1284,7 @@ fn unreadable_predecessor_requires_the_exact_trust(unreadable: UnreadableDeclara
         tag: "v0.1.0".into(),
         commit: predecessor,
     };
-    *tag.state.borrow_mut() = RemoteState::Missing;
+    *tag.state.lock().unwrap() = RemoteState::Missing;
     let error = verify_predecessor_with(
         repository.path(),
         candidate,
@@ -663,7 +1299,7 @@ fn unreadable_predecessor_requires_the_exact_trust(unreadable: UnreadableDeclara
     .unwrap_err();
     assert!(error.to_string().contains("missing from the remote"));
 
-    *tag.state.borrow_mut() = RemoteState::Matching;
+    *tag.state.lock().unwrap() = RemoteState::Matching;
     let verified = verify_predecessor_with(
         repository.path(),
         candidate,
@@ -773,10 +1409,7 @@ fn trusted_predecessor_must_be_an_ancestor() {
         commit: predecessor,
     };
     let current_declaration = declaration("0.1.0", "new/project");
-    let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Matching)),
-        writes: Rc::new(RefCell::new(Vec::new())),
-    };
+    let tag = fake_tag(RemoteState::Matching);
 
     let error = verify_predecessor_with(
         repository.path(),
@@ -808,10 +1441,7 @@ fn supported_predecessors_reject_unnecessary_trust() {
         tag: "v0.1.0".into(),
         commit: predecessor,
     };
-    let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Matching)),
-        writes: Rc::new(RefCell::new(Vec::new())),
-    };
+    let tag = fake_tag(RemoteState::Matching);
 
     let error = verify_predecessor_with(
         repository.path(),
@@ -839,10 +1469,7 @@ fn a_predecessor_without_publishers_is_complete_with_its_remote_tag() {
     let current_declaration = declaration("0.1.0", "new/project");
     let mut previous_declaration = declaration("0.1.0", "old/project");
     previous_declaration.publishers.github_release.clear();
-    let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Matching)),
-        writes: Rc::new(RefCell::new(Vec::new())),
-    };
+    let tag = fake_tag(RemoteState::Matching);
     let verify = || {
         verify_predecessor_with(
             repository.path(),
@@ -859,7 +1486,7 @@ fn a_predecessor_without_publishers_is_complete_with_its_remote_tag() {
 
     assert_eq!(verify().unwrap().unwrap().commit.to_string(), predecessor);
 
-    *tag.state.borrow_mut() = RemoteState::Missing;
+    *tag.state.lock().unwrap() = RemoteState::Missing;
     assert!(
         verify()
             .unwrap_err()
@@ -874,6 +1501,7 @@ fn oci_image_predecessor(tags: &[&str], aliases: &[&str]) -> ReleaseDeclaration 
     declaration.publishers.oci_image.insert(
         "default".into(),
         OciImagePublisher {
+            after: Vec::new(),
             repository: "ghcr.io/owner/project".into(),
             platforms: [("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into())].into(),
             tags: tags.iter().map(|tag| (*tag).into()).collect(),
@@ -907,10 +1535,7 @@ fn verify_oci_image_predecessor(
     repository.write("feature", "implemented\n");
     let candidate = repository.commit("✨ Add a feature");
     let current_declaration = declaration("0.1.0", "new/project");
-    let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Matching)),
-        writes: Rc::new(RefCell::new(Vec::new())),
-    };
+    let tag = fake_tag(RemoteState::Matching);
     let mut read = Vec::new();
     let result = verify_predecessor_with(
         repository.path(),
@@ -1030,6 +1655,7 @@ fn an_oci_helm_predecessor_needs_its_version_tag_and_store_path() {
     previous_declaration.publishers.oci_helm.insert(
         "default".into(),
         OciHelmPublisher {
+            after: Vec::new(),
             repository: "ghcr.io/owner/charts/project".into(),
             chart: "/nix/store/abc-project-0.1.0.tgz".into(),
             public: true,
@@ -1039,10 +1665,7 @@ fn an_oci_helm_predecessor_needs_its_version_tag_and_store_path() {
             },
         },
     );
-    let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Matching)),
-        writes: Rc::new(RefCell::new(Vec::new())),
-    };
+    let tag = fake_tag(RemoteState::Matching);
     let verify = |manifest: Option<Vec<u8>>| {
         verify_predecessor_with_oci_helm(
             repository.path(),
@@ -1318,7 +1941,7 @@ fn github_publishes_a_matching_custom_body_draft_found_only_in_the_release_listi
 
 #[test]
 fn github_reports_a_published_release_with_a_different_body_as_already_published() {
-    let requests = (0..3)
+    let requests = (0..2)
         .flat_map(|_| {
             [
                 get("/repos/owner/project", 200, "{}"),
@@ -1331,11 +1954,7 @@ fn github_reports_a_published_release_with_a_different_body_as_already_published
         })
         .collect();
     let (url, server) = mock_github_api(requests);
-    let writes = Rc::new(RefCell::new(Vec::new()));
-    let tag = FakeTagPublisher {
-        state: Rc::new(RefCell::new(RemoteState::Matching)),
-        writes,
-    };
+    let tag = fake_tag(RemoteState::Matching);
     let publisher = GithubPublisher::new(
         GithubClient::new(&url, "test-token").unwrap(),
         "owner/project",
@@ -1345,7 +1964,8 @@ fn github_reports_a_published_release_with_a_different_body_as_already_published
     let steps = publish_ordered(
         &tag,
         &release("0123456789012345678901234567890123456789".into()),
-        &[("test".to_owned(), Box::new(publisher) as Box<dyn Publisher>)],
+        &[PublisherNode::new("test", Box::new(publisher), Vec::new())],
+        false,
         &mut |_| {},
     )
     .unwrap();
@@ -1354,7 +1974,10 @@ fn github_reports_a_published_release_with_a_different_body_as_already_published
         steps,
         (
             TagStep::AlreadyPushed,
-            vec![(PublisherStep::AlreadyPublished, Vec::new())]
+            vec![PublisherOutcome::Published {
+                step: PublisherStep::AlreadyPublished,
+                artifacts: Vec::new(),
+            }]
         )
     );
     server.join().unwrap();

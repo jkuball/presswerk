@@ -19,7 +19,8 @@ again.
 
 Publication pushes the annotated tag before the publishers run. A network failure or API error can
 therefore leave a matching tag with incomplete publisher state, such as a draft GitHub Release. The
-version is reserved once the tag exists.
+version is reserved once the tag exists. A failed publisher skips every publisher that depends on
+it, while independent branches continue and may complete.
 
 ```mermaid A partial release is repaired by retrying the tagged candidate, even if main later contains another ordinary commit.
 gitGraph
@@ -29,19 +30,29 @@ gitGraph
   commit id: "later main"
 ```
 
+A partial run names the failed publisher, the descendants it skipped, and how much completed:
+
+```console
+Publishing v0.3.0 from 7b3e5f1
+  tag        pushed             v0.3.0
+  publisher  failed             oci-image.worker (registry request timed out)
+  publisher  skipped            github-release.default (oci-image.worker failed)
+Published v0.3.0 from 7b3e5f1 partially; 1 publisher failed, 1 skipped.
+```
+
 Publish the exact release commit again:
 
 ```console
 $ presswerk publish RELEASE_COMMIT_SHA
 Publishing v0.3.0 from 7b3e5f1
-  tag       already pushed     v0.3.0
-  release   draft completed    github-release.default
+  tag        already pushed     v0.3.0
+  registry   published          oci-image.worker
+  release    published          github-release.default
 Released v0.3.0 from 7b3e5f1.
 ```
 
-Presswerk keeps a matching tag, continues matching publisher state, creates what is missing, and
-verifies the final result. Each line reports whether that step was already complete, and appears as
-soon as the step is done, so a run that stops shows how far it got. When all of them were already
+Presswerk keeps a matching tag and completed publishers, creates what is missing, and verifies each
+publisher that runs. Each line appears as soon as the step completes. When every step was already
 complete, the last line says that nothing changed. Once `publish` succeeds, the release is complete
 and the rest of this page does not apply.
 

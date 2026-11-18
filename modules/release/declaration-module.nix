@@ -64,6 +64,48 @@
                 (lib.intersectLists publisher.tags otherPublisher.tags)))
           registryPublishers))
         registryPublishers);
+      canonicalPublishers = builtins.removeAttrs config.publishers [ "oci" ];
+      publisherAddresses = lib.concatLists (lib.mapAttrsToList
+        (type: publishers: map (name: "${type}.${name}") (builtins.attrNames publishers))
+        canonicalPublishers);
+      nonGithubPublisherAddresses = lib.concatLists (lib.mapAttrsToList
+        (type: publishers: map (name: "${type}.${name}") (builtins.attrNames publishers))
+        (builtins.removeAttrs canonicalPublishers [ "github-release" ]));
+      publisherNodes = builtins.listToAttrs (lib.concatLists (lib.mapAttrsToList
+        (type: publishers: lib.mapAttrsToList
+          (name: publisher: lib.nameValuePair "${type}.${name}" publisher)
+          publishers)
+        canonicalPublishers));
+      resolvePublisherAfter = address:
+        publisherNodes.${address}.after
+        ++ builtins.filter
+          (other: builtins.elem address publisherNodes.${other}.before)
+          publisherAddresses;
+      publisherReferences = lib.concatLists (lib.mapAttrsToList
+        (address: publisher:
+          map (reference: { inherit address reference; option = "after"; }) publisher.after
+          ++ map (reference: { inherit address reference; option = "before"; }) publisher.before)
+        publisherNodes);
+      unknownPublisherReferences = builtins.filter
+        ({ reference, ... }: !(builtins.elem reference publisherAddresses))
+        publisherReferences;
+      selfDependentPublishers = lib.unique (map
+        ({ address, ... }: address)
+        (builtins.filter ({ address, reference, ... }: address == reference) publisherReferences));
+      sortedPublishers = lib.toposort
+        (dependency: publisher: builtins.elem dependency publisherNodes.${publisher}.resolvedAfter)
+        publisherAddresses;
+      publisherLoop = if sortedPublishers ? loops then builtins.head sortedPublishers.loops else null;
+      # `toposort.cycle` includes the path leading into the loop; diagnostics name only the loop.
+      publisherCycle =
+        if publisherLoop == null then [ ]
+        else
+          lib.drop
+            (lib.lists.findFirstIndex (address: address == publisherLoop) 0 sortedPublishers.cycle)
+            sortedPublishers.cycle;
+      publisherCyclePath = publisherCycle ++ lib.optionals (publisherCycle != [ ]) [ publisherLoop ];
+      publisherCycleHints = lib.unique (builtins.filter (hint: hint != null)
+        (map (address: publisherNodes.${address}.cycleHint) publisherCycle));
 
       relativePath = types.addCheck types.str (
         path:
@@ -303,6 +345,42 @@
         };
       };
 
+      publisherGraphOptions =
+        { afterDefault ? [ ]
+        , afterDefaultText ? null
+        }:
+        {
+          after = mkOption ({
+            type = types.listOf types.nonEmptyStr;
+            default = afterDefault;
+            example = [ "oci-image.api" ];
+            description = "Publishers that must complete before this publisher starts. Defining this option replaces its default.";
+          } // lib.optionalAttrs (afterDefaultText != null) { defaultText = afterDefaultText; });
+
+          before = mkOption {
+            type = types.listOf types.nonEmptyStr;
+            default = [ ];
+            example = [ "github-release.default" ];
+            description = "Publishers that start only after this publisher completes.";
+          };
+
+          cycleHint = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            internal = true;
+            visible = false;
+            description = "Hint appended when this publisher participates in a dependency cycle.";
+          };
+
+          resolvedAfter = mkOption {
+            type = types.listOf types.nonEmptyStr;
+            readOnly = true;
+            internal = true;
+            visible = false;
+            description = "Publisher dependencies after rewriting `before` edges.";
+          };
+        };
+
       # A file in a flake output: a derivation, or a string built from one, such as "${pkg}/bin/tool".
       # The string context proves that the path comes from a derivation the flake evaluates.
       artifactFile = types.coercedTo types.package (package: "${package}") (
@@ -310,8 +388,12 @@
         // { description = "file in a flake output"; }
       );
 
-      githubReleaseModule = {
-        options = {
+      githubReleaseModule = { name, options, ... }: {
+        options = publisherGraphOptions
+          {
+            afterDefault = nonGithubPublisherAddresses;
+            afterDefaultText = lib.literalMD "every publisher that is not a GitHub Release";
+          } // {
           apiUrl = mkOption {
             type = types.nonEmptyStr;
             default = "https://api.github.com";
@@ -352,6 +434,13 @@
             description = "Files attached to the release, keyed by asset name. Each is a file in a flake output, which `publish` fetches from the local store or a substituter without building.";
           };
         };
+
+        config = {
+          cycleHint = lib.mkIf
+            (!options.after.isDefined || options.after.highestPrio >= 1500)
+            (lib.mkDefault "github-release.${name}.after defaults to every other publisher; set it explicitly to change that");
+          resolvedAfter = resolvePublisherAfter "github-release.${name}";
+        };
       };
 
       secretModule = what: example: {
@@ -362,7 +451,7 @@
         };
       };
 
-      registryPublisherOptions = what: {
+      registryPublisherOptions = what: publisherGraphOptions { } // {
         repository = mkOption {
           # A plain host and optional port: no credentials, query, or fragment in the declaration.
           type = types.strMatching "(([A-Za-z0-9-]+[.])+[A-Za-z0-9-]+(:[0-9]+)?|[A-Za-z0-9.-]+:[0-9]+|localhost|\\[[0-9A-Fa-f:]+](:[0-9]+)?)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
@@ -406,7 +495,7 @@
           template: builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "0.0.0" "0" "0" "0" ] template) != null
         ) // { description = "OCI tag, optionally containing {version}, {major}, {minor}, or {patch}"; };
 
-      ociImageModule = { config, ... }: {
+      ociImageModule = { config, name, ... }: {
         options = registryPublisherOptions "images" // {
           platforms = mkOption {
             type = types.attrsOf artifactFile;
@@ -458,9 +547,10 @@
           };
 
         };
+        config.resolvedAfter = resolvePublisherAfter "oci-image.${name}";
       };
 
-      ociHelmModule = {
+      ociHelmModule = { name, ... }: {
         options = registryPublisherOptions "chart" // {
           chart = mkOption {
             type = artifactFile;
@@ -468,6 +558,7 @@
             description = "Chart archive written by `helm package`. `publish` fetches it from the local store or a substituter without building.";
           };
         };
+        config.resolvedAfter = resolvePublisherAfter "oci-helm.${name}";
       };
     in
     {
@@ -703,7 +794,25 @@
         analyzer.gitmoji.catalog = lib.mapAttrs (_shortcode: lib.mapAttrs (_field: lib.mkDefault)) gitmojiCatalog;
         analyzer.conventional.catalog = lib.mapAttrs (_type: lib.mapAttrs (_field: lib.mkDefault)) conventionalCatalog;
 
-        assertions = lib.concatLists
+        assertions = map
+          ({ address, option, reference }: {
+            assertion = false;
+            message = "publishers.${address}.${option} references unknown publisher ${builtins.toJSON reference}";
+          })
+          unknownPublisherReferences
+        ++ map
+          (address: {
+            assertion = false;
+            message = "publishers form a cycle: ${address} → ${address}";
+          })
+          selfDependentPublishers
+        ++ [
+          {
+            assertion = publisherCycle == [ ];
+            message = "publishers form a cycle: ${lib.concatStringsSep " → " publisherCyclePath}${lib.optionalString (publisherCycleHints != [ ]) " (${lib.concatStringsSep "; " publisherCycleHints})"}";
+          }
+        ]
+        ++ lib.concatLists
           (lib.mapAttrsToList
             (name: oci: [
               {

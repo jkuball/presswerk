@@ -23,7 +23,8 @@ use std::io::{self, BufReader, Read, Seek};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
 use tempfile::SpooledData;
 use url::Url;
 
@@ -412,8 +413,16 @@ struct ImageConfig {
     variant: Option<String>,
 }
 
-/// The largest compressed layer kept in memory; a larger one goes to a temporary file.
+/// The largest compressed layer kept in memory during ordinary conversion.
 const SPOOL_LIMIT: usize = 64 << 20;
+
+/// The per-layer in-memory limit while uploads are pipelined. Six workers plus the producer can
+/// retain seven compressed blobs, so larger layers spill to disk to keep the total bound modest.
+const PIPELINED_SPOOL_LIMIT: usize = 16 << 20;
+
+/// Layers uploaded concurrently within one image. Each worker has a rendezvous channel, so no
+/// additional compressed blobs queue behind the workers.
+const BLOB_UPLOAD_LIMIT: usize = 6;
 
 /// How much of an archive's JSON files, such as `manifest.json` and the image config, is kept in
 /// memory, in all.
@@ -440,6 +449,45 @@ enum ReadError {
     Blob(String),
 }
 
+struct OwnedBlob {
+    digest: String,
+    size: u64,
+    data: SpooledData,
+}
+
+impl OwnedBlob {
+    fn borrowed(&self) -> Blob<'_> {
+        Blob {
+            digest: self.digest.clone(),
+            size: self.size,
+            data: match &self.data {
+                SpooledData::InMemory(cursor) => BlobData::Bytes(cursor.get_ref()),
+                SpooledData::OnDisk(file) => BlobData::File(file),
+            },
+        }
+    }
+}
+
+fn record_upload_result(
+    (sequence, result): (usize, Result<bool, PublicationError>),
+    pending: &mut usize,
+    pushed: &mut bool,
+    error: &mut Option<(usize, PublicationError)>,
+) {
+    *pending -= 1;
+    match result {
+        Ok(uploaded) => *pushed |= uploaded,
+        Err(upload_error)
+            if error
+                .as_ref()
+                .is_none_or(|(failed_sequence, _)| sequence < *failed_sequence) =>
+        {
+            *error = Some((sequence, upload_error));
+        }
+        Err(_) => {}
+    }
+}
+
 impl From<io::Error> for ReadError {
     fn from(error: io::Error) -> Self {
         Self::Archive(error)
@@ -447,14 +495,14 @@ impl From<io::Error> for ReadError {
 }
 
 impl Members {
-    /// Read an archive, handing every layer on as soon as it is compressed, so at most one
-    /// compressed layer is on disk at a time. Which files are layers is known only from
-    /// `manifest.json`, which may come last, so JSON files are kept and every other file is
-    /// treated as a layer; a Docker image archive holds nothing else.
+    /// Read an archive, handing every layer on as soon as it is compressed. Which files are layers
+    /// is known only from `manifest.json`, which may come last, so JSON files are kept and every
+    /// other file is treated as a layer; a Docker image archive holds nothing else.
     fn read(
         reader: impl Read,
         compression: Compression,
-        put: &mut dyn FnMut(&Blob<'_>) -> Result<(), String>,
+        spool_limit: usize,
+        put: &mut dyn FnMut(OwnedBlob) -> Result<(), String>,
     ) -> Result<Self, ReadError> {
         let mut members = Self::default();
         let mut metadata_left = METADATA_LIMIT;
@@ -520,14 +568,11 @@ impl Members {
                     .ok_or_else(too_large)?;
                 Member::Metadata(bytes.into())
             } else {
-                let (digest, size, compressed) = compress(&mut entry, compression)?;
-                put(&Blob {
+                let (digest, size, data) = compress(&mut entry, compression, spool_limit)?;
+                put(OwnedBlob {
                     digest: digest.clone(),
                     size,
-                    data: match &compressed {
-                        SpooledData::InMemory(cursor) => BlobData::Bytes(cursor.get_ref()),
-                        SpooledData::OnDisk(file) => BlobData::File(file),
-                    },
+                    data,
                 })
                 .map_err(ReadError::Blob)?;
                 Member::Layer { digest, size }
@@ -601,6 +646,18 @@ impl Image {
         compression: Compression,
         put: &mut dyn FnMut(&Blob<'_>) -> Result<(), String>,
     ) -> Result<Self, String> {
+        Self::convert_owned(platform, path, compression, SPOOL_LIMIT, &mut |blob| {
+            put(&blob.borrowed())
+        })
+    }
+
+    fn convert_owned(
+        platform: &str,
+        path: impl AsRef<Path>,
+        compression: Compression,
+        spool_limit: usize,
+        put: &mut dyn FnMut(OwnedBlob) -> Result<(), String>,
+    ) -> Result<Self, String> {
         let path = path.as_ref();
         let expected = Platform::parse(platform)?;
         let failed = |error: &dyn fmt::Display| {
@@ -619,7 +676,7 @@ impl Image {
                 &"not a file; expected an image archive or an executable that streams one",
             ));
         }
-        let mut read = |reader: &mut dyn Read| Members::read(reader, compression, put);
+        let mut read = |reader: &mut dyn Read| Members::read(reader, compression, spool_limit, put);
 
         let members = if metadata.permissions().mode() & 0o111 != 0 {
             let mut child = Command::new(path)
@@ -667,7 +724,7 @@ impl Image {
         path: &Path,
         compression: Compression,
         members: &Members,
-        put: &mut dyn FnMut(&Blob<'_>) -> Result<(), String>,
+        put: &mut dyn FnMut(OwnedBlob) -> Result<(), String>,
     ) -> Result<Self, String> {
         let entries: Vec<ArchiveEntry> = serde_json::from_slice(
             members
@@ -711,10 +768,10 @@ impl Image {
             })
             .collect::<Result<Vec<_>, String>>()?;
         let config_digest = sha256_digest(config);
-        put(&Blob {
+        put(OwnedBlob {
             digest: config_digest.clone(),
             size: config.len() as u64,
-            data: BlobData::Bytes(config),
+            data: SpooledData::InMemory(io::Cursor::new(config.to_vec())),
         })?;
         let manifest = serde_json::to_vec(&Manifest {
             schema_version: 2,
@@ -775,14 +832,15 @@ impl<T: io::Write> io::Write for Hashing<T> {
     }
 }
 
-/// Compress a stream, in memory up to `SPOOL_LIMIT` and in a temporary file beyond; the digest
-/// and size of what was written, and the compressed bytes.
+/// Compress a stream, in memory up to `spool_limit` and in a temporary file beyond; the digest and
+/// size of what was written, and the compressed bytes.
 fn compress(
     mut source: impl Read,
     compression: Compression,
+    spool_limit: usize,
 ) -> io::Result<(String, u64, SpooledData)> {
     let target = Hashing {
-        inner: io::BufWriter::new(tempfile::SpooledTempFile::new(SPOOL_LIMIT)),
+        inner: io::BufWriter::new(tempfile::SpooledTempFile::new(spool_limit)),
         hasher: Sha256::new(),
         size: 0,
     };
@@ -1494,22 +1552,84 @@ impl OciImagePublisher {
     }
 
     /// Read an image and push every blob and its manifest that the registry does not have yet.
-    /// Each layer is pushed as soon as it is compressed; the image's platform is checked before
-    /// its manifest is written.
+    /// Layers upload concurrently while following layers are read and compressed; the image's
+    /// platform is checked before its manifest is written.
     fn push_image(
         &self,
         platform: &Platform,
         path: &Path,
     ) -> Result<(Image, AssetStep), PublicationError> {
-        let mut pushed = false;
-        let image = Image::convert(&platform.to_string(), path, self.compression, &mut |blob| {
-            pushed |= self
-                .registry
-                .push_blob(blob)
-                .map_err(|error| error.to_string())?;
-            Ok(())
-        })
-        .map_err(PublicationError::new)?;
+        let (image, mut pushed) = thread::scope(|scope| {
+            let (available, ready) = mpsc::channel();
+            let (results, completed) = mpsc::channel();
+            let mut workers = Vec::with_capacity(BLOB_UPLOAD_LIMIT);
+            for worker in 0..BLOB_UPLOAD_LIMIT {
+                let (blobs, uploads) = mpsc::sync_channel::<(usize, OwnedBlob)>(0);
+                workers.push(blobs);
+                let available = available.clone();
+                let results = results.clone();
+                scope.spawn(move || {
+                    while available.send(worker).is_ok() {
+                        let Ok((sequence, blob)) = uploads.recv() else {
+                            break;
+                        };
+                        if results
+                            .send((sequence, self.registry.push_blob(&blob.borrowed())))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+            }
+            drop(available);
+            drop(results);
+
+            let mut pending = 0;
+            let mut pushed = false;
+            let mut upload_error: Option<(usize, PublicationError)> = None;
+            let mut sequence = 0;
+            let image = Image::convert_owned(
+                &platform.to_string(),
+                path,
+                self.compression,
+                PIPELINED_SPOOL_LIMIT,
+                &mut |blob| {
+                    while let Ok(result) = completed.try_recv() {
+                        record_upload_result(result, &mut pending, &mut pushed, &mut upload_error);
+                    }
+                    if let Some((_, error)) = &upload_error {
+                        return Err(error.to_string());
+                    }
+                    let worker = ready
+                        .recv()
+                        .map_err(|_| "a blob upload worker stopped unexpectedly".to_owned())?;
+                    while let Ok(result) = completed.try_recv() {
+                        record_upload_result(result, &mut pending, &mut pushed, &mut upload_error);
+                    }
+                    if let Some((_, error)) = &upload_error {
+                        return Err(error.to_string());
+                    }
+                    workers[worker]
+                        .send((sequence, blob))
+                        .map_err(|_| "a blob upload worker stopped unexpectedly".to_owned())?;
+                    sequence += 1;
+                    pending += 1;
+                    Ok(())
+                },
+            );
+            drop(workers);
+            while pending > 0 {
+                let result = completed.recv().map_err(|_| {
+                    PublicationError::new("a blob upload worker stopped unexpectedly")
+                })?;
+                record_upload_result(result, &mut pending, &mut pushed, &mut upload_error);
+            }
+            if let Some((_, error)) = upload_error {
+                return Err(error);
+            }
+            Ok((image.map_err(PublicationError::new)?, pushed))
+        })?;
         pushed |= self.registry.push_manifest(
             MANIFEST_MEDIA_TYPE,
             &image.manifest,

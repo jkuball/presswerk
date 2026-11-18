@@ -120,8 +120,9 @@ An alias that cannot be read or moved does not fail the release.
 
 When an image tag is missing and no other image tag points to an index of this release yet,
 Presswerk reads each image, uploads every layer and config the registry does not have yet, and puts
-each platform's manifest and the index by digest. It then points the `tags` and finally the aliases
-at the index.
+each platform's manifest and the index by digest. While it compresses the next layer, up to six
+earlier layers upload concurrently. Platforms of one image are still pushed one after another. It
+then points the `tags` and finally the aliases at the index.
 
 A release's images are complete once all of its `tags` point to an index whose
 `org.opencontainers.image.version` annotation is the release version. Aliases do not count. Before

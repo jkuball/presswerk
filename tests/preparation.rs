@@ -46,6 +46,7 @@ fn declaration(version: &str) -> ReleaseDeclaration {
             github_release: BTreeMap::from([(
                 "default".into(),
                 GithubReleasePublisher {
+                    after: Vec::new(),
                     api_url: "https://api.github.com".into(),
                     repository: "owner/project".into(),
                     token: Token {
@@ -744,6 +745,7 @@ fn the_plan_lists_each_publisher_with_its_release_and_assets() {
 
 fn oci_image_publisher(tags: &[&str], aliases: &[&str]) -> OciImagePublisher {
     OciImagePublisher {
+        after: Vec::new(),
         repository: "ghcr.io/owner/project".into(),
         platforms: BTreeMap::from([
             ("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into()),
@@ -802,6 +804,7 @@ fn the_plan_lists_an_oci_helm_chart_under_its_release_tag() {
     evaluated.declaration.publishers.oci_helm.insert(
         "default".into(),
         OciHelmPublisher {
+            after: Vec::new(),
             repository: "ghcr.io/owner/charts/project".into(),
             chart: "/nix/store/abc-project-0.1.0.tgz".into(),
             public: true,
@@ -842,6 +845,7 @@ fn the_plan_rejects_an_oci_helm_tag_shared_with_an_oci_image_publisher() {
     evaluated.declaration.publishers.oci_helm.insert(
         "chart".into(),
         OciHelmPublisher {
+            after: Vec::new(),
             repository: "ghcr.io/owner/project".into(),
             chart: "/nix/store/abc-project-0.1.0.tgz".into(),
             public: true,

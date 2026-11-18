@@ -11,21 +11,26 @@ use presswerk::publication::{
 };
 use presswerk::release_commit::TrustedPredecessor;
 
-fn main() {
-    if let Err(error) = run() {
-        eprintln!("error: {error:#}");
-        std::process::exit(1);
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(true) => std::process::ExitCode::SUCCESS,
+        Ok(false) => std::process::ExitCode::FAILURE,
+        Err(error) => {
+            eprintln!("error: {error:#}");
+            std::process::ExitCode::FAILURE
+        }
     }
 }
 
-fn run() -> Result<()> {
+fn run() -> Result<bool> {
     let cli = Cli::parse();
     let Some(command) = cli.command else {
         Cli::command().print_help()?;
         println!();
-        return Ok(());
+        return Ok(true);
     };
 
+    let mut successful = true;
     match command {
         Command::Plan => {
             let dirty = is_worktree_dirty(".")?;
@@ -90,7 +95,11 @@ fn run() -> Result<()> {
                 None => println!("Nothing to prepare."),
             }
         }
-        Command::Publish { revision } => match publish(".", &revision, &mut print_publish_event)? {
+        Command::Publish {
+            revision,
+            fail_fast,
+            jobs,
+        } => match publish(".", &revision, jobs, fail_fast, &mut print_publish_event)? {
             PublishOutcome::NothingToDo { commit } => println!(
                 "Nothing to publish: {} is not a release commit.",
                 short_commit(&commit)
@@ -109,7 +118,20 @@ fn run() -> Result<()> {
                         report.tag
                     );
                 }
-                if report.changed_nothing() {
+                if !report.complete() {
+                    let failed = report.failed();
+                    let skipped = report.skipped();
+                    println!(
+                        "Published {} from {commit} partially; {failed} {}, {skipped} skipped.",
+                        report.tag,
+                        if failed == 1 {
+                            "publisher failed"
+                        } else {
+                            "publishers failed"
+                        }
+                    );
+                    successful = false;
+                } else if report.changed_nothing() {
                     println!(
                         "{} from {commit} was already released; nothing changed.",
                         report.tag
@@ -120,7 +142,7 @@ fn run() -> Result<()> {
             }
         },
     }
-    Ok(())
+    Ok(successful)
 }
 
 /// Tells before anything is written which aliases another tool pushed: `publish` keeps them, or
@@ -177,6 +199,17 @@ fn print_publish_event(event: PublishEvent<'_>) {
             let kind = if registry { "registry" } else { "release" };
             (kind, status, name.to_owned())
         }
+        PublishEvent::PublisherFailed { name, reason } => {
+            ("publisher", "failed", format!("{name} ({reason})"))
+        }
+        PublishEvent::PublisherSkipped { name, reason } => (
+            "publisher",
+            "skipped",
+            format!(
+                "{name} ({})",
+                reason.strip_prefix("skipped: ").unwrap_or(reason)
+            ),
+        ),
         PublishEvent::Artifact(artifact) => {
             let (kind, done, already) = match artifact.kind {
                 ArtifactKind::Asset => ("asset", "uploaded", "already uploaded"),
@@ -198,7 +231,7 @@ fn print_publish_event(event: PublishEvent<'_>) {
             }
         }
     };
-    println!("  {kind:<8}  {status:<17}  {target}");
+    println!("  {kind:<9}  {status:<17}  {target}");
 }
 
 /// Renders one indented line per step with aligned kind and target columns.

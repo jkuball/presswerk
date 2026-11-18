@@ -13,11 +13,17 @@ use minijinja::{Environment, UndefinedBehavior, context};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 use std::fmt;
+use std::num::NonZeroUsize;
+use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, mpsc};
+use std::thread;
 use url::Url;
 
 /// Why a predecessor's declaration cannot be read, so only `--trust-predecessor` can cross it.
@@ -189,10 +195,14 @@ pub enum PublishEvent<'a> {
     Artifact(&'a ArtifactStep),
     /// A publisher is complete, after all of its artifacts.
     Publisher { name: &'a str, step: PublisherStep },
+    /// A publisher failed after the tag was pushed.
+    PublisherFailed { name: &'a str, reason: &'a str },
+    /// A publisher did not run because a dependency failed or fail-fast stopped the graph.
+    PublisherSkipped { name: &'a str, reason: &'a str },
 }
 
 /// Receives each step of `publish` as soon as it completes.
-pub type Progress<'a> = dyn FnMut(PublishEvent<'_>) + 'a;
+pub type Progress<'a> = dyn FnMut(PublishEvent<'_>) + Send + 'a;
 
 pub trait TagPublisher {
     fn state(&self, release: &Release) -> Result<RemoteState, PublicationError>;
@@ -203,7 +213,7 @@ pub trait TagPublisher {
     }
 }
 
-pub trait Publisher {
+pub trait Publisher: Send + Sync {
     fn state(&self, release: &Release) -> Result<PublisherState, PublicationError>;
     /// Create every missing part and report each artifact, passing each one to `progress` as
     /// soon as it is complete.
@@ -219,6 +229,23 @@ pub trait Publisher {
     /// Report the artifacts of a publisher whose state is already published, without writing.
     fn complete_steps(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
         Ok(Vec::new())
+    }
+}
+
+/// One publisher in the declared dependency graph.
+pub struct PublisherNode {
+    pub name: String,
+    pub after: Vec<String>,
+    pub publisher: Box<dyn Publisher>,
+}
+
+impl PublisherNode {
+    pub fn new(name: impl Into<String>, publisher: Box<dyn Publisher>, after: Vec<String>) -> Self {
+        Self {
+            name: name.into(),
+            after,
+            publisher,
+        }
     }
 }
 
@@ -1204,18 +1231,21 @@ pub struct PublishReport {
     pub commit: String,
     pub tag: String,
     pub tag_step: TagStep,
-    /// One step per publisher, named like its declaration, such as `github-release.default`,
-    /// with one step per artifact of that publisher.
-    pub publisher_steps: Vec<(String, PublisherStep, ArtifactSteps)>,
+    /// One outcome per publisher, named like its declaration, such as `github-release.default`.
+    pub publisher_outcomes: Vec<(String, PublisherOutcome)>,
 }
 
 impl PublishReport {
     /// The best-effort steps that failed, by artifact name, with their reason.
     #[must_use]
     pub fn warnings(&self) -> Vec<(&str, &str)> {
-        self.publisher_steps
+        self.publisher_outcomes
             .iter()
-            .flat_map(|(_, _, artifacts)| artifacts)
+            .filter_map(|(_, outcome)| match outcome {
+                PublisherOutcome::Published { artifacts, .. } => Some(artifacts),
+                PublisherOutcome::Failed { .. } | PublisherOutcome::Skipped { .. } => None,
+            })
+            .flatten()
             .filter_map(|artifact| match &artifact.step {
                 AssetStep::Warning(reason) => Some((artifact.name.as_str(), reason.as_str())),
                 _ => None,
@@ -1227,11 +1257,51 @@ impl PublishReport {
     #[must_use]
     pub fn changed_nothing(&self) -> bool {
         self.tag_step == TagStep::AlreadyPushed
-            && self
-                .publisher_steps
-                .iter()
-                .all(|(_, step, _)| *step == PublisherStep::AlreadyPublished)
+            && self.publisher_outcomes.iter().all(|(_, outcome)| {
+                matches!(
+                    outcome,
+                    PublisherOutcome::Published {
+                        step: PublisherStep::AlreadyPublished,
+                        ..
+                    }
+                )
+            })
     }
+
+    #[must_use]
+    pub fn failed(&self) -> usize {
+        self.publisher_outcomes
+            .iter()
+            .filter(|(_, outcome)| matches!(outcome, PublisherOutcome::Failed { .. }))
+            .count()
+    }
+
+    #[must_use]
+    pub fn skipped(&self) -> usize {
+        self.publisher_outcomes
+            .iter()
+            .filter(|(_, outcome)| matches!(outcome, PublisherOutcome::Skipped { .. }))
+            .count()
+    }
+
+    #[must_use]
+    pub fn complete(&self) -> bool {
+        self.failed() == 0 && self.skipped() == 0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PublisherOutcome {
+    Published {
+        step: PublisherStep,
+        artifacts: ArtifactSteps,
+    },
+    Failed {
+        reason: String,
+    },
+    Skipped {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1252,6 +1322,8 @@ pub enum PublisherStep {
 pub fn publish(
     repository_path: impl AsRef<Path>,
     revision: &str,
+    jobs: NonZeroUsize,
+    fail_fast: bool,
     progress: &mut Progress<'_>,
 ) -> Result<PublishOutcome, PublicationError> {
     publish_to_remote(
@@ -1259,6 +1331,8 @@ pub fn publish(
         revision,
         "origin",
         &GitCliffAnalyzer,
+        jobs,
+        fail_fast,
         progress,
     )
 }
@@ -1268,6 +1342,8 @@ pub fn publish_to_remote(
     revision: &str,
     remote: &str,
     analyzer: &dyn Analyzer,
+    jobs: NonZeroUsize,
+    fail_fast: bool,
     progress: &mut Progress<'_>,
 ) -> Result<PublishOutcome, PublicationError> {
     let evaluated = evaluate_release_declaration(repository_path, revision)
@@ -1374,48 +1450,57 @@ pub fn publish_to_remote(
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     };
 
-    // The forge release comes last, so it never announces a release whose images are missing.
-    let mut publishers: Vec<(String, Box<dyn Publisher>)> = Vec::new();
+    let mut publishers = Vec::new();
     for (name, publisher) in &declaration.publishers.oci_image {
-        publishers.push((
+        publishers.push(PublisherNode::new(
             format!("oci-image.{name}"),
             Box::new(
                 crate::oci::OciImagePublisher::from_declaration(publisher)?
                     .with_trusted_predecessor(trusted_predecessor.clone()),
             ),
+            publisher.after.clone(),
         ));
     }
     for (name, publisher) in &declaration.publishers.oci_helm {
-        publishers.push((
+        publishers.push(PublisherNode::new(
             format!("oci-helm.{name}"),
             Box::new(crate::helm::OciHelmPublisher::from_declaration(
                 publisher,
                 &release.version,
             )?),
+            publisher.after.clone(),
         ));
     }
     for (name, publisher) in &declaration.publishers.github_release {
-        publishers.push((
+        publishers.push(PublisherNode::new(
             format!("github-release.{name}"),
             Box::new(GithubPublisher::from_declaration(
                 publisher,
                 &declaration.changelog.path,
             )?),
+            publisher.after.clone(),
         ));
     }
     progress(PublishEvent::Started {
         tag: &release.tag,
         commit: &release.commit,
     });
-    let (tag_step, steps) = publish_ordered(&tag_publisher, &release, &publishers, progress)?;
+    let (tag_step, outcomes) = publish_ordered_with_jobs(
+        &tag_publisher,
+        &release,
+        &publishers,
+        jobs,
+        fail_fast,
+        progress,
+    )?;
     Ok(PublishOutcome::Published(PublishReport {
         commit: release.commit,
         tag: release.tag,
         tag_step,
-        publisher_steps: publishers
+        publisher_outcomes: publishers
             .into_iter()
-            .zip(steps)
-            .map(|((name, _), (step, artifacts))| (name, step, artifacts))
+            .zip(outcomes)
+            .map(|(publisher, outcome)| (publisher.name, outcome))
             .collect(),
     }))
 }
@@ -1425,50 +1510,204 @@ pub fn publish_to_remote(
 pub fn publish_ordered(
     tag_publisher: &dyn TagPublisher,
     release: &Release,
-    publishers: &[(String, Box<dyn Publisher>)],
+    publishers: &[PublisherNode],
+    fail_fast: bool,
     progress: &mut Progress<'_>,
-) -> Result<(TagStep, Vec<(PublisherStep, ArtifactSteps)>), PublicationError> {
-    let tag_step = match tag_publisher.state(release)? {
+) -> Result<(TagStep, Vec<PublisherOutcome>), PublicationError> {
+    publish_ordered_with_jobs(
+        tag_publisher,
+        release,
+        publishers,
+        NonZeroUsize::MIN,
+        fail_fast,
+        progress,
+    )
+}
+
+pub fn publish_ordered_with_jobs(
+    tag_publisher: &dyn TagPublisher,
+    release: &Release,
+    publishers: &[PublisherNode],
+    jobs: NonZeroUsize,
+    fail_fast: bool,
+    progress: &mut Progress<'_>,
+) -> Result<(TagStep, Vec<PublisherOutcome>), PublicationError> {
+    let tag_state = tag_publisher.state(release);
+    let states = publisher_states(release, publishers, jobs);
+    let tag_step = match tag_state? {
         RemoteState::Missing => TagStep::Pushed,
         RemoteState::Matching => TagStep::AlreadyPushed,
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     };
-    for (_, publisher) in publishers {
-        if let PublisherState::Conflicting(message) = publisher.state(release)? {
-            return Err(PublicationError::new(message));
+    for state in &states {
+        match state {
+            Ok(PublisherState::Conflicting(message)) => {
+                return Err(PublicationError::new(message));
+            }
+            Err(error) => return Err(error.clone()),
+            Ok(_) => {}
         }
     }
+    let states: Vec<_> = states.into_iter().map(Result::unwrap).collect();
 
     tag_publisher.publish(release)?;
     progress(PublishEvent::Tag {
         tag: &release.tag,
         step: tag_step,
     });
-    let mut publisher_steps = Vec::with_capacity(publishers.len());
-    for (name, publisher) in publishers {
-        let step = match publisher.state(release)? {
-            PublisherState::Published => PublisherStep::AlreadyPublished,
-            PublisherState::Missing => PublisherStep::Published,
-            PublisherState::Draft => PublisherStep::DraftCompleted,
-            PublisherState::Incomplete | PublisherState::AliasesPending => {
-                PublisherStep::ArtifactsCompleted
-            }
-            PublisherState::Conflicting(message) => return Err(PublicationError::new(message)),
-        };
-        let artifacts = if step == PublisherStep::AlreadyPublished {
-            let artifacts = publisher.complete_steps(release)?;
-            for artifact in &artifacts {
-                progress(PublishEvent::Artifact(artifact));
-            }
-            artifacts
-        } else {
-            publisher.publish_with_progress(release, &mut |artifact| {
-                progress(PublishEvent::Artifact(artifact));
-            })?
-        };
-        progress(PublishEvent::Publisher { name, step });
-        publisher_steps.push((step, artifacts));
+
+    enum Execution {
+        Pending,
+        Running,
+        Succeeded,
+        Failed,
+        Skipped { failed: String },
     }
+
+    let indexes: HashMap<&str, usize> = publishers
+        .iter()
+        .enumerate()
+        .map(|(index, publisher)| (publisher.name.as_str(), index))
+        .collect();
+    let mut executions: Vec<_> = publishers.iter().map(|_| Execution::Pending).collect();
+    let mut outcomes: Vec<Option<PublisherOutcome>> = publishers.iter().map(|_| None).collect();
+    let mut first_failure = None;
+    let progress = Mutex::new(progress);
+
+    thread::scope(|scope| -> Result<(), PublicationError> {
+        let (completed, completions) = mpsc::channel();
+        let mut running = 0;
+
+        while executions
+            .iter()
+            .any(|execution| matches!(execution, Execution::Pending | Execution::Running))
+        {
+            let mut skipped = false;
+            for index in 0..publishers.len() {
+                if !matches!(executions[index], Execution::Pending) {
+                    continue;
+                }
+                let failed = if fail_fast {
+                    first_failure.clone()
+                } else {
+                    publishers[index].after.iter().find_map(|dependency| {
+                        let dependency = indexes.get(dependency.as_str())?;
+                        match &executions[*dependency] {
+                            Execution::Failed => Some(publishers[*dependency].name.clone()),
+                            Execution::Skipped { failed } => Some(failed.clone()),
+                            Execution::Pending | Execution::Running | Execution::Succeeded => None,
+                        }
+                    })
+                };
+                if let Some(failed) = failed {
+                    let reason = if fail_fast {
+                        format!("skipped: fail-fast after {failed} failed")
+                    } else {
+                        format!("skipped: {failed} failed")
+                    };
+                    report_publish_event(
+                        &progress,
+                        PublishEvent::PublisherSkipped {
+                            name: &publishers[index].name,
+                            reason: &reason,
+                        },
+                    );
+                    outcomes[index] = Some(PublisherOutcome::Skipped { reason });
+                    executions[index] = Execution::Skipped { failed };
+                    skipped = true;
+                }
+            }
+
+            while running < jobs.get() && (!fail_fast || first_failure.is_none()) {
+                let ready = publishers
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, publisher)| {
+                        if !matches!(executions[index], Execution::Pending) {
+                            return None;
+                        }
+                        publisher
+                            .after
+                            .iter()
+                            .all(|dependency| {
+                                indexes.get(dependency.as_str()).is_some_and(|dependency| {
+                                    matches!(executions[*dependency], Execution::Succeeded)
+                                })
+                            })
+                            .then_some(index)
+                    });
+                let Some(index) = ready else { break };
+
+                executions[index] = Execution::Running;
+                running += 1;
+                let completed = completed.clone();
+                let progress = &progress;
+                let publisher = &publishers[index];
+                let state = &states[index];
+                scope.spawn(move || {
+                    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                        complete_publisher(release, publisher, state, progress)
+                    }))
+                    .unwrap_or_else(|_| {
+                        Err(PublicationError::new(format!(
+                            "publisher {} panicked",
+                            publisher.name
+                        )))
+                    });
+                    completed
+                        .send((index, result))
+                        .expect("publication scheduler receives every result");
+                });
+            }
+
+            if running == 0 {
+                if skipped {
+                    continue;
+                }
+                if executions
+                    .iter()
+                    .any(|execution| matches!(execution, Execution::Pending))
+                {
+                    return Err(PublicationError::new(
+                        "publisher dependency graph did not become ready",
+                    ));
+                }
+                break;
+            }
+
+            let (index, result) = completions
+                .recv()
+                .expect("every running publisher reports its result");
+            running -= 1;
+            match result {
+                Ok((step, artifacts)) => {
+                    report_publish_event(
+                        &progress,
+                        PublishEvent::Publisher {
+                            name: &publishers[index].name,
+                            step,
+                        },
+                    );
+                    outcomes[index] = Some(PublisherOutcome::Published { step, artifacts });
+                    executions[index] = Execution::Succeeded;
+                }
+                Err(error) => {
+                    let reason = error.to_string();
+                    report_publish_event(
+                        &progress,
+                        PublishEvent::PublisherFailed {
+                            name: &publishers[index].name,
+                            reason: &reason,
+                        },
+                    );
+                    outcomes[index] = Some(PublisherOutcome::Failed { reason });
+                    executions[index] = Execution::Failed;
+                    first_failure.get_or_insert_with(|| publishers[index].name.clone());
+                }
+            }
+        }
+        Ok(())
+    })?;
 
     match tag_publisher.state(release)? {
         RemoteState::Matching => {}
@@ -1479,18 +1718,95 @@ pub fn publish_ordered(
             )));
         }
     }
-    for (_, publisher) in publishers {
-        match publisher.state(release)? {
-            PublisherState::Published | PublisherState::AliasesPending => {}
-            state => {
-                return Err(PublicationError::new(format!(
-                    "publisher did not complete {:?}: {state:?}",
-                    release.tag
-                )));
-            }
+    Ok((
+        tag_step,
+        outcomes
+            .into_iter()
+            .map(|outcome| outcome.expect("every publisher has an outcome"))
+            .collect(),
+    ))
+}
+
+fn publisher_states(
+    release: &Release,
+    publishers: &[PublisherNode],
+    jobs: NonZeroUsize,
+) -> Vec<Result<PublisherState, PublicationError>> {
+    let next = AtomicUsize::new(0);
+    let (checked, checks) = mpsc::channel();
+    thread::scope(|scope| {
+        for _ in 0..jobs.get().min(publishers.len()) {
+            let checked = checked.clone();
+            let next = &next;
+            scope.spawn(move || {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(publisher) = publishers.get(index) else {
+                        break;
+                    };
+                    checked
+                        .send((index, publisher.publisher.state(release)))
+                        .expect("publication pre-check receives every result");
+                }
+            });
+        }
+    });
+    drop(checked);
+
+    let mut states: Vec<_> = publishers.iter().map(|_| None).collect();
+    for (index, state) in checks {
+        states[index] = Some(state);
+    }
+    states
+        .into_iter()
+        .map(|state| state.expect("every publisher was checked"))
+        .collect()
+}
+
+fn complete_publisher(
+    release: &Release,
+    publisher: &PublisherNode,
+    state: &PublisherState,
+    progress: &Mutex<&mut Progress<'_>>,
+) -> Result<(PublisherStep, ArtifactSteps), PublicationError> {
+    let step = match state {
+        PublisherState::Published => PublisherStep::AlreadyPublished,
+        PublisherState::Missing => PublisherStep::Published,
+        PublisherState::Draft => PublisherStep::DraftCompleted,
+        PublisherState::Incomplete | PublisherState::AliasesPending => {
+            PublisherStep::ArtifactsCompleted
+        }
+        PublisherState::Conflicting(_) => unreachable!("conflicts were checked before the tag"),
+    };
+    let artifacts = if step == PublisherStep::AlreadyPublished {
+        let artifacts = publisher.publisher.complete_steps(release)?;
+        for artifact in &artifacts {
+            report_publish_event(progress, PublishEvent::Artifact(artifact));
+        }
+        artifacts
+    } else {
+        publisher
+            .publisher
+            .publish_with_progress(release, &mut |artifact| {
+                report_publish_event(progress, PublishEvent::Artifact(artifact));
+            })?
+    };
+    match publisher.publisher.state(release)? {
+        PublisherState::Published | PublisherState::AliasesPending => {}
+        state => {
+            return Err(PublicationError::new(format!(
+                "publisher {} did not complete {:?}: {state:?}",
+                publisher.name, release.tag
+            )));
         }
     }
-    Ok((tag_step, publisher_steps))
+    Ok((step, artifacts))
+}
+
+fn report_publish_event(progress: &Mutex<&mut Progress<'_>>, event: PublishEvent<'_>) {
+    progress
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())(event);
 }
 
 pub fn validate_new_release(

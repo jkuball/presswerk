@@ -142,12 +142,15 @@ fn help_flag_prints_the_publish_command() {
 }
 
 #[test]
-fn publish_help_documents_the_optional_revision() {
+fn publish_help_documents_the_optional_revision_and_options() {
     let output = presswerk(&["publish", "--help"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success());
-    assert!(stdout.contains("Usage: presswerk publish [REVISION]"));
+    assert!(stdout.contains("Usage: presswerk publish [OPTIONS] [REVISION]"));
+    assert!(stdout.contains("--fail-fast"));
+    assert!(stdout.contains("--jobs <N>"));
+    assert!(stdout.contains("default: 8"));
     assert!(stdout.contains("default: HEAD"));
 }
 

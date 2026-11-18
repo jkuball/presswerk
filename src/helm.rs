@@ -367,7 +367,7 @@ impl OciHelmPublisher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::publication::{RemoteState, TagPublisher, publish_ordered};
+    use crate::publication::{PublisherNode, RemoteState, TagPublisher, publish_ordered};
     use flate2::Compression;
     use flate2::write::GzEncoder;
     use serde_json::json;
@@ -657,10 +657,12 @@ mod tests {
                 writes: tag_writes.clone(),
             },
             &release,
-            &[(
-                "test".to_owned(),
-                Box::new(conflicting) as Box<dyn Publisher>,
+            &[PublisherNode::new(
+                "test",
+                Box::new(conflicting),
+                Vec::new(),
             )],
+            false,
             &mut |_| {},
         )
         .unwrap_err()

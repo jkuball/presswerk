@@ -49,7 +49,10 @@ Every field is required, and unknown fields are rejected.
   `conventional.catalog` is keyed by lowercase type, and each entry has a `title` and a `semver`
   level.
 - `publishers`: keyed by publisher type, `github-release`, `oci-helm`, or `oci-image`, and then by
-  name. All may be empty. Each GitHub Release publisher has an `apiUrl`, a `repository` in
+  name. All may be empty. Every publisher has `after`, a list of publisher addresses in
+  `<type>.<name>` form that must complete first. It may be missing in older declarations and then
+  means an empty list. The module-only `before` option never enters the declaration. Each GitHub
+  Release publisher has an `apiUrl`, a `repository` in
   `owner/name` form, a `token.secret` naming the environment variable that holds the token, a
   MiniJinja `body` template, and `assets`, which maps asset names to absolute store paths of files
   and may be missing in older declarations. `body` may be missing in older declarations and then
