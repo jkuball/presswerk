@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.20.0] - 2026-11-18
+
+### ✨ Introduce new features
+
+- (release): Add the stable API option
+
+### 📝 Add or update documentation
+
+- (docs): Explain analyzer-specific examples
+- (release): Explain the stable prerelease check
+- (release): Clarify stable option compatibility
+
+### 🐛 Fix a bug
+
+- (declaration): Decode releases without stable
+
+### ✅ Add, update, or pass tests
+
+- (release): Restore workspace default coverage
+- (release): Inline the workspace test fixture
+- (release): Evaluate stable defaults in workspace tests
+
 ## [0.19.0] - 2026-11-18
 
 ### ✨ Introduce new features
