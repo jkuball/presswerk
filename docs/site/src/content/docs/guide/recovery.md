@@ -52,10 +52,9 @@ Released v0.3.0 from 7b3e5f1.
 ```
 
 Presswerk keeps a matching tag and completed publishers, creates what is missing, and verifies each
-publisher that runs. Each line appears as soon as the step completes. Rerun `publish` without
-`--fail-fast` during recovery so independent branches can continue even if one publisher still
-fails. When every step was already complete, the last line says that nothing changed. Once
-`publish` succeeds, the release is complete and the rest of this page does not apply.
+publisher that runs. Each line appears as soon as the step completes. When every step was already
+complete, the last line says that nothing changed. Once `publish` succeeds, the release is complete
+and the rest of this page does not apply.
 
 When retrying, do not:
 
