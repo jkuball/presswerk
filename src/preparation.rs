@@ -484,14 +484,15 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
     for line in plan.notes.lines() {
         let _ = writeln!(output, "  {line}");
     }
+    // `prepare` refuses to build on a pending release, so it is not suggested then.
     match &plan.next_version {
-        Some(version) => {
+        Some(version) if plan.pending_release().is_none() => {
             let _ = writeln!(
                 output,
                 "\nNothing written. Run `presswerk prepare` to commit {version}."
             );
         }
-        None => output.push_str("\nNothing written.\n"),
+        _ => output.push_str("\nNothing written.\n"),
     }
     output
 }

@@ -498,6 +498,7 @@ fn plan_builds_on_a_pending_release_that_prepare_refuses_to_build_on() {
     assert!(stdout.contains("✨ Add the third feature"), "{stdout}");
     assert!(!stdout.contains("✨ Add the first feature"), "{stdout}");
     assert!(stdout.contains("next version       0.2.0\n"), "{stdout}");
+    assert!(stdout.ends_with("\nNothing written.\n"), "{stdout}");
 
     let refused = presswerk_in(repository.path(), &["prepare"]);
     let stderr = String::from_utf8_lossy(&refused.stderr);
