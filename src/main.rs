@@ -3,7 +3,7 @@ use clap::{CommandFactory, Parser};
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::cli::{Cli, Command};
 use presswerk::preparation::{
-    ReleasePlan, build_head_release_plan, build_head_release_plan_with_trust, is_worktree_dirty,
+    ReleasePlan, build_head_preparation_plan, build_head_release_plan, is_worktree_dirty,
     prepare_release, render_plan,
 };
 use presswerk::publication::{
@@ -50,8 +50,7 @@ fn run() -> Result<bool> {
                 .as_deref()
                 .map(TrustedPredecessor::from_argument)
                 .transpose()?;
-            let plan =
-                build_head_release_plan_with_trust(".", &GitCliffAnalyzer, trusted_predecessor)?;
+            let plan = build_head_preparation_plan(".", &GitCliffAnalyzer, trusted_predecessor)?;
             if dirty {
                 eprintln!(
                     "warning: working tree is dirty; preparing HEAD ({}) without local changes",
@@ -92,7 +91,14 @@ fn run() -> Result<bool> {
                     ]);
                     print!("{}", render_steps(&rows));
                 }
-                None => println!("Nothing to prepare."),
+                None => match plan.pending_release() {
+                    Some(pending) => println!(
+                        "Nothing to prepare: pending release {} at {} is not published yet.",
+                        pending.tag,
+                        short_commit(&pending.commit.to_string())
+                    ),
+                    None => println!("Nothing to prepare."),
+                },
             }
         }
         Command::Publish {

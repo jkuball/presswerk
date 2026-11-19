@@ -114,8 +114,9 @@ concurrency group, so they never wait for release work:
 ```
 
 GitHub checks out the merge of the pull request into `main`, so the plan shows what would be released
-after merging. The plan also appears in the run's summary. A failing plan, for example while a release
-is pending, fails the check. `plan` never writes anything.
+after merging. The plan also appears in the run's summary. A failing plan fails the check. While a
+release is pending, the plan builds on that release commit and marks it as not published yet.
+`plan` never writes anything.
 
 ### Skip stale preparation
 
@@ -186,8 +187,7 @@ user's ID with `gh api '/users/YOUR-APP[bot]' --jq .id`:
 +          git config user.email BOT-USER-ID+YOUR-APP[bot]@users.noreply.github.com
 
        - name: Prepare release
--        if: github.event_name == 'push'
-+        if: github.event_name == 'push' && github.actor != 'YOUR-APP[bot]'
+         if: github.event_name == 'push'
          run: |
            nix run --inputs-from . presswerk -- prepare
            if test "$(git rev-parse HEAD)" != "$GITHUB_SHA"; then
@@ -205,9 +205,9 @@ user's ID with `gh api '/users/YOUR-APP[bot]' --jq .id`:
 
 Presswerk now pushes, tags, and creates the GitHub Release as the app, so the workflow's own token
 only needs `contents: read`, and `actions: write` is no longer needed. The push run of the release
-commit takes the place of the candidate run: it skips `prepare`, checks out exactly the pushed
-commit, builds and checks it, and publishes it. The app only pushes release commits, so its actor
-identifies them.
+commit takes the place of the candidate run: it checks out exactly the pushed commit and builds and
+checks it. `prepare` finds nothing to prepare there, because that commit is the pending release
+itself, and the run publishes it. The app only pushes release commits, so its actor identifies them.
 
 Keep the dispatch trigger: dispatching a candidate is still the way to [recover](#recovery) a
 release.

@@ -4,7 +4,7 @@ use crate::analysis::{
 use crate::declaration::{Publishers, ReleaseDeclaration, Tag};
 use crate::evaluation::{EvaluatedReleaseDeclaration, evaluate_release_declaration};
 use crate::oci::ForeignAlias;
-use crate::publication::{VerifiedPredecessor, verify_predecessor_with_trust};
+use crate::publication::{VerifiedPredecessor, short_oid, verify_head_predecessor};
 use crate::release_commit::{
     ReleaseFile, TrustedPredecessor, create_release_commit, release_subject,
 };
@@ -51,19 +51,45 @@ pub struct ReleasePlan {
     pub unchecked_aliases: Vec<(String, String)>,
 }
 
+impl ReleasePlan {
+    /// The previous release if it is a release commit whose tag is not published yet.
+    #[must_use]
+    pub fn pending_release(&self) -> Option<&VerifiedPredecessor> {
+        self.previous_release
+            .as_ref()
+            .filter(|previous| previous.pending)
+    }
+}
+
+/// Plan the release of `HEAD` for `plan`. A pending release below `HEAD` is the base of the plan.
 pub fn build_head_release_plan(
     repository_path: impl AsRef<Path>,
     analyzer: &dyn Analyzer,
 ) -> Result<ReleasePlan> {
-    build_head_release_plan_with_trust(repository_path, analyzer, None)
+    build_head_plan(repository_path.as_ref(), analyzer, None, false)
 }
 
-pub fn build_head_release_plan_with_trust(
+/// Plan the release of `HEAD` for `prepare`. A pending release below `HEAD` is refused before the
+/// next release is computed, so no error about that hypothetical release hides the refusal.
+pub fn build_head_preparation_plan(
     repository_path: impl AsRef<Path>,
     analyzer: &dyn Analyzer,
     trusted_predecessor: Option<TrustedPredecessor>,
 ) -> Result<ReleasePlan> {
-    let repository_path = repository_path.as_ref();
+    build_head_plan(
+        repository_path.as_ref(),
+        analyzer,
+        trusted_predecessor,
+        true,
+    )
+}
+
+fn build_head_plan(
+    repository_path: &Path,
+    analyzer: &dyn Analyzer,
+    trusted_predecessor: Option<TrustedPredecessor>,
+    refuse_pending_base: bool,
+) -> Result<ReleasePlan> {
     let evaluated = evaluate_release_declaration(repository_path, "HEAD")?;
     let date = time::OffsetDateTime::now_utc().date().to_string();
     let mut plan = build_release_plan(
@@ -72,15 +98,21 @@ pub fn build_head_release_plan_with_trust(
         analyzer,
         &date,
         |candidate, previous_version, declaration| {
-            verify_predecessor_with_trust(
+            let verified = verify_head_predecessor(
                 repository_path,
                 candidate,
                 previous_version,
                 declaration,
                 "origin",
                 trusted_predecessor.as_ref(),
-            )
-            .map_err(Into::into)
+            )?;
+            if refuse_pending_base
+                && let Some(pending) = verified.as_ref().filter(|previous| previous.pending)
+                && pending.commit != candidate
+            {
+                return Err(pending_refusal(pending));
+            }
+            Ok(verified)
         },
     )?;
     plan.trusted_predecessor = trusted_predecessor;
@@ -196,12 +228,20 @@ pub fn build_release_plan(
             crate::changelog::read_unreleased(changelog, &heading, unreleased_heading)
         },
     );
-    let notes = render_release_notes(
-        &analysis,
-        next_version.as_ref().unwrap_or(&declaration.version),
-        unreleased,
-        &declaration.changelog.template,
-    )?;
+    // `HEAD` is a pending release itself: nothing follows it, so there are no notes to render.
+    let at_pending_release = previous_release
+        .as_ref()
+        .is_some_and(|previous| previous.pending && previous.commit == evaluated.commit);
+    let notes = if at_pending_release {
+        String::new()
+    } else {
+        render_release_notes(
+            &analysis,
+            next_version.as_ref().unwrap_or(&declaration.version),
+            unreleased,
+            &declaration.changelog.template,
+        )?
+    };
     let mut version_files = Vec::new();
     let mut release_files = Vec::new();
 
@@ -286,7 +326,15 @@ pub fn build_release_plan(
     })
 }
 
+/// Create the release commit of the plan, or return `None` if there is nothing to prepare, such as
+/// when `HEAD` is itself a pending release.
 pub fn prepare_release(plan: &ReleasePlan) -> Result<Option<Oid>> {
+    if let Some(pending) = plan.pending_release() {
+        if pending.commit == plan.commit {
+            return Ok(None);
+        }
+        return Err(pending_refusal(pending));
+    }
     let Some(subject) = &plan.release_subject else {
         return Ok(None);
     };
@@ -323,6 +371,14 @@ pub fn prepare_release(plan: &ReleasePlan) -> Result<Option<Oid>> {
     )?;
     check_out_release_files(&repository, &plan.release_files)?;
     Ok(Some(commit))
+}
+
+fn pending_refusal(pending: &VerifiedPredecessor) -> anyhow::Error {
+    anyhow::anyhow!(
+        "pending release {} at {} is not published yet; publish it before preparing the next one",
+        pending.tag,
+        short_oid(pending.commit)
+    )
 }
 
 fn locally_changed_release_files(
@@ -383,6 +439,13 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
     let mut output = String::new();
     let _ = writeln!(output, "commit             {}", plan.commit);
     match &plan.previous_release {
+        Some(previous) if previous.pending => {
+            let _ = writeln!(
+                output,
+                "previous release   {} ({}, pending: not published yet)",
+                previous.tag, previous.commit
+            );
+        }
         Some(previous) => {
             let _ = writeln!(
                 output,
@@ -455,14 +518,15 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
     for line in plan.notes.lines() {
         let _ = writeln!(output, "  {line}");
     }
+    // `prepare` refuses to build on a pending release, so it is not suggested then.
     match &plan.next_version {
-        Some(version) => {
+        Some(version) if plan.pending_release().is_none() => {
             let _ = writeln!(
                 output,
                 "\nNothing written. Run `presswerk prepare` to commit {version}."
             );
         }
-        None => output.push_str("\nNothing written.\n"),
+        _ => output.push_str("\nNothing written.\n"),
     }
     output
 }

@@ -11,8 +11,9 @@ use presswerk::publication::{
     GitTagPublisher, GithubClient, GithubPublisher, GithubReleaseReader, GithubReleaseState,
     LocalAsset, PublicationError, PublishEvent, Publisher, PublisherNode, PublisherOutcome,
     PublisherState, PublisherStep, Release, RemoteState, TagPublisher, TagStep,
-    UnreadableDeclaration, is_valid_successor, publish_ordered, publish_ordered_with_jobs,
-    validate_new_release, verify_predecessor_with, verify_predecessor_with_oci_helm,
+    UnreadableDeclaration, UntaggedRelease, is_valid_successor, pending_predecessor,
+    publish_ordered, publish_ordered_with_jobs, validate_new_release, verify_predecessor_with,
+    verify_predecessor_with_oci_helm,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
@@ -2632,5 +2633,121 @@ fn a_github_release_asset_must_be_a_regular_file() {
             .unwrap_err()
             .to_string()
             .contains("is not a regular file")
+    );
+}
+
+/// Reads the declaration of a `commit_version` repository, whose `VERSION` file is the version.
+fn version_file_declaration(repository: &GitRepo, commit: Oid) -> Option<ReleaseDeclaration> {
+    let version = repository.version_at(&commit.to_string());
+    Some(declaration(&version, "owner/project"))
+}
+
+fn find_pending(
+    repository: &GitRepo,
+    candidate: &str,
+    version: &str,
+    tag: &FakeTagPublisher,
+) -> Result<Option<UntaggedRelease>, PublicationError> {
+    pending_predecessor(
+        repository.path(),
+        candidate.parse().unwrap(),
+        &Version::parse(version).unwrap(),
+        &declaration(version, "owner/project"),
+        tag,
+        |commit| Ok(version_file_declaration(repository, commit)),
+    )
+}
+
+#[test]
+fn finds_the_pending_release_below_several_commits() {
+    let repository = GitRepo::new();
+    repository.commit_version("0.1.0", "🔖 Release v0.1.0");
+    repository.annotated_tag("v0.1.0");
+    repository.write("feature", "implemented\n");
+    repository.commit("✨ Add a feature");
+    let pending = repository.commit_version("0.2.0", "🔖 Release v0.2.0");
+    let missing = fake_tag(RemoteState::Missing);
+
+    let Some(UntaggedRelease::Pending(at_head)) =
+        find_pending(&repository, &pending, "0.2.0", &missing).unwrap()
+    else {
+        panic!("the release commit is pending");
+    };
+    assert_eq!(at_head.commit.to_string(), pending);
+    assert_eq!(at_head.tag, "v0.2.0");
+    assert!(at_head.pending);
+
+    repository.write("fix", "fixed\n");
+    repository.commit("🐛 Fix a bug");
+    repository.write("feature", "extended\n");
+    let candidate = repository.commit("✨ Extend the feature");
+    let Some(UntaggedRelease::Pending(below)) =
+        find_pending(&repository, &candidate, "0.2.0", &missing).unwrap()
+    else {
+        panic!("the release commit is pending");
+    };
+    assert_eq!(below.commit.to_string(), pending);
+    assert_eq!(below.version, Version::new(0, 2, 0));
+    assert!(below.pending);
+}
+
+#[test]
+fn a_release_with_a_tag_is_not_pending() {
+    let repository = GitRepo::new();
+    repository.commit_version("0.0.0", "🎉 Begin project");
+    let release = repository.commit_version("0.1.0", "🔖 Release v0.1.0");
+    repository.write("feature", "implemented\n");
+    let candidate = repository.commit("✨ Add a feature");
+
+    // Published, but the tag was not fetched: the remote tag stands in for it.
+    let published = fake_tag(RemoteState::Matching);
+    assert_eq!(
+        find_pending(&repository, &candidate, "0.1.0", &published).unwrap(),
+        Some(UntaggedRelease::Published(release.parse().unwrap()))
+    );
+
+    let conflicting = fake_tag(RemoteState::Conflicting("tag points elsewhere".into()));
+    let error = find_pending(&repository, &candidate, "0.1.0", &conflicting).unwrap_err();
+    assert_eq!(error.to_string(), "tag points elsewhere");
+
+    repository.git([
+        "tag",
+        "--annotate",
+        "--message",
+        "v0.1.0",
+        "v0.1.0",
+        &release,
+    ]);
+    let missing = fake_tag(RemoteState::Missing);
+    assert_eq!(
+        find_pending(&repository, &candidate, "0.1.0", &missing).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn neither_the_baseline_nor_a_root_commit_is_a_pending_release() {
+    let missing = fake_tag(RemoteState::Missing);
+
+    let baseline = GitRepo::new();
+    let root = baseline.commit_version("0.0.0", "🎉 Begin project");
+    baseline.write("feature", "implemented\n");
+    let candidate = baseline.commit("✨ Add a feature");
+    assert_eq!(
+        find_pending(&baseline, &candidate, "0.0.0", &missing).unwrap(),
+        None
+    );
+    assert_eq!(
+        find_pending(&baseline, &root, "0.0.0", &missing).unwrap(),
+        None
+    );
+
+    let started_later = GitRepo::new();
+    started_later.commit_version("0.3.0", "🎉 Begin project");
+    started_later.write("feature", "implemented\n");
+    let candidate = started_later.commit("✨ Add a feature");
+    assert_eq!(
+        find_pending(&started_later, &candidate, "0.3.0", &missing).unwrap(),
+        None
     );
 }
