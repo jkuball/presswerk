@@ -563,3 +563,37 @@ fn a_release_tagged_on_only_one_side_is_not_pending() {
         "{stderr}"
     );
 }
+
+#[test]
+fn prepare_refuses_a_pending_base_before_computing_the_next_release() {
+    let (repository, pending, _remote) = pending_repository();
+    let changelog = std::fs::read_to_string(repository.path().join("CHANGELOG.md")).unwrap();
+    // The next release could not be prepared anyway; the pending release is the reason to report.
+    repository.write(
+        "CHANGELOG.md",
+        changelog.replacen("## [0.1.0]", "## [0.2.0] - 2026-11-19\n\n## [0.1.0]", 1),
+    );
+    repository.write("second", "implemented\n");
+    let head = repository.commit("✨ Add the second feature");
+
+    let refused = presswerk_in(repository.path(), &["prepare"]);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{stderr}");
+    assert_eq!(
+        stderr,
+        format!(
+            "error: pending release v0.1.0 at {} is not published yet; publish it before preparing the next one\n",
+            &pending[..7]
+        )
+    );
+    assert_eq!(repository.head(), head);
+
+    // `plan` keeps validating the next release.
+    let plan = presswerk_in(repository.path(), &["plan"]);
+    let stderr = String::from_utf8_lossy(&plan.stderr);
+    assert!(!plan.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("changelog already contains version 0.2.0"),
+        "{stderr}"
+    );
+}

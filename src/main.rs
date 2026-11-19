@@ -3,7 +3,7 @@ use clap::{CommandFactory, Parser};
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::cli::{Cli, Command};
 use presswerk::preparation::{
-    ReleasePlan, build_head_release_plan, build_head_release_plan_with_trust, is_worktree_dirty,
+    ReleasePlan, build_head_preparation_plan, build_head_release_plan, is_worktree_dirty,
     prepare_release, render_plan,
 };
 use presswerk::publication::{
@@ -50,8 +50,7 @@ fn run() -> Result<bool> {
                 .as_deref()
                 .map(TrustedPredecessor::from_argument)
                 .transpose()?;
-            let plan =
-                build_head_release_plan_with_trust(".", &GitCliffAnalyzer, trusted_predecessor)?;
+            let plan = build_head_preparation_plan(".", &GitCliffAnalyzer, trusted_predecessor)?;
             if dirty {
                 eprintln!(
                     "warning: working tree is dirty; preparing HEAD ({}) without local changes",

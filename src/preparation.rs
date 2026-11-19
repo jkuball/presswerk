@@ -61,19 +61,35 @@ impl ReleasePlan {
     }
 }
 
+/// Plan the release of `HEAD` for `plan`. A pending release below `HEAD` is the base of the plan.
 pub fn build_head_release_plan(
     repository_path: impl AsRef<Path>,
     analyzer: &dyn Analyzer,
 ) -> Result<ReleasePlan> {
-    build_head_release_plan_with_trust(repository_path, analyzer, None)
+    build_head_plan(repository_path.as_ref(), analyzer, None, false)
 }
 
-pub fn build_head_release_plan_with_trust(
+/// Plan the release of `HEAD` for `prepare`. A pending release below `HEAD` is refused before the
+/// next release is computed, so no error about that hypothetical release hides the refusal.
+pub fn build_head_preparation_plan(
     repository_path: impl AsRef<Path>,
     analyzer: &dyn Analyzer,
     trusted_predecessor: Option<TrustedPredecessor>,
 ) -> Result<ReleasePlan> {
-    let repository_path = repository_path.as_ref();
+    build_head_plan(
+        repository_path.as_ref(),
+        analyzer,
+        trusted_predecessor,
+        true,
+    )
+}
+
+fn build_head_plan(
+    repository_path: &Path,
+    analyzer: &dyn Analyzer,
+    trusted_predecessor: Option<TrustedPredecessor>,
+    refuse_pending_base: bool,
+) -> Result<ReleasePlan> {
     let evaluated = evaluate_release_declaration(repository_path, "HEAD")?;
     let date = time::OffsetDateTime::now_utc().date().to_string();
     let mut plan = build_release_plan(
@@ -82,15 +98,21 @@ pub fn build_head_release_plan_with_trust(
         analyzer,
         &date,
         |candidate, previous_version, declaration| {
-            verify_head_predecessor(
+            let verified = verify_head_predecessor(
                 repository_path,
                 candidate,
                 previous_version,
                 declaration,
                 "origin",
                 trusted_predecessor.as_ref(),
-            )
-            .map_err(Into::into)
+            )?;
+            if refuse_pending_base
+                && let Some(pending) = verified.as_ref().filter(|previous| previous.pending)
+                && pending.commit != candidate
+            {
+                return Err(pending_refusal(pending));
+            }
+            Ok(verified)
         },
     )?;
     plan.trusted_predecessor = trusted_predecessor;
@@ -303,11 +325,7 @@ pub fn prepare_release(plan: &ReleasePlan) -> Result<Option<Oid>> {
         if pending.commit == plan.commit {
             return Ok(None);
         }
-        bail!(
-            "pending release {} at {} is not published yet; publish it before preparing the next one",
-            pending.tag,
-            short_oid(pending.commit)
-        );
+        return Err(pending_refusal(pending));
     }
     let Some(subject) = &plan.release_subject else {
         return Ok(None);
@@ -345,6 +363,14 @@ pub fn prepare_release(plan: &ReleasePlan) -> Result<Option<Oid>> {
     )?;
     check_out_release_files(&repository, &plan.release_files)?;
     Ok(Some(commit))
+}
+
+fn pending_refusal(pending: &VerifiedPredecessor) -> anyhow::Error {
+    anyhow::anyhow!(
+        "pending release {} at {} is not published yet; publish it before preparing the next one",
+        pending.tag,
+        short_oid(pending.commit)
+    )
 }
 
 fn locally_changed_release_files(
