@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.20.1] - 2026-11-19
+
+### 🐛 Fix a bug
+
+- (prepare): Skip release notes at a pending release commit
+- (plan): Build on a published release whose tag is not fetched yet
+- (prepare): Refuse a pending base before computing the next release
+- (plan): Leave out the prepare hint above a pending release
+- (prepare): Build on a pending release instead of failing
+
+### 📝 Add or update documentation
+
+- (docs): Run prepare on the pending release commit
+
+### 👷 Add or update CI build system
+
+- (ci): Prepare on the release app's pushes too
+
 ## [0.20.0] - 2026-11-18
 
 ### ✨ Introduce new features
