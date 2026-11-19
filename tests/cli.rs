@@ -430,7 +430,16 @@ fn pending_repository_with(flake: &str) -> (GitRepo, String, tempfile::TempDir) 
 
 #[test]
 fn prepare_has_nothing_to_do_at_a_pending_release() {
-    let (repository, pending, _remote) = pending_repository();
+    // A template that needs a commit renders for the release, but not for the empty range above it.
+    let flake = RELEASE_FLAKE.replace(
+        r#"changelog.path = "CHANGELOG.md";"#,
+        r#"changelog = {
+        path = "CHANGELOG.md";
+        template = "{{ groups[0].commits[0].message }}\n";
+      };"#,
+    );
+    assert_ne!(flake, RELEASE_FLAKE);
+    let (repository, pending, _remote) = pending_repository_with(&flake);
 
     let plan = presswerk_in(repository.path(), &["plan"]);
     let stdout = String::from_utf8_lossy(&plan.stdout);

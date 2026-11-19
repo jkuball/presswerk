@@ -228,12 +228,20 @@ pub fn build_release_plan(
             crate::changelog::read_unreleased(changelog, &heading, unreleased_heading)
         },
     );
-    let notes = render_release_notes(
-        &analysis,
-        next_version.as_ref().unwrap_or(&declaration.version),
-        unreleased,
-        &declaration.changelog.template,
-    )?;
+    // `HEAD` is a pending release itself: nothing follows it, so there are no notes to render.
+    let at_pending_release = previous_release
+        .as_ref()
+        .is_some_and(|previous| previous.pending && previous.commit == evaluated.commit);
+    let notes = if at_pending_release {
+        String::new()
+    } else {
+        render_release_notes(
+            &analysis,
+            next_version.as_ref().unwrap_or(&declaration.version),
+            unreleased,
+            &declaration.changelog.template,
+        )?
+    };
     let mut version_files = Vec::new();
     let mut release_files = Vec::new();
 
