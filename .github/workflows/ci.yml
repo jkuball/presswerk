@@ -77,7 +77,7 @@ jobs:
           exit "$status"
 
       - name: Prepare release
-        if: github.event_name == 'push' && github.actor != 'presswerk-releases[bot]'
+        if: github.event_name == 'push'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
