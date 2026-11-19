@@ -1910,6 +1910,7 @@ fn verify_candidate_predecessor(
         remote,
         trusted_predecessor.as_ref(),
         verify_completion,
+        None,
     )?;
     // The trusted tag was verified to be the parent version's tag.
     let trusted_version = trusted_predecessor.map(|_| parent_version.clone());
@@ -1998,13 +1999,17 @@ pub fn verify_predecessor_with_trust(
         remote,
         trusted_predecessor,
         true,
+        None,
     )
 }
 
 /// Verify the predecessor of `HEAD` for `plan` and `prepare`. Unlike [`verify_predecessor_with_trust`],
-/// it accepts a pending release: a release commit of `previous_version` whose tag exists neither
-/// locally nor on the remote. Its own declaration stands in for the missing tag, since `publish`
-/// will tag exactly that commit.
+/// it accepts a release commit of `previous_version` whose tag is missing locally:
+///
+/// - If the remote has no such tag, it is a pending release. Its own declaration stands in for the
+///   missing tag, since `publish` will tag exactly that commit.
+/// - If the remote tag points to it, the release is published but its tag not fetched yet; it is
+///   verified like any published predecessor, using the remote tag.
 pub fn verify_head_predecessor(
     repository_path: &Path,
     candidate: Oid,
@@ -2014,7 +2019,7 @@ pub fn verify_head_predecessor(
     trusted_predecessor: Option<&TrustedPredecessor>,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError> {
     let tag_publisher = GitTagPublisher::new(repository_path, remote);
-    let pending = pending_predecessor(
+    let untagged = pending_predecessor(
         repository_path,
         candidate,
         previous_version,
@@ -2031,27 +2036,42 @@ pub fn verify_head_predecessor(
             }
         },
     )?;
-    let Some(pending) = pending else {
-        return verify_predecessor_with_trust(
-            repository_path,
-            candidate,
-            previous_version,
-            current_declaration,
-            remote,
-            trusted_predecessor,
-        );
+    let published_commit = match untagged {
+        Some(UntaggedRelease::Pending(pending)) => {
+            if trusted_predecessor.is_some() {
+                return Err(PublicationError::new(format!(
+                    "--trust-predecessor is unnecessary: pending release {} at {} is not published yet",
+                    pending.tag,
+                    short_oid(pending.commit)
+                )));
+            }
+            return Ok(Some(pending));
+        }
+        Some(UntaggedRelease::Published(commit)) => Some(commit),
+        None => None,
     };
-    if trusted_predecessor.is_some() {
-        return Err(PublicationError::new(format!(
-            "--trust-predecessor is unnecessary: pending release {} at {} is not published yet",
-            pending.tag,
-            short_oid(pending.commit)
-        )));
-    }
-    Ok(Some(pending))
+    verify_predecessor_with_trust_mode(
+        repository_path,
+        candidate,
+        previous_version,
+        current_declaration,
+        remote,
+        trusted_predecessor,
+        true,
+        published_commit,
+    )
 }
 
-/// Find the pending release that `candidate` builds on, if `previous_version` has no tag yet.
+/// A release commit of the previous version whose tag is missing locally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UntaggedRelease {
+    /// The remote has no tag either.
+    Pending(VerifiedPredecessor),
+    /// The remote tag points to this release commit; its completion is not verified yet.
+    Published(Oid),
+}
+
+/// Find the release commit that `candidate` builds on, if `previous_version` has no local tag.
 ///
 /// The pending release commit is the first-parent ancestor of `candidate` where `previous_version`
 /// starts, so its parent carries a lower version. `declaration_at` reads the declaration of a
@@ -2063,7 +2083,7 @@ pub fn pending_predecessor<D>(
     current_declaration: &ReleaseDeclaration,
     tag_publisher: &dyn TagPublisher,
     mut declaration_at: D,
-) -> Result<Option<VerifiedPredecessor>, PublicationError>
+) -> Result<Option<UntaggedRelease>, PublicationError>
 where
     D: FnMut(Oid) -> Result<Option<ReleaseDeclaration>, PublicationError>,
 {
@@ -2136,16 +2156,15 @@ where
     };
     match tag_publisher.state(&release)? {
         RemoteState::Missing => {}
-        // The release is published; only the local tag is missing.
-        RemoteState::Matching => return Ok(None),
+        RemoteState::Matching => return Ok(Some(UntaggedRelease::Published(pending))),
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     }
-    Ok(Some(VerifiedPredecessor {
+    Ok(Some(UntaggedRelease::Pending(VerifiedPredecessor {
         version: previous_version.clone(),
         tag: previous_tag,
         commit: pending,
         pending: true,
-    }))
+    })))
 }
 
 pub(crate) fn short_oid(commit: Oid) -> String {
@@ -2154,6 +2173,7 @@ pub(crate) fn short_oid(commit: Oid) -> String {
     commit
 }
 
+#[allow(clippy::too_many_arguments)]
 fn verify_predecessor_with_trust_mode(
     repository_path: &Path,
     candidate: Oid,
@@ -2162,6 +2182,7 @@ fn verify_predecessor_with_trust_mode(
     remote: &str,
     trusted_predecessor: Option<&TrustedPredecessor>,
     verify_completion: bool,
+    published_commit: Option<Oid>,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError> {
     let tag_publisher = GitTagPublisher::new(repository_path, remote);
     let previous_tag = current_declaration
@@ -2176,6 +2197,7 @@ fn verify_predecessor_with_trust_mode(
         &tag_publisher,
         trusted_predecessor,
         verify_completion,
+        published_commit,
         |commit| match evaluate_release_declaration(repository_path, &commit.to_string()) {
             Ok(evaluated) => Ok(evaluated.declaration),
             Err(EvaluationError::Declaration(DeclarationError::UnsupportedSchemaVersion(
@@ -2279,6 +2301,7 @@ where
         tag_publisher,
         trusted_predecessor,
         true,
+        None,
         evaluate_declaration,
         release_state,
         oci_image_manifest,
@@ -2323,6 +2346,7 @@ where
         tag_publisher,
         trusted_predecessor,
         true,
+        None,
         evaluate_declaration,
         release_state,
         oci_image_manifest,
@@ -2339,6 +2363,8 @@ fn verify_predecessor_with_mode<E, F, O, H>(
     tag_publisher: &dyn TagPublisher,
     trusted_predecessor: Option<&TrustedPredecessor>,
     verify_completion: bool,
+    // The commit the remote tag points to, when the tag is published but not fetched.
+    published_commit: Option<Oid>,
     mut evaluate_declaration: E,
     mut release_state: F,
     mut oci_image_manifest: O,
@@ -2361,7 +2387,8 @@ where
         .tag
         .render(previous_version)
         .map_err(|error| PublicationError::new(error.to_string()))?;
-    let Some(previous_commit) = local_tagged_commit(&repository, &previous_tag)? else {
+    let local_commit = local_tagged_commit(&repository, &previous_tag)?;
+    let Some(previous_commit) = local_commit.or(published_commit) else {
         if *previous_version == Version::new(0, 0, 0)
             && !has_release_tags(&repository, &current_declaration.tag)?
         {

@@ -116,9 +116,13 @@ fn write_cargo_version(repository: &GitRepo, version: &str) {
 }
 
 fn release_repository() -> GitRepo {
+    release_repository_with(RELEASE_FLAKE)
+}
+
+fn release_repository_with(flake: &str) -> GitRepo {
     let repository = GitRepo::new();
     write_cargo_version(&repository, "0.0.0");
-    repository.write("flake.nix", RELEASE_FLAKE);
+    repository.write("flake.nix", flake);
     repository.write("flake.lock", LOCK_FILE);
     repository.write("feature", "implemented\n");
     repository.commit("✨ Add the first feature");
@@ -405,7 +409,11 @@ fn version_flag_prints_cargo_version() {
 /// A repository whose first release commit v0.1.0 is prepared and pushed but not published, with
 /// the remote that lacks its tag.
 fn pending_repository() -> (GitRepo, String, tempfile::TempDir) {
-    let repository = release_repository();
+    pending_repository_with(RELEASE_FLAKE)
+}
+
+fn pending_repository_with(flake: &str) -> (GitRepo, String, tempfile::TempDir) {
+    let repository = release_repository_with(flake);
     let remote = tempfile::tempdir().unwrap();
     repository.git(["init", "--quiet", "--bare", remote.path().to_str().unwrap()]);
     repository.git(["remote", "add", "origin", remote.path().to_str().unwrap()]);
@@ -531,7 +539,17 @@ fn plan_builds_on_a_pending_release_that_prepare_refuses_to_build_on() {
 
 #[test]
 fn a_release_tagged_on_only_one_side_is_not_pending() {
-    let (repository, pending, _remote) = pending_repository();
+    // Without publishers, a published predecessor is complete once its tag is on the remote.
+    let flake = RELEASE_FLAKE.replace(
+        r#"publishers."github-release".default = {
+        apiUrl = "https://api.github.com";
+        repository = "owner/project";
+        token.secret = "GITHUB_TOKEN";
+      };"#,
+        r#"publishers."github-release" = { };"#,
+    );
+    assert_ne!(flake, RELEASE_FLAKE);
+    let (repository, pending, _remote) = pending_repository_with(&flake);
     repository.write("second", "implemented\n");
     repository.commit("✨ Add the second feature");
 
@@ -552,16 +570,33 @@ fn a_release_tagged_on_only_one_side_is_not_pending() {
         "{stderr}"
     );
 
-    // Published, but the tag was not fetched.
+    // Published, but the tag was not fetched: the remote tag stands in for it.
     repository.git(["push", "--quiet", "origin", "v0.1.0"]);
     repository.git(["tag", "--delete", "v0.1.0"]);
     let plan = presswerk_in(repository.path(), &["plan"]);
-    let stderr = String::from_utf8_lossy(&plan.stderr);
-    assert!(!plan.status.success(), "{stderr}");
+    let stdout = String::from_utf8_lossy(&plan.stdout);
     assert!(
-        stderr.contains("previous release tag \"v0.1.0\" is missing\n"),
-        "{stderr}"
+        plan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plan.stderr)
     );
+    assert!(
+        stdout.contains(&format!("previous release   v0.1.0 ({pending})\n")),
+        "{stdout}"
+    );
+    assert!(stdout.contains("analyzed commits   1\n"), "{stdout}");
+    assert!(stdout.contains("✨ Add the second feature"), "{stdout}");
+    assert!(stdout.contains("next version       0.2.0\n"), "{stdout}");
+
+    let prepared = presswerk_in(repository.path(), &["prepare"]);
+    let stdout = String::from_utf8_lossy(&prepared.stdout);
+    assert!(
+        prepared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared.stderr)
+    );
+    assert!(stdout.starts_with("Preparing v0.2.0 on "), "{stdout}");
+    assert_eq!(repository.git(["tag", "--list"]), "");
 }
 
 #[test]

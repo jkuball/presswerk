@@ -11,8 +11,8 @@ use presswerk::publication::{
     GitTagPublisher, GithubClient, GithubPublisher, GithubReleaseReader, GithubReleaseState,
     LocalAsset, PublicationError, PublishEvent, Publisher, PublisherNode, PublisherOutcome,
     PublisherState, PublisherStep, Release, RemoteState, TagPublisher, TagStep,
-    UnreadableDeclaration, is_valid_successor, pending_predecessor, publish_ordered,
-    publish_ordered_with_jobs, validate_new_release, verify_predecessor_with,
+    UnreadableDeclaration, UntaggedRelease, is_valid_successor, pending_predecessor,
+    publish_ordered, publish_ordered_with_jobs, validate_new_release, verify_predecessor_with,
     verify_predecessor_with_oci_helm,
 };
 use presswerk::release_commit::TrustedPredecessor;
@@ -2647,7 +2647,7 @@ fn find_pending(
     candidate: &str,
     version: &str,
     tag: &FakeTagPublisher,
-) -> Result<Option<presswerk::publication::VerifiedPredecessor>, PublicationError> {
+) -> Result<Option<UntaggedRelease>, PublicationError> {
     pending_predecessor(
         repository.path(),
         candidate.parse().unwrap(),
@@ -2668,9 +2668,11 @@ fn finds_the_pending_release_below_several_commits() {
     let pending = repository.commit_version("0.2.0", "🔖 Release v0.2.0");
     let missing = fake_tag(RemoteState::Missing);
 
-    let at_head = find_pending(&repository, &pending, "0.2.0", &missing)
-        .unwrap()
-        .unwrap();
+    let Some(UntaggedRelease::Pending(at_head)) =
+        find_pending(&repository, &pending, "0.2.0", &missing).unwrap()
+    else {
+        panic!("the release commit is pending");
+    };
     assert_eq!(at_head.commit.to_string(), pending);
     assert_eq!(at_head.tag, "v0.2.0");
     assert!(at_head.pending);
@@ -2679,9 +2681,11 @@ fn finds_the_pending_release_below_several_commits() {
     repository.commit("🐛 Fix a bug");
     repository.write("feature", "extended\n");
     let candidate = repository.commit("✨ Extend the feature");
-    let below = find_pending(&repository, &candidate, "0.2.0", &missing)
-        .unwrap()
-        .unwrap();
+    let Some(UntaggedRelease::Pending(below)) =
+        find_pending(&repository, &candidate, "0.2.0", &missing).unwrap()
+    else {
+        panic!("the release commit is pending");
+    };
     assert_eq!(below.commit.to_string(), pending);
     assert_eq!(below.version, Version::new(0, 2, 0));
     assert!(below.pending);
@@ -2695,11 +2699,11 @@ fn a_release_with_a_tag_is_not_pending() {
     repository.write("feature", "implemented\n");
     let candidate = repository.commit("✨ Add a feature");
 
-    // Published, but the tag was not fetched: the usual missing-tag error applies.
+    // Published, but the tag was not fetched: the remote tag stands in for it.
     let published = fake_tag(RemoteState::Matching);
     assert_eq!(
         find_pending(&repository, &candidate, "0.1.0", &published).unwrap(),
-        None
+        Some(UntaggedRelease::Published(release.parse().unwrap()))
     );
 
     let conflicting = fake_tag(RemoteState::Conflicting("tag points elsewhere".into()));
