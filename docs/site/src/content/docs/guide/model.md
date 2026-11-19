@@ -50,7 +50,8 @@ stateDiagram-v2
 
 Presswerk cannot tell whether the checks of a pending release are still running or have failed. It
 reports the pending commit and refuses to prepare another release until the pending one is published
-or reverted.
+or reverted. On the pending release commit itself, `prepare` has nothing to do and succeeds. `plan`
+treats the pending release as the previous one and shows what would follow it.
 
 ## The strict boundary
 
