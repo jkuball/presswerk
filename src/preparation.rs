@@ -4,7 +4,7 @@ use crate::analysis::{
 use crate::declaration::{Publishers, ReleaseDeclaration, Tag};
 use crate::evaluation::{EvaluatedReleaseDeclaration, evaluate_release_declaration};
 use crate::oci::ForeignAlias;
-use crate::publication::{VerifiedPredecessor, verify_predecessor_with_trust};
+use crate::publication::{VerifiedPredecessor, short_oid, verify_head_predecessor};
 use crate::release_commit::{
     ReleaseFile, TrustedPredecessor, create_release_commit, release_subject,
 };
@@ -51,6 +51,16 @@ pub struct ReleasePlan {
     pub unchecked_aliases: Vec<(String, String)>,
 }
 
+impl ReleasePlan {
+    /// The previous release if it is a release commit whose tag is not published yet.
+    #[must_use]
+    pub fn pending_release(&self) -> Option<&VerifiedPredecessor> {
+        self.previous_release
+            .as_ref()
+            .filter(|previous| previous.pending)
+    }
+}
+
 pub fn build_head_release_plan(
     repository_path: impl AsRef<Path>,
     analyzer: &dyn Analyzer,
@@ -72,7 +82,7 @@ pub fn build_head_release_plan_with_trust(
         analyzer,
         &date,
         |candidate, previous_version, declaration| {
-            verify_predecessor_with_trust(
+            verify_head_predecessor(
                 repository_path,
                 candidate,
                 previous_version,
@@ -286,7 +296,19 @@ pub fn build_release_plan(
     })
 }
 
+/// Create the release commit of the plan, or return `None` if there is nothing to prepare, such as
+/// when `HEAD` is itself a pending release.
 pub fn prepare_release(plan: &ReleasePlan) -> Result<Option<Oid>> {
+    if let Some(pending) = plan.pending_release() {
+        if pending.commit == plan.commit {
+            return Ok(None);
+        }
+        bail!(
+            "pending release {} at {} is not published yet; publish it before preparing the next one",
+            pending.tag,
+            short_oid(pending.commit)
+        );
+    }
     let Some(subject) = &plan.release_subject else {
         return Ok(None);
     };
@@ -383,6 +405,13 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
     let mut output = String::new();
     let _ = writeln!(output, "commit             {}", plan.commit);
     match &plan.previous_release {
+        Some(previous) if previous.pending => {
+            let _ = writeln!(
+                output,
+                "previous release   {} ({}, pending: not published yet)",
+                previous.tag, previous.commit
+            );
+        }
         Some(previous) => {
             let _ = writeln!(
                 output,

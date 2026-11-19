@@ -85,6 +85,7 @@ fn predecessor(repository: &GitRepo, version: &str) -> VerifiedPredecessor {
         version: Version::parse(version).unwrap(),
         tag,
         commit: Oid::from_str(&repository.git(["rev-parse", &reference])).unwrap(),
+        pending: false,
     }
 }
 

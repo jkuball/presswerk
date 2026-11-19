@@ -401,3 +401,164 @@ fn version_flag_prints_cargo_version() {
         format!("presswerk {}\n", env!("CARGO_PKG_VERSION"))
     );
 }
+
+/// A repository whose first release commit v0.1.0 is prepared and pushed but not published, with
+/// the remote that lacks its tag.
+fn pending_repository() -> (GitRepo, String, tempfile::TempDir) {
+    let repository = release_repository();
+    let remote = tempfile::tempdir().unwrap();
+    repository.git(["init", "--quiet", "--bare", remote.path().to_str().unwrap()]);
+    repository.git(["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    let prepared = presswerk_in(repository.path(), &["prepare"]);
+    assert!(
+        prepared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared.stderr)
+    );
+    let pending = repository.head();
+    repository.git(["push", "--quiet", "origin", "HEAD:refs/heads/main"]);
+    (repository, pending, remote)
+}
+
+#[test]
+fn prepare_has_nothing_to_do_at_a_pending_release() {
+    let (repository, pending, _remote) = pending_repository();
+
+    let plan = presswerk_in(repository.path(), &["plan"]);
+    let stdout = String::from_utf8_lossy(&plan.stdout);
+    assert!(
+        plan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plan.stderr)
+    );
+    assert!(
+        stdout.contains(&format!(
+            "previous release   v0.1.0 ({pending}, pending: not published yet)\n"
+        )),
+        "{stdout}"
+    );
+    assert!(stdout.contains("analyzed commits   0\n"), "{stdout}");
+    assert!(
+        stdout.contains("next version       none (no release-worthy commits)\n"),
+        "{stdout}"
+    );
+
+    let prepared = presswerk_in(repository.path(), &["prepare"]);
+    assert!(
+        prepared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&prepared.stdout),
+        format!(
+            "Nothing to prepare: pending release v0.1.0 at {} is not published yet.\n",
+            &pending[..7]
+        )
+    );
+    assert_eq!(repository.head(), pending);
+    assert_eq!(repository.git(["status", "--short"]), "");
+}
+
+#[test]
+fn plan_builds_on_a_pending_release_that_prepare_refuses_to_build_on() {
+    let (repository, pending, _remote) = pending_repository();
+    // A pull request branched off before the release commit, merged the way pull request CI does.
+    repository.git(["checkout", "--quiet", "-b", "feature", "HEAD~1"]);
+    repository.write("second", "implemented\n");
+    repository.commit("✨ Add the second feature");
+    repository.write("third", "implemented\n");
+    repository.commit("✨ Add the third feature");
+    repository.git(["checkout", "--quiet", "-"]);
+    repository.git([
+        "merge",
+        "--quiet",
+        "--no-ff",
+        "--message",
+        "🔀 Merge the feature",
+        "feature",
+    ]);
+    let merge = repository.head();
+
+    let plan = presswerk_in(repository.path(), &["plan"]);
+    let stdout = String::from_utf8_lossy(&plan.stdout);
+    assert!(
+        plan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plan.stderr)
+    );
+    assert!(
+        stdout.contains(&format!(
+            "previous release   v0.1.0 ({pending}, pending: not published yet)\n"
+        )),
+        "{stdout}"
+    );
+    assert!(stdout.contains("analyzed commits   2\n"), "{stdout}");
+    assert!(stdout.contains("✨ Add the second feature"), "{stdout}");
+    assert!(stdout.contains("✨ Add the third feature"), "{stdout}");
+    assert!(!stdout.contains("✨ Add the first feature"), "{stdout}");
+    assert!(stdout.contains("next version       0.2.0\n"), "{stdout}");
+
+    let refused = presswerk_in(repository.path(), &["prepare"]);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{stderr}");
+    assert_eq!(
+        stderr,
+        format!(
+            "error: pending release v0.1.0 at {} is not published yet; publish it before preparing the next one\n",
+            &pending[..7]
+        )
+    );
+    assert_eq!(repository.head(), merge);
+
+    let trust = format!("v0.1.0={pending}");
+    let trusted = presswerk_in(
+        repository.path(),
+        &["prepare", "--trust-predecessor", &trust],
+    );
+    let stderr = String::from_utf8_lossy(&trusted.stderr);
+    assert!(!trusted.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "--trust-predecessor is unnecessary: pending release v0.1.0 at {} is not published yet",
+            &pending[..7]
+        )),
+        "{stderr}"
+    );
+    assert_eq!(repository.head(), merge);
+}
+
+#[test]
+fn a_release_tagged_on_only_one_side_is_not_pending() {
+    let (repository, pending, _remote) = pending_repository();
+    repository.write("second", "implemented\n");
+    repository.commit("✨ Add the second feature");
+
+    // Tagged locally, but the push of the tag failed.
+    repository.git([
+        "tag",
+        "--annotate",
+        "--message",
+        "v0.1.0",
+        "v0.1.0",
+        &pending,
+    ]);
+    let plan = presswerk_in(repository.path(), &["plan"]);
+    let stderr = String::from_utf8_lossy(&plan.stderr);
+    assert!(!plan.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("previous release tag \"v0.1.0\" is missing from the remote"),
+        "{stderr}"
+    );
+
+    // Published, but the tag was not fetched.
+    repository.git(["push", "--quiet", "origin", "v0.1.0"]);
+    repository.git(["tag", "--delete", "v0.1.0"]);
+    let plan = presswerk_in(repository.path(), &["plan"]);
+    let stderr = String::from_utf8_lossy(&plan.stderr);
+    assert!(!plan.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("previous release tag \"v0.1.0\" is missing\n"),
+        "{stderr}"
+    );
+}

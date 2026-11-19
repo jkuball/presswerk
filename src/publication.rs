@@ -1961,6 +1961,8 @@ pub struct VerifiedPredecessor {
     pub version: Version,
     pub tag: String,
     pub commit: Oid,
+    /// The release commit is not published yet: its tag is missing locally and on the remote.
+    pub pending: bool,
 }
 
 pub fn verify_predecessor(
@@ -1997,6 +1999,159 @@ pub fn verify_predecessor_with_trust(
         trusted_predecessor,
         true,
     )
+}
+
+/// Verify the predecessor of `HEAD` for `plan` and `prepare`. Unlike [`verify_predecessor_with_trust`],
+/// it accepts a pending release: a release commit of `previous_version` whose tag exists neither
+/// locally nor on the remote. Its own declaration stands in for the missing tag, since `publish`
+/// will tag exactly that commit.
+pub fn verify_head_predecessor(
+    repository_path: &Path,
+    candidate: Oid,
+    previous_version: &Version,
+    current_declaration: &ReleaseDeclaration,
+    remote: &str,
+    trusted_predecessor: Option<&TrustedPredecessor>,
+) -> Result<Option<VerifiedPredecessor>, PublicationError> {
+    let tag_publisher = GitTagPublisher::new(repository_path, remote);
+    let pending = pending_predecessor(
+        repository_path,
+        candidate,
+        previous_version,
+        current_declaration,
+        &tag_publisher,
+        |commit| {
+            match evaluate_release_declaration(repository_path, &commit.to_string()) {
+                Ok(evaluated) => Ok(Some(evaluated.declaration)),
+                // A commit without a declaration cannot be the parent of a Presswerk release commit.
+                Err(
+                    EvaluationError::MissingDeclaration(_) | EvaluationError::MissingLockFile(_),
+                ) => Ok(None),
+                Err(error) => Err(PublicationError::new(error.to_string())),
+            }
+        },
+    )?;
+    let Some(pending) = pending else {
+        return verify_predecessor_with_trust(
+            repository_path,
+            candidate,
+            previous_version,
+            current_declaration,
+            remote,
+            trusted_predecessor,
+        );
+    };
+    if trusted_predecessor.is_some() {
+        return Err(PublicationError::new(format!(
+            "--trust-predecessor is unnecessary: pending release {} at {} is not published yet",
+            pending.tag,
+            short_oid(pending.commit)
+        )));
+    }
+    Ok(Some(pending))
+}
+
+/// Find the pending release that `candidate` builds on, if `previous_version` has no tag yet.
+///
+/// The pending release commit is the first-parent ancestor of `candidate` where `previous_version`
+/// starts, so its parent carries a lower version. `declaration_at` reads the declaration of a
+/// commit, or `None` if the commit has none.
+pub fn pending_predecessor<D>(
+    repository_path: &Path,
+    candidate: Oid,
+    previous_version: &Version,
+    current_declaration: &ReleaseDeclaration,
+    tag_publisher: &dyn TagPublisher,
+    mut declaration_at: D,
+) -> Result<Option<VerifiedPredecessor>, PublicationError>
+where
+    D: FnMut(Oid) -> Result<Option<ReleaseDeclaration>, PublicationError>,
+{
+    // The implicit 0.0.0 baseline is never released, so it cannot be pending. A candidate with
+    // another version than its predecessor builds on a release commit below it, never a pending one.
+    if *previous_version == Version::new(0, 0, 0)
+        || current_declaration.version != *previous_version
+    {
+        return Ok(None);
+    }
+    let repository = Repository::open(repository_path).map_err(|error| {
+        PublicationError::new(format!("could not open Git repository: {error}"))
+    })?;
+    let previous_tag = current_declaration
+        .tag
+        .render(previous_version)
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+    if local_tagged_commit(&repository, &previous_tag)?.is_some() {
+        return Ok(None);
+    }
+
+    let first_parent = |commit: Oid| -> Result<Option<Oid>, PublicationError> {
+        let commit = repository.find_commit(commit).map_err(|error| {
+            PublicationError::new(format!("could not read Git commit {commit}: {error}"))
+        })?;
+        if commit.parent_count() == 0 {
+            return Ok(None);
+        }
+        commit.parent_id(0).map(Some).map_err(|error| {
+            PublicationError::new(format!(
+                "could not read first parent of Git commit {}: {error}",
+                commit.id()
+            ))
+        })
+    };
+    let mut pending = candidate;
+    let mut pending_declaration = current_declaration.clone();
+    loop {
+        // A root commit is where the project started, not a release commit.
+        let Some(parent) = first_parent(pending)? else {
+            return Ok(None);
+        };
+        let Some(parent_declaration) = declaration_at(parent)? else {
+            return Ok(None);
+        };
+        if parent_declaration.version == *previous_version {
+            pending = parent;
+            pending_declaration = parent_declaration;
+            continue;
+        }
+        if parent_declaration.version > *previous_version {
+            return Ok(None);
+        }
+        break;
+    }
+    let declared_tag = pending_declaration
+        .tag
+        .render(previous_version)
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+    if declared_tag != previous_tag {
+        return Err(PublicationError::new(format!(
+            "pending release at {pending} declares tag {declared_tag:?}, expected {previous_tag:?}"
+        )));
+    }
+    let release = Release {
+        commit: pending.to_string(),
+        version: previous_version.clone(),
+        tag: previous_tag.clone(),
+        notes: String::new(),
+    };
+    match tag_publisher.state(&release)? {
+        RemoteState::Missing => {}
+        // The release is published; only the local tag is missing.
+        RemoteState::Matching => return Ok(None),
+        RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
+    }
+    Ok(Some(VerifiedPredecessor {
+        version: previous_version.clone(),
+        tag: previous_tag,
+        commit: pending,
+        pending: true,
+    }))
+}
+
+pub(crate) fn short_oid(commit: Oid) -> String {
+    let mut commit = commit.to_string();
+    commit.truncate(7);
+    commit
 }
 
 fn verify_predecessor_with_trust_mode(
@@ -2292,6 +2447,7 @@ where
             version: previous_version.clone(),
             tag: previous_tag,
             commit: previous_commit,
+            pending: false,
         }));
     }
 
@@ -2393,6 +2549,7 @@ fn verified_remote_predecessor(
         version: previous_version.clone(),
         tag: previous_tag,
         commit: previous_commit,
+        pending: false,
     })
 }
 

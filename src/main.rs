@@ -92,7 +92,14 @@ fn run() -> Result<bool> {
                     ]);
                     print!("{}", render_steps(&rows));
                 }
-                None => println!("Nothing to prepare."),
+                None => match plan.pending_release() {
+                    Some(pending) => println!(
+                        "Nothing to prepare: pending release {} at {} is not published yet.",
+                        pending.tag,
+                        short_commit(&pending.commit.to_string())
+                    ),
+                    None => println!("Nothing to prepare."),
+                },
             }
         }
         Command::Publish {
