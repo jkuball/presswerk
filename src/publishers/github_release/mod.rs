@@ -166,8 +166,8 @@ impl PublisherType for GithubRelease {
 }
 
 impl Publisher for GithubRelease {
-    fn describe(&self, _version: &Version, tag: &str) -> Description {
-        Description {
+    fn describe(&self, _version: &Version, tag: &str) -> Result<Description, String> {
+        Ok(Description {
             target: self.declaration.repository.clone(),
             // Store paths are left out: the release commit's artifacts get their own paths.
             items: std::iter::once(("release".into(), tag.into()))
@@ -178,7 +178,7 @@ impl Publisher for GithubRelease {
                         .map(|asset| ("asset".into(), asset.clone())),
                 )
                 .collect(),
-        }
+        })
     }
 
     fn artifacts(&self) -> Vec<(String, String)> {
@@ -782,8 +782,8 @@ impl GithubPublisher {
 
 /// A GitHub Release publisher with its own client, such as one for a test server.
 impl Publisher for GithubPublisher {
-    fn describe(&self, _version: &Version, tag: &str) -> Description {
-        Description {
+    fn describe(&self, _version: &Version, tag: &str) -> Result<Description, String> {
+        Ok(Description {
             target: self.repository.clone(),
             items: std::iter::once(("release".into(), tag.into()))
                 .chain(
@@ -792,7 +792,7 @@ impl Publisher for GithubPublisher {
                         .map(|asset| ("asset".into(), asset.name.clone())),
                 )
                 .collect(),
-        }
+        })
     }
 
     fn completeness(

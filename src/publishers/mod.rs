@@ -28,8 +28,10 @@ pub const TYPES: &[Registration] = &[
 
 /// One declared publisher of a release, such as one GitHub Release or one OCI repository.
 pub trait Publisher: Send + Sync {
-    /// What the release writes, for `presswerk plan`.
-    fn describe(&self, version: &Version, tag: &str) -> Description;
+    /// What the release of `version` writes, for `presswerk plan`. Pure: it fails if the
+    /// declaration cannot express that version, such as a tag template that renders an invalid
+    /// tag, so `plan`, `prepare`, and `publish` stop before anything is written.
+    fn describe(&self, version: &Version, tag: &str) -> Result<Description, String>;
 
     /// The local files the release needs, as store paths with a label, such as `asset tool`.
     /// `publish` fetches them before anything is written.

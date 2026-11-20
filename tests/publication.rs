@@ -47,11 +47,11 @@ fn instance<T: serde::de::DeserializeOwned>(
 /// The parts of a fake publisher that the test does not use.
 macro_rules! untested_remote {
     () => {
-        fn describe(&self, _version: &Version, _tag: &str) -> Description {
-            Description {
+        fn describe(&self, _version: &Version, _tag: &str) -> Result<Description, String> {
+            Ok(Description {
                 target: String::new(),
                 items: Vec::new(),
-            }
+            })
         }
 
         fn completeness(
@@ -1296,6 +1296,7 @@ fn predecessor_verification_uses_the_tagged_commits_own_publishers() {
             repositories.borrow_mut().push(
                 node.publisher
                     .describe(&release.version, &release.tag)
+                    .unwrap()
                     .target,
             );
             Ok(Completeness::Complete)

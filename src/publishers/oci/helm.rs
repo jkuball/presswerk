@@ -155,15 +155,18 @@ pub fn completeness_with(
     })
 }
 
-fn describe(repository: &str, version: &Version) -> Description {
-    Description {
+fn describe(repository: &str, version: &Version) -> Result<Description, String> {
+    Ok(Description {
         target: repository.into(),
-        items: vec![("tag".into(), format!("{repository}:{}", tag(version)))],
-    }
+        items: vec![(
+            "tag".into(),
+            format!("{repository}:{}", validate_tag(version)?),
+        )],
+    })
 }
 
 impl Publisher for OciHelm {
-    fn describe(&self, version: &Version, _tag: &str) -> Description {
+    fn describe(&self, version: &Version, _tag: &str) -> Result<Description, String> {
         describe(&self.declaration.repository, version)
     }
 
@@ -435,7 +438,7 @@ impl OciHelmPublisher {
 
 /// An OCI Helm publisher with its own registry client, such as one for a test registry.
 impl Publisher for OciHelmPublisher {
-    fn describe(&self, version: &Version, _tag: &str) -> Description {
+    fn describe(&self, version: &Version, _tag: &str) -> Result<Description, String> {
         describe(&self.repository, version)
     }
 
@@ -908,6 +911,22 @@ mod tests {
             wrong_root.contains("root directory \"other\""),
             "{wrong_root}"
         );
+    }
+
+    #[test]
+    fn a_version_whose_tag_is_too_long_cannot_be_described() {
+        let helm = OciHelm::from_declaration(&json!({
+            "repository": "ghcr.io/owner/charts/project",
+            "chart": "/nix/store/abc-project.tgz",
+            "username": { "value": "user" },
+            "password": { "secret": { "env": "REGISTRY_TOKEN" } }
+        }))
+        .unwrap();
+        let version = Version::parse(&format!("1.2.3-{}", "a".repeat(123))).unwrap();
+
+        let error = helm.describe(&version, "v1").unwrap_err();
+        assert!(error.contains("longer than 128 characters"), "{error}");
+        assert!(helm.describe(&Version::new(1, 2, 3), "v1.2.3").is_ok());
     }
 
     #[test]

@@ -12,12 +12,35 @@ use presswerk::publication::{
 use presswerk::publishers::shared::secrets::redact;
 use presswerk::release_commit::TrustedPredecessor;
 
+// Everything the CLI prints goes through these, so no secret value it read ever reaches the
+// output, whichever part of the output it would have ended up in.
+macro_rules! out {
+    ($($argument:tt)*) => {
+        print!("{}", redact(&format!($($argument)*)))
+    };
+}
+
+macro_rules! outln {
+    () => {
+        println!()
+    };
+    ($($argument:tt)*) => {
+        println!("{}", redact(&format!($($argument)*)))
+    };
+}
+
+macro_rules! errln {
+    ($($argument:tt)*) => {
+        eprintln!("{}", redact(&format!($($argument)*)))
+    };
+}
+
 fn main() -> std::process::ExitCode {
     match run() {
         Ok(true) => std::process::ExitCode::SUCCESS,
         Ok(false) => std::process::ExitCode::FAILURE,
         Err(error) => {
-            eprintln!("error: {}", redact(&format!("{error:#}")));
+            errln!("error: {error:#}");
             std::process::ExitCode::FAILURE
         }
     }
@@ -27,7 +50,7 @@ fn run() -> Result<bool> {
     let cli = Cli::parse();
     let Some(command) = cli.command else {
         Cli::command().print_help()?;
-        println!();
+        outln!();
         return Ok(true);
     };
 
@@ -37,13 +60,13 @@ fn run() -> Result<bool> {
             let dirty = is_worktree_dirty(".")?;
             let plan = build_head_release_plan(".", &GitCliffAnalyzer)?;
             if dirty {
-                eprintln!(
+                errln!(
                     "warning: working tree is dirty; showing the plan for HEAD ({}) without local changes",
                     short_commit(&plan.commit.to_string())
                 );
             }
             print_warnings(&plan);
-            print!("{}", render_plan(&plan));
+            out!("{}", render_plan(&plan));
         }
         Command::Prepare { trust_predecessor } => {
             let dirty = is_worktree_dirty(".")?;
@@ -53,7 +76,7 @@ fn run() -> Result<bool> {
                 .transpose()?;
             let plan = build_head_preparation_plan(".", &GitCliffAnalyzer, trusted_predecessor)?;
             if dirty {
-                eprintln!(
+                errln!(
                     "warning: working tree is dirty; preparing HEAD ({}) without local changes",
                     short_commit(&plan.commit.to_string())
                 );
@@ -63,7 +86,7 @@ fn run() -> Result<bool> {
                 Some(commit) => {
                     let version = plan.next_version.as_ref().expect("release version exists");
                     let tag = plan.next_tag.as_ref().expect("release tag exists");
-                    println!(
+                    outln!(
                         "Preparing {tag} on {}",
                         short_commit(&plan.commit.to_string())
                     );
@@ -90,15 +113,15 @@ fn run() -> Result<bool> {
                             .clone()
                             .expect("release subject exists"),
                     ]);
-                    print!("{}", render_steps(&rows));
+                    out!("{}", render_steps(&rows));
                 }
                 None => match plan.pending_release() {
-                    Some(pending) => println!(
+                    Some(pending) => outln!(
                         "Nothing to prepare: pending release {} at {} is not published yet.",
                         pending.tag,
                         short_commit(&pending.commit.to_string())
                     ),
-                    None => println!("Nothing to prepare."),
+                    None => outln!("Nothing to prepare."),
                 },
             }
         }
@@ -107,7 +130,7 @@ fn run() -> Result<bool> {
             fail_fast,
             jobs,
         } => match publish(".", &revision, jobs, fail_fast, &mut print_publish_event)? {
-            PublishOutcome::NothingToDo { commit } => println!(
+            PublishOutcome::NothingToDo { commit } => outln!(
                 "Nothing to publish: {} is not a release commit.",
                 short_commit(&commit)
             ),
@@ -115,7 +138,7 @@ fn run() -> Result<bool> {
                 let commit = short_commit(&report.commit);
                 let warnings = report.warnings();
                 if !warnings.is_empty() {
-                    eprintln!(
+                    errln!(
                         "warning: {} could not be updated; {} is complete, publish it again to repair",
                         warnings
                             .iter()
@@ -128,7 +151,7 @@ fn run() -> Result<bool> {
                 if !report.complete() {
                     let failed = report.failed();
                     let skipped = report.skipped();
-                    println!(
+                    outln!(
                         "Published {} from {commit} partially; {failed} {}, {skipped} skipped.",
                         report.tag,
                         if failed == 1 {
@@ -139,12 +162,12 @@ fn run() -> Result<bool> {
                     );
                     successful = false;
                 } else if report.changed_nothing() {
-                    println!(
+                    outln!(
                         "{} from {commit} was already released; nothing changed.",
                         report.tag
                     );
                 } else {
-                    println!("Released {} from {commit}.", report.tag);
+                    outln!("Released {} from {commit}.", report.tag);
                 }
             }
         },
@@ -157,7 +180,7 @@ fn run() -> Result<bool> {
 /// predecessor.
 fn print_warnings(plan: &ReleasePlan) {
     for warning in &plan.warnings {
-        eprintln!("{}", redact(&warning.to_string()));
+        errln!("{warning}");
     }
 }
 
@@ -166,7 +189,7 @@ fn print_warnings(plan: &ReleasePlan) {
 fn print_publish_event(event: PublishEvent<'_>) {
     let (kind, status, target) = match event {
         PublishEvent::Started { tag, commit } => {
-            println!("Publishing {tag} from {}", short_commit(commit));
+            outln!("Publishing {tag} from {}", short_commit(commit));
             return;
         }
         PublishEvent::Tag { tag, step } => {
@@ -215,7 +238,7 @@ fn print_publish_event(event: PublishEvent<'_>) {
             }
         }
     };
-    println!("  {kind:<9}  {status:<17}  {}", redact(&target));
+    outln!("  {kind:<9}  {status:<17}  {target}");
 }
 
 /// Renders one indented line per step with aligned kind and target columns.

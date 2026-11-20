@@ -652,6 +652,9 @@ pub fn publish_to_remote(
         .map_err(|error| PublicationError::new(error.to_string()))?;
     let commit = evaluated.commit;
     let declaration = evaluated.declaration;
+    // Read the secrets first, so that nothing printed from here on can show one. Whether all are
+    // set only matters for a release commit.
+    let session = Session::for_declaration(&declaration);
     let commit_id = commit.to_string();
     let candidate_version = declaration.version.clone();
     let classification =
@@ -683,9 +686,8 @@ pub fn publish_to_remote(
         .map_err(|error| PublicationError::new(error.to_string()))?;
     crate::publishers::check_claims(&declaration.publishers, &declaration.version)
         .map_err(PublicationError::new)?;
-    // Every declared secret is resolved up front, so a missing one stops before anything is
+    // Every declared secret was resolved up front, so a missing one stops before anything is
     // written, even if this run would not have needed it.
-    let session = Session::for_declaration(&declaration);
     let missing = session.secrets.missing();
     if !missing.is_empty() {
         return Err(PublicationError::new(format!(
@@ -716,6 +718,12 @@ pub fn publish_to_remote(
         notes,
     };
     let tag_publisher = GitTagPublisher::new(repository_path, remote);
+    // Every publisher must be able to express this version before anything is written.
+    for node in &publishers {
+        node.publisher
+            .describe(&release.version, &release.tag)
+            .map_err(|error| PublicationError::new(format!("{}: {error}", node.name)))?;
+    }
 
     // Every artifact must be obtainable without building before anything is written.
     let artifacts: Vec<_> = publishers

@@ -453,6 +453,7 @@ fn uses_the_exact_predecessor_declaration_for_release_state_checks() {
                     checked_repositories.borrow_mut().push(
                         node.publisher
                             .describe(&release.version, &release.tag)
+                            .unwrap()
                             .target,
                     );
                     Ok(Completeness::Complete)
@@ -782,6 +783,34 @@ fn oci_image_publisher(tags: &[&str], aliases: &[&str]) -> OciImageDeclaration {
         username: Credential::env("REGISTRY_USERNAME"),
         password: Credential::env("REGISTRY_TOKEN"),
     }
+}
+
+#[test]
+fn the_plan_rejects_a_tag_that_only_the_next_version_makes_invalid() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.9.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.9.0");
+    // 128 characters with the sample version 1.2.3 and with 0.9.0, 129 with the next, 0.10.0.
+    let template = format!("{}{{version}}", "a".repeat(123));
+    evaluated.declaration.publishers.insert(
+        "oci-image",
+        "default",
+        oci_image_publisher(&[&template], &[]),
+    );
+
+    let error = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.starts_with("oci-image.default: OCI tag"), "{error}");
+    assert!(error.contains("at most 128 characters"), "{error}");
 }
 
 #[test]

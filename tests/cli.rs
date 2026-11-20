@@ -289,6 +289,58 @@ fn publish_without_a_declared_secret_fails_before_writing_anything() {
     assert_eq!(repository.git(["ls-remote", "--tags", &remote_path]), "");
 }
 
+/// A secret value that must never appear in what the CLI prints.
+const SENTINEL: &str = "presswerk-sentinel-4711";
+
+#[test]
+fn plan_never_prints_a_secret_value() {
+    let repository = release_repository();
+    repository.write("other", "implemented\n");
+    repository.commit(&format!("✨ Add {SENTINEL}"));
+
+    let output = presswerk_in_with(
+        repository.path(),
+        &["plan"],
+        &[("GITHUB_TOKEN", Path::new(SENTINEL))],
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(stdout.contains("✨ Add [redacted]"), "{stdout}");
+    assert!(!stdout.contains(SENTINEL) && !stderr.contains(SENTINEL));
+}
+
+#[test]
+fn publish_errors_never_print_a_secret_value() {
+    let repository = release_repository();
+    let prepared = presswerk_in(repository.path(), &["prepare"]);
+    assert!(
+        prepared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared.stderr)
+    );
+    // The remote is unreachable, and Git names it in the error.
+    repository.git([
+        "remote",
+        "add",
+        "origin",
+        &format!("/nonexistent/{SENTINEL}"),
+    ]);
+
+    let output = presswerk_in_with(
+        repository.path(),
+        &["publish"],
+        &[("GITHUB_TOKEN", Path::new(SENTINEL))],
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("/nonexistent/[redacted]"), "{stderr}");
+    assert!(!stdout.contains(SENTINEL) && !stderr.contains(SENTINEL));
+}
+
 #[test]
 fn publish_without_a_git_identity_fails_before_writing_anything() {
     let repository = release_repository();

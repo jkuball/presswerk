@@ -174,23 +174,20 @@ fn describe(
     tags: &[String],
     aliases: &[String],
     version: &Version,
-) -> Description {
+) -> Result<Description, String> {
     // Store paths are left out: the release commit's images get their own paths.
     let images = platforms.map(|platform| ("image".to_owned(), platform));
-    let tags = render_tags(tags, aliases, version)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|tag| {
-            let kind = match tag {
-                OciTag::Version(_) => "tag",
-                OciTag::Alias(_) => "alias",
-            };
-            (kind.to_owned(), tag.name().to_owned())
-        });
-    Description {
+    let tags = render_tags(tags, aliases, version)?.into_iter().map(|tag| {
+        let kind = match tag {
+            OciTag::Version(_) => "tag",
+            OciTag::Alias(_) => "alias",
+        };
+        (kind.to_owned(), tag.name().to_owned())
+    });
+    Ok(Description {
         target: repository.into(),
         items: images.chain(tags).collect(),
-    }
+    })
 }
 
 /// Whether every version tag of `release` points to its image index, as `manifest` reads the
@@ -227,7 +224,7 @@ pub fn completeness_with(
 }
 
 impl Publisher for OciImage {
-    fn describe(&self, version: &Version, _tag: &str) -> Description {
+    fn describe(&self, version: &Version, _tag: &str) -> Result<Description, String> {
         let declaration = &self.declaration;
         describe(
             &declaration.repository,
@@ -1514,7 +1511,7 @@ pub fn foreign_aliases(
 
 /// An OCI image publisher with its own registry client, such as one for a test registry.
 impl Publisher for OciImagePublisher {
-    fn describe(&self, version: &Version, _tag: &str) -> Description {
+    fn describe(&self, version: &Version, _tag: &str) -> Result<Description, String> {
         describe(
             &self.repository,
             self.platforms.keys().map(ToString::to_string),
