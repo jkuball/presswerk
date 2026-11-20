@@ -1,14 +1,16 @@
-use presswerk::declaration::{Compression, Username};
 use presswerk::publication::{
     ArtifactKind, ArtifactStep, AssetStep, Publisher, PublisherState, Release,
 };
+use presswerk::publishers::Context;
 use presswerk::publishers::oci::image::{
-    ForeignAlias, Image, OciImagePublisher, foreign_aliases, image_index, missing_credentials,
+    ALIAS, Compression, ForeignAlias, IMAGE, Image, OciImageDeclaration, OciImagePublisher,
+    foreign_aliases, image_index, missing_credentials,
 };
 use presswerk::publishers::oci::{
-    BlobData, Credentials, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, RegistryClient,
+    BlobData, Credentials, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, RegistryClient, TAG,
     ZSTD_LAYER_MEDIA_TYPE,
 };
+use presswerk::publishers::shared::secrets::{Token, Username};
 use semver::Version;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -798,14 +800,22 @@ fn pushes_a_new_release_and_a_rerun_writes_nothing() {
     let publisher = registry.publisher(images.platforms(), &["{version}"], &["latest"]);
     let release = release("1.0.0");
 
-    assert_eq!(publisher.state(&release).unwrap(), PublisherState::Missing);
+    assert_eq!(
+        publisher.state(&release, &Context::detached()).unwrap(),
+        PublisherState::Missing
+    );
     // Each step is reported as soon as it is complete, after its writes and before the next one's.
-    let mut streamed = Vec::new();
+    let streamed = Mutex::new(Vec::new());
+    let record = |step: &ArtifactStep| {
+        streamed
+            .lock()
+            .unwrap()
+            .push((step.clone(), registry.writes().len()));
+    };
     let steps = publisher
-        .publish_with_progress(&release, &mut |step| {
-            streamed.push((step.clone(), registry.writes().len()));
-        })
+        .publish(&release, &Context::detached().with_progress(&record))
         .unwrap();
+    let streamed = streamed.into_inner().unwrap();
     assert_eq!(
         streamed.iter().map(|(step, _)| step).collect::<Vec<_>>(),
         steps.iter().collect::<Vec<_>>()
@@ -817,18 +827,10 @@ fn pushes_a_new_release_and_a_rerun_writes_nothing() {
     assert_eq!(
         steps,
         [
-            step(ArtifactKind::Image, "linux/amd64", AssetStep::Uploaded),
-            step(ArtifactKind::Image, "linux/arm64", AssetStep::Uploaded),
-            step(
-                ArtifactKind::Tag,
-                &format!("{repository}:1.0.0"),
-                AssetStep::Uploaded
-            ),
-            step(
-                ArtifactKind::Alias,
-                &format!("{repository}:latest"),
-                AssetStep::Uploaded
-            ),
+            step(IMAGE, "linux/amd64", AssetStep::Uploaded),
+            step(IMAGE, "linux/arm64", AssetStep::Uploaded),
+            step(TAG, &format!("{repository}:1.0.0"), AssetStep::Uploaded),
+            step(ALIAS, &format!("{repository}:latest"), AssetStep::Uploaded),
         ]
     );
     let (_, index_digest) = image_index(&images.images(), &release.version);
@@ -847,33 +849,30 @@ fn pushes_a_new_release_and_a_rerun_writes_nothing() {
     // A retry with freshly loaded images reproduces the same digests and writes nothing.
     let writes = registry.writes().len();
     let rerun = registry.publisher(images.platforms(), &["{version}"], &["latest"]);
-    assert_eq!(rerun.state(&release).unwrap(), PublisherState::Published);
     assert_eq!(
-        rerun.complete_steps(&release).unwrap(),
+        rerun.state(&release, &Context::detached()).unwrap(),
+        PublisherState::Published
+    );
+    assert_eq!(
+        rerun
+            .complete_steps(&release, &Context::detached())
+            .unwrap(),
         [
+            step(IMAGE, "linux/amd64", AssetStep::AlreadyUploaded),
+            step(IMAGE, "linux/arm64", AssetStep::AlreadyUploaded),
             step(
-                ArtifactKind::Image,
-                "linux/amd64",
-                AssetStep::AlreadyUploaded
-            ),
-            step(
-                ArtifactKind::Image,
-                "linux/arm64",
-                AssetStep::AlreadyUploaded
-            ),
-            step(
-                ArtifactKind::Tag,
+                TAG,
                 &format!("{repository}:1.0.0"),
                 AssetStep::AlreadyUploaded
             ),
             step(
-                ArtifactKind::Alias,
+                ALIAS,
                 &format!("{repository}:latest"),
                 AssetStep::AlreadyUploaded
             ),
         ]
     );
-    rerun.publish(&release).unwrap();
+    rerun.publish(&release, &Context::detached()).unwrap();
     assert_eq!(registry.writes().len(), writes);
 }
 
@@ -896,7 +895,7 @@ fn layer_uploads_are_bounded_and_can_finish_out_of_order() {
     .unwrap();
     let steps = registry
         .publisher(vec![("linux/amd64".into(), image)], &["{version}"], &[])
-        .publish(&release("1.0.0"))
+        .publish(&release("1.0.0"), &Context::detached())
         .unwrap();
 
     assert_eq!(steps[0].step, AssetStep::Uploaded);
@@ -922,7 +921,7 @@ fn a_failed_layer_upload_fails_the_image_without_writing_its_manifest() {
     );
     let error = registry
         .publisher(vec![("linux/amd64".into(), image)], &["{version}"], &[])
-        .publish(&release("1.0.0"))
+        .publish(&release("1.0.0"), &Context::detached())
         .unwrap_err()
         .to_string();
 
@@ -940,15 +939,18 @@ fn a_deleted_tag_is_restored_without_uploading_blobs_again() {
     let release = release("1.0.0");
     registry
         .publisher(images.platforms(), &["{version}"], &[])
-        .publish(&release)
+        .publish(&release, &Context::detached())
         .unwrap();
     let digest = registry.tag("1.0.0").unwrap();
     registry.state.lock().unwrap().tags.remove("1.0.0");
     let writes = registry.writes().len();
 
     let publisher = registry.publisher(images.platforms(), &["{version}"], &[]);
-    assert_eq!(publisher.state(&release).unwrap(), PublisherState::Missing);
-    let steps = publisher.publish(&release).unwrap();
+    assert_eq!(
+        publisher.state(&release, &Context::detached()).unwrap(),
+        PublisherState::Missing
+    );
+    let steps = publisher.publish(&release, &Context::detached()).unwrap();
     assert_eq!(steps[0].step, AssetStep::AlreadyUploaded);
     assert_eq!(steps[2].step, AssetStep::Uploaded);
     assert_eq!(registry.writes()[writes..], ["PUT manifests/1.0.0"]);
@@ -962,21 +964,26 @@ fn a_tag_that_points_elsewhere_conflicts_before_anything_is_written() {
     let other = Images::new("other");
     registry
         .publisher(other.platforms(), &["{version}"], &[])
-        .publish(&release)
+        .publish(&release, &Context::detached())
         .unwrap();
     let other_digest = registry.tag("1.0.0").unwrap();
     let writes = registry.writes().len();
 
     let images = Images::new("hello");
     let publisher = registry.publisher(images.platforms(), &["{version}"], &["latest"]);
-    let PublisherState::Conflicting(message) = publisher.state(&release).unwrap() else {
+    let PublisherState::Conflicting(message) =
+        publisher.state(&release, &Context::detached()).unwrap()
+    else {
         panic!("expected a conflict");
     };
     assert!(
         message.contains(&format!("points to {other_digest}")),
         "{message}"
     );
-    let error = publisher.publish(&release).unwrap_err().to_string();
+    let error = publisher
+        .publish(&release, &Context::detached())
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("points to"), "{error}");
     assert_eq!(registry.writes().len(), writes);
     assert_eq!(registry.tag("1.0.0"), Some(other_digest));
@@ -988,9 +995,16 @@ fn an_unknown_tag_state_fails_closed() {
     registry.fault(Fault::InspectStatus(500));
     let images = Images::new("hello");
     let publisher = registry.publisher(images.platforms(), &["{version}"], &[]);
-    let error = publisher.state(&release("1.0.0")).unwrap_err().to_string();
+    let error = publisher
+        .state(&release("1.0.0"), &Context::detached())
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("cannot tell"), "{error}");
-    assert!(publisher.publish(&release("1.0.0")).is_err());
+    assert!(
+        publisher
+            .publish(&release("1.0.0"), &Context::detached())
+            .is_err()
+    );
     assert!(registry.writes().is_empty());
 }
 
@@ -1001,7 +1015,7 @@ fn a_published_release_is_recognized_by_its_store_paths_without_reading_its_imag
     let release = release("1.0.0");
     registry
         .publisher(images.platforms(), &["{version}"], &["latest"])
-        .publish(&release)
+        .publish(&release, &Context::detached())
         .unwrap();
 
     // The same store paths, now unreadable: a complete release needs none of them.
@@ -1009,7 +1023,10 @@ fn a_published_release_is_recognized_by_its_store_paths_without_reading_its_imag
         std::fs::remove_file(path).unwrap();
     }
     let rerun = registry.publisher(images.platforms(), &["{version}"], &["latest"]);
-    assert_eq!(rerun.state(&release).unwrap(), PublisherState::Published);
+    assert_eq!(
+        rerun.state(&release, &Context::detached()).unwrap(),
+        PublisherState::Published
+    );
 
     // Another compressor would produce other layer and index digests; the index still counts as
     // this release's as long as it records the same store paths.
@@ -1026,8 +1043,11 @@ fn a_published_release_is_recognized_by_its_store_paths_without_reading_its_imag
     };
     registry.set_tag("1.0.0", &recompressed);
     registry.set_tag("latest", &recompressed);
-    assert_eq!(rerun.state(&release).unwrap(), PublisherState::Published);
-    let steps = rerun.publish(&release).unwrap();
+    assert_eq!(
+        rerun.state(&release, &Context::detached()).unwrap(),
+        PublisherState::Published
+    );
+    let steps = rerun.publish(&release, &Context::detached()).unwrap();
     assert!(
         steps
             .iter()
@@ -1044,7 +1064,7 @@ fn another_compression_on_a_rerun_is_no_conflict() {
     let release = release("1.0.0");
     registry
         .publisher(images.platforms(), &["{version}"], &[])
-        .publish(&release)
+        .publish(&release, &Context::detached())
         .unwrap();
     let zstd = OciImagePublisher::new(
         RegistryClient::new(
@@ -1062,7 +1082,10 @@ fn another_compression_on_a_rerun_is_no_conflict() {
         Compression::Zstd { level: 3 },
     )
     .unwrap();
-    assert_eq!(zstd.state(&release).unwrap(), PublisherState::Published);
+    assert_eq!(
+        zstd.state(&release, &Context::detached()).unwrap(),
+        PublisherState::Published
+    );
 }
 
 #[test]
@@ -1074,8 +1097,14 @@ fn a_wrong_platform_is_found_while_pushing_and_writes_no_manifest_or_tag() {
     let publisher = registry.publisher(vec![("linux/arm64".into(), amd)], &["{version}"], &[]);
     let release = release("1.0.0");
     // The preflight reads no image.
-    assert_eq!(publisher.state(&release).unwrap(), PublisherState::Missing);
-    let error = publisher.publish(&release).unwrap_err().to_string();
+    assert_eq!(
+        publisher.state(&release, &Context::detached()).unwrap(),
+        PublisherState::Missing
+    );
+    let error = publisher
+        .publish(&release, &Context::detached())
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("declared as linux/arm64"), "{error}");
     let state = registry.state.lock().unwrap();
     assert!(state.manifests.is_empty() && state.tags.is_empty());
@@ -1316,7 +1345,7 @@ fn an_index_with_two_manifests_for_one_platform_is_not_the_release() {
     let images = Images::new("hello");
     let release = release("1.0.0");
     let publisher = registry.publisher(images.platforms(), &["{version}"], &[]);
-    publisher.publish(&release).unwrap();
+    publisher.publish(&release, &Context::detached()).unwrap();
 
     // Another linux/amd64 manifest ahead of the release's own, which a client could pick.
     let foreign = {
@@ -1336,7 +1365,7 @@ fn an_index_with_two_manifests_for_one_platform_is_not_the_release() {
     };
     registry.set_tag("1.0.0", &foreign);
     assert!(matches!(
-        publisher.state(&release).unwrap(),
+        publisher.state(&release, &Context::detached()).unwrap(),
         PublisherState::Conflicting(_)
     ));
 }
@@ -1348,12 +1377,12 @@ fn an_index_of_other_store_paths_for_the_same_version_is_a_conflict() {
     let release = release("1.0.0");
     registry
         .publisher(images.platforms(), &["{version}"], &[])
-        .publish(&release)
+        .publish(&release, &Context::detached())
         .unwrap();
     let other = Images::new("hello");
     let state = registry
         .publisher(other.platforms(), &["{version}"], &[])
-        .state(&release)
+        .state(&release, &Context::detached())
         .unwrap();
     assert!(
         matches!(&state, PublisherState::Conflicting(message) if message.contains("not the image index of version 1.0.0")),
@@ -1372,7 +1401,7 @@ fn lost_responses_are_inspected_again_and_accepted_only_when_matching() {
     registry.fault(Fault::LoseResponse("1.0.0"));
     registry
         .publisher(images.platforms(), &["{version}"], &[])
-        .publish(&release("1.0.0"))
+        .publish(&release("1.0.0"), &Context::detached())
         .unwrap();
     assert!(registry.state.lock().unwrap().faults.is_empty());
 }
@@ -1384,7 +1413,7 @@ fn a_tag_written_concurrently_to_another_image_is_a_conflict() {
     let images = Images::new("hello");
     let error = registry
         .publisher(images.platforms(), &["{version}"], &[])
-        .publish(&release("1.0.0"))
+        .publish(&release("1.0.0"), &Context::detached())
         .unwrap_err()
         .to_string();
     assert!(error.contains("could not push"), "{error}");
@@ -1399,7 +1428,7 @@ fn major_and_minor_aliases_follow_their_own_line() {
     for version in ["1.4.0", "2.0.0", "1.4.1"] {
         registry
             .publisher(images.platforms(), &tags, &aliases)
-            .publish(&release(version))
+            .publish(&release(version), &Context::detached())
             .unwrap();
     }
     // The maintenance release moves the aliases of its own line, not `latest`.
@@ -1420,24 +1449,28 @@ fn aliases_move_only_to_a_higher_final_version() {
 
     registry
         .publisher(images.platforms(), &tags, &aliases)
-        .publish(&release("1.1.0"))
+        .publish(&release("1.1.0"), &Context::detached())
         .unwrap();
     let latest = registry.tag("latest").unwrap();
 
     // An older maintenance release leaves `latest` alone.
     let older = registry.publisher(images.platforms(), &tags, &aliases);
-    let steps = older.publish(&release("1.0.1")).unwrap();
+    let steps = older
+        .publish(&release("1.0.1"), &Context::detached())
+        .unwrap();
     assert_eq!(alias(steps), AssetStep::Kept("1.1.0 is higher".into()));
     assert_eq!(registry.tag("latest"), Some(latest.clone()));
     assert_eq!(
-        older.state(&release("1.0.1")).unwrap(),
+        older
+            .state(&release("1.0.1"), &Context::detached())
+            .unwrap(),
         PublisherState::Published
     );
 
     // A pre-release never moves it.
     let steps = registry
         .publisher(images.platforms(), &tags, &aliases)
-        .publish(&release("1.2.0-rc.1"))
+        .publish(&release("1.2.0-rc.1"), &Context::detached())
         .unwrap();
     assert_eq!(alias(steps), AssetStep::Kept("pre-release".into()));
     assert_eq!(registry.tag("latest"), Some(latest.clone()));
@@ -1445,17 +1478,17 @@ fn aliases_move_only_to_a_higher_final_version() {
     // A higher final release moves it.
     let newer = registry.publisher(images.platforms(), &tags, &aliases);
     assert_eq!(
-        newer.state(&release("1.2.0")).unwrap(),
+        newer
+            .state(&release("1.2.0"), &Context::detached())
+            .unwrap(),
         PublisherState::Missing
     );
-    let steps = newer.publish(&release("1.2.0")).unwrap();
+    let steps = newer
+        .publish(&release("1.2.0"), &Context::detached())
+        .unwrap();
     assert_eq!(
         steps.last().unwrap(),
-        &step(
-            ArtifactKind::Alias,
-            &format!("{repository}:latest"),
-            AssetStep::Uploaded
-        )
+        &step(ALIAS, &format!("{repository}:latest"), AssetStep::Uploaded)
     );
     assert_eq!(registry.tag("latest"), registry.tag("1.2.0"));
 
@@ -1472,7 +1505,7 @@ fn aliases_move_only_to_a_higher_final_version() {
     }
     let steps = registry
         .publisher(images.platforms(), &["{version}"], &["stable"])
-        .publish(&release("1.3.0"))
+        .publish(&release("1.3.0"), &Context::detached())
         .unwrap();
     let AssetStep::Kept(reason) = alias(steps) else {
         panic!("expected the foreign alias to be kept");
@@ -1486,7 +1519,7 @@ fn a_public_repository_is_read_anonymously_with_pull_access_only() {
     let images = Images::new("hello");
     registry
         .publisher(images.platforms(), &["{version}"], &[])
-        .publish(&release("1.0.0"))
+        .publish(&release("1.0.0"), &Context::detached())
         .unwrap();
     let pushed = registry.tag("1.0.0").unwrap();
     let mut state = registry.state.lock().unwrap();
@@ -1530,7 +1563,10 @@ fn credentials_are_checked_and_never_printed() {
     let images = Images::new("hello");
     let publisher =
         registry.publisher_with(images.platforms(), &["{version}"], &[], "wrong-password");
-    let error = publisher.state(&release("1.0.0")).unwrap_err().to_string();
+    let error = publisher
+        .state(&release("1.0.0"), &Context::detached())
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("rejected the credentials"), "{error}");
     assert!(!error.contains("wrong-password"));
     assert!(!format!("{publisher:?}").contains("wrong-password"));
@@ -1569,7 +1605,7 @@ fn a_failed_alias_is_a_warning_that_a_rerun_repairs() {
     registry.fault(Fault::RejectTag("latest"));
 
     let publisher = registry.publisher(images.platforms(), &tags, &aliases);
-    let steps = publisher.publish(&release).unwrap();
+    let steps = publisher.publish(&release, &Context::detached()).unwrap();
     let alias = steps.last().unwrap();
     assert_eq!(alias.name, format!("{repository}:latest"));
     let AssetStep::Warning(reason) = &alias.step else {
@@ -1583,16 +1619,19 @@ fn a_failed_alias_is_a_warning_that_a_rerun_repairs() {
     );
     assert!(registry.tag("latest").is_none());
     assert_eq!(
-        publisher.state(&release).unwrap(),
+        publisher.state(&release, &Context::detached()).unwrap(),
         PublisherState::AliasesPending
     );
 
     let rerun = registry.publisher(images.platforms(), &tags, &aliases);
-    let steps = rerun.publish(&release).unwrap();
+    let steps = rerun.publish(&release, &Context::detached()).unwrap();
     assert_eq!(steps[2].step, AssetStep::AlreadyUploaded);
     assert_eq!(steps.last().unwrap().step, AssetStep::Uploaded);
     assert_eq!(registry.tag("latest"), registry.tag("1.0.0"));
-    assert_eq!(rerun.state(&release).unwrap(), PublisherState::Published);
+    assert_eq!(
+        rerun.state(&release, &Context::detached()).unwrap(),
+        PublisherState::Published
+    );
 }
 
 #[test]
@@ -1603,8 +1642,11 @@ fn an_unreadable_alias_is_a_warning_while_the_release_completes() {
     registry.fault(Fault::UnreadableTag("latest"));
 
     let publisher = registry.publisher(images.platforms(), &["{version}"], &["latest"]);
-    assert_eq!(publisher.state(&release).unwrap(), PublisherState::Missing);
-    let steps = publisher.publish(&release).unwrap();
+    assert_eq!(
+        publisher.state(&release, &Context::detached()).unwrap(),
+        PublisherState::Missing
+    );
+    let steps = publisher.publish(&release, &Context::detached()).unwrap();
     assert_eq!(steps[2].step, AssetStep::Uploaded);
     let AssetStep::Warning(reason) = &steps.last().unwrap().step else {
         panic!("expected a warning");
@@ -1615,7 +1657,7 @@ fn an_unreadable_alias_is_a_warning_while_the_release_completes() {
         "an unreadable alias is not overwritten"
     );
     assert_eq!(
-        publisher.state(&release).unwrap(),
+        publisher.state(&release, &Context::detached()).unwrap(),
         PublisherState::AliasesPending
     );
 }
@@ -1652,7 +1694,9 @@ fn publish_after_foreign_predecessor(
     let publisher = registry
         .publisher(images.platforms(), &["{version}"], &["latest"])
         .with_trusted_predecessor(predecessor.map(|version| Version::parse(version).unwrap()));
-    let steps = publisher.publish(&release("1.0.1")).unwrap();
+    let steps = publisher
+        .publish(&release("1.0.1"), &Context::detached())
+        .unwrap();
     steps.last().unwrap().step.clone()
 }
 
@@ -1672,10 +1716,14 @@ fn an_alias_of_the_trusted_predecessor_is_taken_over() {
         .publisher(images.platforms(), &["{version}"], &["latest"])
         .with_trusted_predecessor(Some(Version::new(1, 0, 0)));
     assert_eq!(
-        rerun.state(&release("1.0.1")).unwrap(),
+        rerun
+            .state(&release("1.0.1"), &Context::detached())
+            .unwrap(),
         PublisherState::Published
     );
-    let steps = rerun.publish(&release("1.0.1")).unwrap();
+    let steps = rerun
+        .publish(&release("1.0.1"), &Context::detached())
+        .unwrap();
     assert_eq!(steps.last().unwrap().step, AssetStep::AlreadyUploaded);
 }
 
@@ -1729,7 +1777,7 @@ fn foreign_aliases_are_found_before_anything_is_written() {
     let repository = registry.repository();
     registry
         .publisher(images.platforms(), &["{version}"], &["1"])
-        .publish(&release("1.0.0"))
+        .publish(&release("1.0.0"), &Context::detached())
         .unwrap();
     let predecessor = registry.push_foreign("old tool", &["1.0.0-old", "latest"]);
     let foreign = registry.push_foreign("hand-pushed", &["stable"]);
@@ -1786,8 +1834,7 @@ fn foreign_aliases_are_found_before_anything_is_written() {
 
 #[test]
 fn only_unset_credentials_of_a_private_repository_are_missing() {
-    let mut publisher = presswerk::declaration::OciImagePublisher {
-        after: Vec::new(),
+    let mut publisher = OciImageDeclaration {
         repository: "ghcr.io/owner/project".into(),
         platforms: [("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into())].into(),
         tags: vec!["{version}".into()],
@@ -1795,7 +1842,7 @@ fn only_unset_credentials_of_a_private_repository_are_missing() {
         public: false,
         compression: Compression::default(),
         username: Username::Secret("REGISTRY_USERNAME".into()),
-        password: presswerk::declaration::Token {
+        password: Token {
             secret: "REGISTRY_TOKEN".into(),
         },
     };

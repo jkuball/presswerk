@@ -7,13 +7,18 @@
 //! its image, so a retry recognizes the release's index by its store paths, whatever bytes the
 //! compressor produced.
 
-use crate::declaration::Compression;
+use crate::declaration::DeclarationError;
 use crate::publication::{
-    ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, Publisher,
-    PublisherState, Release,
+    ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, PublisherState, Release,
+};
+use crate::publishers::shared::secrets::{Token, Username};
+use crate::publishers::{
+    Claim, Completeness, Context, Description, Labels, Publisher, PublisherType, WarningLevel,
+    shared,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
@@ -22,11 +27,338 @@ use std::io::{self, BufReader, Read, Seek};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::sync::{Arc, mpsc};
 use std::thread;
 use tempfile::SpooledData;
 
 use super::*;
+
+/// The image of one platform.
+pub const IMAGE: ArtifactKind = ArtifactKind::new("image", "pushed");
+/// A tag that follows the highest final version, such as `latest`.
+pub const ALIAS: ArtifactKind = ArtifactKind::new("alias", "set");
+
+/// `publishers.oci-image.<name>`: container images pushed to an OCI registry under tags rendered
+/// from the version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OciImageDeclaration {
+    /// Registry host and repository path, such as `ghcr.io/owner/project`.
+    pub repository: String,
+    /// The image for each platform, such as `linux/amd64`, each a path in the Nix store.
+    pub platforms: BTreeMap<String, String>,
+    /// Tag templates of the release; each contains `{version}`.
+    pub tags: Vec<String>,
+    /// Alias templates, such as `latest` or `{major}.{minor}`, that move to a higher version.
+    /// Missing in declarations written before the option existed.
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    /// Whether anyone may pull the images; the previous-release check then reads anonymously.
+    /// Missing in declarations written before the option existed.
+    #[serde(default)]
+    pub public: bool,
+    /// How layers are compressed for the registry.
+    /// Missing in declarations written before the option existed.
+    #[serde(default)]
+    pub compression: Compression,
+    pub username: Username,
+    pub password: Token,
+}
+
+/// The compression of pushed image layers, with its level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+pub enum Compression {
+    Gzip { level: u32 },
+    Zstd { level: i32 },
+}
+
+impl Default for Compression {
+    fn default() -> Self {
+        Self::Gzip { level: 6 }
+    }
+}
+
+impl OciImageDeclaration {
+    fn registry(&self) -> Registry<'_> {
+        Registry {
+            repository: &self.repository,
+            public: self.public,
+            username: &self.username,
+            password: &self.password,
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        RepositoryReference::parse(&self.repository)?;
+        if self.platforms.is_empty() {
+            return Err("an OCI image publisher needs at least one image".into());
+        }
+        for (platform, path) in &self.platforms {
+            Platform::parse(platform)?;
+            if !path.starts_with('/') {
+                return Err(format!(
+                    "image {platform} must be an absolute store path, not {path:?}"
+                ));
+            }
+        }
+        validate_tag_templates(&self.tags, &self.aliases)?;
+        match self.compression {
+            Compression::Gzip { level } if !(1..=9).contains(&level) => {
+                return Err(format!("gzip level {level} must be between 1 and 9"));
+            }
+            Compression::Zstd { level } if !(1..=22).contains(&level) => {
+                return Err(format!("zstd level {level} must be between 1 and 22"));
+            }
+            _ => {}
+        }
+        self.registry().validate()
+    }
+}
+
+/// The `oci-image` publisher type.
+#[derive(Debug)]
+pub struct OciImage {
+    declaration: OciImageDeclaration,
+    /// Built on first use, once the images are fetched and the credentials are known.
+    runner: OnceLock<OciImagePublisher>,
+}
+
+impl OciImage {
+    #[must_use]
+    pub fn declaration(&self) -> &OciImageDeclaration {
+        &self.declaration
+    }
+
+    fn runner(&self, ctx: &Context) -> Result<&OciImagePublisher, PublicationError> {
+        if let Some(runner) = self.runner.get() {
+            return Ok(runner);
+        }
+        let declaration = &self.declaration;
+        let runner = OciImagePublisher::new(
+            declaration
+                .registry()
+                .writing_client(&ctx.session.secrets)?,
+            &declaration.repository,
+            declaration.tags.clone(),
+            declaration.aliases.clone(),
+            declaration
+                .platforms
+                .iter()
+                .map(|(platform, path)| (platform.clone(), PathBuf::from(path))),
+            declaration.compression,
+        )?
+        .with_trusted_predecessor(ctx.session.trusted_predecessor.clone());
+        Ok(self.runner.get_or_init(|| runner))
+    }
+}
+
+impl PublisherType for OciImage {
+    const NAME: &'static str = "oci-image";
+    const ALIASES: &'static [&'static str] = &["oci"];
+
+    fn from_declaration(declaration: &Value) -> Result<Self, DeclarationError> {
+        let declaration: OciImageDeclaration = shared::decode(declaration)?;
+        declaration.validate().map_err(DeclarationError::Invalid)?;
+        Ok(Self {
+            declaration,
+            runner: OnceLock::new(),
+        })
+    }
+}
+
+/// Describes the images and tags that a release of `version` pushes.
+fn describe(
+    repository: &str,
+    platforms: impl Iterator<Item = String>,
+    tags: &[String],
+    aliases: &[String],
+    version: &Version,
+) -> Description {
+    // Store paths are left out: the release commit's images get their own paths.
+    let images = platforms.map(|platform| ("image".to_owned(), platform));
+    let tags = render_tags(tags, aliases, version)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|tag| {
+            let kind = match tag {
+                OciTag::Version(_) => "tag",
+                OciTag::Alias(_) => "alias",
+            };
+            (kind.to_owned(), tag.name().to_owned())
+        });
+    Description {
+        target: repository.into(),
+        items: images.chain(tags).collect(),
+    }
+}
+
+/// Whether every version tag of `release` points to its image index, as `manifest` reads the
+/// manifest a tag points to. Aliases do not count: they are best effort and may point to another
+/// release.
+pub fn completeness_with(
+    repository: &str,
+    tags: &[String],
+    aliases: &[String],
+    release: &Release,
+    mut manifest: impl FnMut(&str) -> Result<Option<Vec<u8>>, PublicationError>,
+) -> Result<Completeness, PublicationError> {
+    let version = &release.version;
+    for tag in render_tags(tags, aliases, version).map_err(PublicationError::new)? {
+        let OciTag::Version(tag) = tag else {
+            continue;
+        };
+        let found = match manifest(&tag)? {
+            None => "the tag is missing".to_owned(),
+            Some(manifest) => match annotated_version(&manifest) {
+                Some(found) if found == *version => continue,
+                Some(found) => format!("the tag points to version {found}"),
+                None => {
+                    "the tag does not point to an image index with a version annotation".to_owned()
+                }
+            },
+        };
+        return Ok(Completeness::Incomplete {
+            target: format!("OCI image release {repository}:{tag}"),
+            reason: format!("{found}, expected version {version}"),
+        });
+    }
+    Ok(Completeness::Complete)
+}
+
+impl Publisher for OciImage {
+    fn describe(&self, version: &Version, _tag: &str) -> Description {
+        let declaration = &self.declaration;
+        describe(
+            &declaration.repository,
+            declaration.platforms.keys().cloned(),
+            &declaration.tags,
+            &declaration.aliases,
+            version,
+        )
+    }
+
+    fn claims(&self, version: &Version) -> Result<Vec<Claim>, String> {
+        let declaration = &self.declaration;
+        let registry = declaration.registry();
+        Ok(
+            render_tags(&declaration.tags, &declaration.aliases, version)?
+                .iter()
+                .map(|tag| registry.claim(tag.name()))
+                .collect(),
+        )
+    }
+
+    fn artifacts(&self) -> Vec<(String, String)> {
+        self.declaration
+            .platforms
+            .iter()
+            .map(|(platform, path)| (format!("image {platform}"), path.clone()))
+            .collect()
+    }
+
+    fn completeness(
+        &self,
+        release: &Release,
+        ctx: &Context,
+    ) -> Result<Completeness, PublicationError> {
+        let declaration = &self.declaration;
+        let registry = declaration
+            .registry()
+            .reading_client(&ctx.session.secrets)?;
+        completeness_with(
+            &declaration.repository,
+            &declaration.tags,
+            &declaration.aliases,
+            release,
+            |tag| Ok(registry.manifest(tag)?.map(|(_, manifest)| manifest)),
+        )
+    }
+
+    /// Reads the aliases of the release, so an alias another tool pushed does not stay behind
+    /// unnoticed.
+    fn preview(&self, release: &Release, ctx: &Context) {
+        let declaration = &self.declaration;
+        if declaration.aliases.is_empty() {
+            return;
+        }
+        let secrets = &ctx.session.secrets;
+        let variables = missing_credentials(declaration, |name| secrets.env(name));
+        // Without credentials, an anonymous read may still succeed, such as for a repository
+        // that is public without being marked so.
+        let registry = if variables.is_empty() {
+            declaration.registry().reading_client(secrets)
+        } else {
+            let verb = if variables.len() == 1 { "is" } else { "are" };
+            ctx.warn(
+                WarningLevel::Warning,
+                format!(
+                    "{} is not marked public and {} {verb} not set; checking its aliases anonymously, which will probably fail",
+                    ctx.address,
+                    variables.join("/")
+                ),
+            );
+            RegistryClient::new(&declaration.repository, None)
+        };
+        let found = registry.and_then(|registry| {
+            foreign_aliases(
+                &registry,
+                &declaration.repository,
+                &declaration.tags,
+                &declaration.aliases,
+                &release.version,
+                ctx.session.trusted_predecessor.as_ref(),
+            )
+        });
+        match found {
+            Ok(found) => {
+                for alias in found {
+                    match &alias.predecessor_tag {
+                        Some(tag) => ctx.warn(
+                            WarningLevel::Note,
+                            format!(
+                                "alias {} points to the trusted predecessor's tag {tag}; publish will take it over",
+                                alias.reference
+                            ),
+                        ),
+                        None => ctx.warn(
+                            WarningLevel::Warning,
+                            format!(
+                                "alias {} points to {} without a version annotation, so another tool pushed it; publish will keep it",
+                                alias.reference, alias.digest
+                            ),
+                        ),
+                    }
+                }
+            }
+            Err(error) => ctx.warn(
+                WarningLevel::Warning,
+                format!("could not check the aliases of {}: {error}", ctx.address),
+            ),
+        }
+    }
+
+    fn state(&self, release: &Release, ctx: &Context) -> Result<PublisherState, PublicationError> {
+        self.runner(ctx)?.state(release, ctx)
+    }
+
+    fn publish(&self, release: &Release, ctx: &Context) -> Result<ArtifactSteps, PublicationError> {
+        self.runner(ctx)?.publish(release, ctx)
+    }
+
+    fn complete_steps(
+        &self,
+        release: &Release,
+        ctx: &Context,
+    ) -> Result<ArtifactSteps, PublicationError> {
+        self.runner(ctx)?.complete_steps(release, ctx)
+    }
+
+    fn labels(&self) -> Labels {
+        LABELS
+    }
+}
 
 /// One rendered tag of a release.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -683,25 +1015,6 @@ struct RemoteIndex {
 }
 
 impl OciImagePublisher {
-    /// Build the publisher from its declaration; its images must already be fetched.
-    pub fn from_declaration(
-        declaration: &crate::declaration::OciImagePublisher,
-    ) -> Result<Self, PublicationError> {
-        let credentials =
-            Credentials::from_environment(&declaration.username, &declaration.password.secret)?;
-        Self::new(
-            RegistryClient::new(&declaration.repository, Some(credentials))?,
-            &declaration.repository,
-            declaration.tags.clone(),
-            declaration.aliases.clone(),
-            declaration
-                .platforms
-                .iter()
-                .map(|(platform, path)| (platform.clone(), PathBuf::from(path))),
-            declaration.compression,
-        )
-    }
-
     pub fn new(
         registry: RegistryClient,
         repository: &str,
@@ -1046,15 +1359,15 @@ impl OciImagePublisher {
             .keys()
             .zip(images)
             .map(|(platform, step)| ArtifactStep {
-                kind: ArtifactKind::Image,
+                kind: IMAGE,
                 name: platform.to_string(),
                 step,
             })
             .collect();
         steps.extend(inspection.tags.iter().map(|(tag, state)| ArtifactStep {
             kind: match tag {
-                OciTag::Version(_) => ArtifactKind::Tag,
-                OciTag::Alias(_) => ArtifactKind::Alias,
+                OciTag::Version(_) => TAG,
+                OciTag::Alias(_) => ALIAS,
             },
             name: self.reference(tag.name()),
             step: match state {
@@ -1142,38 +1455,10 @@ pub(crate) fn annotated_version(manifest: &[u8]) -> Option<Version> {
 /// The credential variables of a publisher that are unset or empty, as `lookup` reads them; none
 /// for a public repository, which `plan` and `prepare` read anonymously.
 pub fn missing_credentials(
-    declaration: &crate::declaration::OciImagePublisher,
+    declaration: &OciImageDeclaration,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> Vec<String> {
-    if declaration.public {
-        return Vec::new();
-    }
-    let username = match &declaration.username {
-        crate::declaration::Username::Secret(name) => Some(name.as_str()),
-        crate::declaration::Username::Value(_) => None,
-    };
-    username
-        .into_iter()
-        .chain([declaration.password.secret.as_str()])
-        .filter(|name| lookup(name).is_none_or(|value| value.is_empty()))
-        .map(str::to_owned)
-        .collect()
-}
-
-/// A client that reads a publisher's repository as `plan` and `prepare` do: anonymously if it is
-/// public, so its credentials are not needed.
-pub fn reading_client(
-    declaration: &crate::declaration::OciImagePublisher,
-) -> Result<RegistryClient, PublicationError> {
-    let credentials = if declaration.public {
-        None
-    } else {
-        Some(Credentials::from_environment(
-            &declaration.username,
-            &declaration.password.secret,
-        )?)
-    };
-    RegistryClient::new(&declaration.repository, credentials)
+    declaration.registry().missing_credentials(lookup)
 }
 
 /// The trusted predecessor's version tag that points to `digest`, so an alias without a version annotation
@@ -1242,8 +1527,82 @@ pub fn foreign_aliases(
     Ok(foreign)
 }
 
+/// An OCI image publisher with its own registry client, such as one for a test registry.
 impl Publisher for OciImagePublisher {
-    fn state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
+    fn describe(&self, version: &Version, _tag: &str) -> Description {
+        describe(
+            &self.repository,
+            self.platforms.keys().map(ToString::to_string),
+            &self.tags,
+            &self.aliases,
+            version,
+        )
+    }
+
+    fn completeness(
+        &self,
+        release: &Release,
+        _ctx: &Context,
+    ) -> Result<Completeness, PublicationError> {
+        completeness_with(
+            &self.repository,
+            &self.tags,
+            &self.aliases,
+            release,
+            |tag| Ok(self.registry.manifest(tag)?.map(|(_, manifest)| manifest)),
+        )
+    }
+
+    fn state(&self, release: &Release, _ctx: &Context) -> Result<PublisherState, PublicationError> {
+        self.checked_state(release)
+    }
+
+    fn publish(&self, release: &Release, ctx: &Context) -> Result<ArtifactSteps, PublicationError> {
+        let inspection = self.inspect(release)?;
+        if let Some(conflict) = inspection.conflict() {
+            return Err(PublicationError::new(conflict));
+        }
+        let (index, images) = self.release_index(&inspection, release, &mut |platform, step| {
+            ctx.progress(&ArtifactStep {
+                kind: IMAGE,
+                name: platform.to_string(),
+                step: step.clone(),
+            });
+        })?;
+
+        let mut steps = self.steps(&inspection, images);
+        let tag_steps = steps.len() - inspection.tags.len();
+        for ((tag, state), step) in inspection.tags.iter().zip(&mut steps[tag_steps..]) {
+            self.complete_tag(tag, state, &mut step.step, release, &index)?;
+            ctx.progress(step);
+        }
+
+        match self.checked_state(release)? {
+            PublisherState::Published | PublisherState::AliasesPending => Ok(steps),
+            state => Err(PublicationError::new(format!(
+                "{} was not published: {state:?}",
+                self.repository
+            ))),
+        }
+    }
+
+    fn complete_steps(
+        &self,
+        release: &Release,
+        _ctx: &Context,
+    ) -> Result<ArtifactSteps, PublicationError> {
+        let inspection = self.inspect(release)?;
+        let images = vec![AssetStep::AlreadyUploaded; self.platforms.len()];
+        Ok(self.steps(&inspection, images))
+    }
+
+    fn labels(&self) -> Labels {
+        LABELS
+    }
+}
+
+impl OciImagePublisher {
+    fn checked_state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
         let inspection = self.inspect(release)?;
         if let Some(conflict) = inspection.conflict() {
             return Ok(PublisherState::Conflicting(conflict.into()));
@@ -1275,45 +1634,6 @@ impl Publisher for OciImagePublisher {
                 PublisherState::AliasesPending
             },
         )
-    }
-
-    fn publish_with_progress(
-        &self,
-        release: &Release,
-        progress: &mut dyn FnMut(&ArtifactStep),
-    ) -> Result<ArtifactSteps, PublicationError> {
-        let inspection = self.inspect(release)?;
-        if let Some(conflict) = inspection.conflict() {
-            return Err(PublicationError::new(conflict));
-        }
-        let (index, images) = self.release_index(&inspection, release, &mut |platform, step| {
-            progress(&ArtifactStep {
-                kind: ArtifactKind::Image,
-                name: platform.to_string(),
-                step: step.clone(),
-            });
-        })?;
-
-        let mut steps = self.steps(&inspection, images);
-        let tag_steps = steps.len() - inspection.tags.len();
-        for ((tag, state), step) in inspection.tags.iter().zip(&mut steps[tag_steps..]) {
-            self.complete_tag(tag, state, &mut step.step, release, &index)?;
-            progress(step);
-        }
-
-        match self.state(release)? {
-            PublisherState::Published | PublisherState::AliasesPending => Ok(steps),
-            state => Err(PublicationError::new(format!(
-                "{} was not published: {state:?}",
-                self.repository
-            ))),
-        }
-    }
-
-    fn complete_steps(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
-        let inspection = self.inspect(release)?;
-        let images = vec![AssetStep::AlreadyUploaded; self.platforms.len()];
-        Ok(self.steps(&inspection, images))
     }
 }
 

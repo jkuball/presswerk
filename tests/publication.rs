@@ -3,20 +3,23 @@ mod support;
 use git2::Oid;
 use presswerk::analysis::{Analysis, Bump};
 use presswerk::changelog::ChangelogHeading;
-use presswerk::declaration::{
-    Compression, OciHelmPublisher, OciImagePublisher, ReleaseDeclaration, Token, Username,
-};
+use presswerk::declaration::ReleaseDeclaration;
 use presswerk::publication::{
-    ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GitTagPublisher, PublicationError,
-    PublishEvent, Publisher, PublisherNode, PublisherOutcome, PublisherState, PublisherStep,
-    Release, RemoteState, TagPublisher, TagStep, UnreadableDeclaration, UntaggedRelease,
-    is_valid_successor, pending_predecessor, publish_ordered, publish_ordered_with_jobs,
-    validate_new_release, verify_predecessor_with, verify_predecessor_with_oci_helm,
+    ArtifactStep, ArtifactSteps, AssetStep, GitTagPublisher, PublicationError, PublishEvent,
+    Publisher, PublisherNode, PublisherOutcome, PublisherState, PublisherStep, Release,
+    RemoteState, TagPublisher, TagStep, UnreadableDeclaration, UntaggedRelease, is_valid_successor,
+    pending_predecessor, publish_ordered, publish_ordered_with_jobs, validate_new_release,
+    verify_predecessor_with,
 };
+use presswerk::publishers::github_release::ASSET;
 use presswerk::publishers::github_release::{
     GITHUB_RELEASE_BODY_LIMIT, GithubClient, GithubPublisher, GithubReleaseReader,
     GithubReleaseState, LocalAsset,
 };
+use presswerk::publishers::oci::helm::OciHelmDeclaration;
+use presswerk::publishers::oci::image::{Compression, OciImageDeclaration};
+use presswerk::publishers::shared::secrets::{Token, Username};
+use presswerk::publishers::{Completeness, Context, Description};
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
 use std::cell::RefCell;
@@ -29,6 +32,37 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use support::GitRepo;
+
+/// The declared instance `name` of `kind`, decoded into its type's shape without `after`.
+fn instance<T: serde::de::DeserializeOwned>(
+    declaration: &ReleaseDeclaration,
+    kind: &str,
+    name: &str,
+) -> T {
+    let mut value = declaration.publishers.get(kind, name).unwrap().clone();
+    value.as_object_mut().unwrap().remove("after");
+    serde_json::from_value(value).unwrap()
+}
+
+/// The parts of a fake publisher that the test does not use.
+macro_rules! untested_remote {
+    () => {
+        fn describe(&self, _version: &Version, _tag: &str) -> Description {
+            Description {
+                target: String::new(),
+                items: Vec::new(),
+            }
+        }
+
+        fn completeness(
+            &self,
+            _release: &Release,
+            _ctx: &Context,
+        ) -> Result<Completeness, PublicationError> {
+            Ok(Completeness::Complete)
+        }
+    };
+}
 
 fn declaration(version: &str, repository: &str) -> ReleaseDeclaration {
     let stable = Version::parse(version).unwrap().major >= 1;
@@ -99,14 +133,19 @@ struct FakePublisher {
 }
 
 impl Publisher for FakePublisher {
-    fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+    untested_remote!();
+    fn state(
+        &self,
+        _release: &Release,
+        _ctx: &Context,
+    ) -> Result<PublisherState, PublicationError> {
         Ok(self.state.lock().unwrap().clone())
     }
 
-    fn publish_with_progress(
+    fn publish(
         &self,
         _release: &Release,
-        _progress: &mut dyn FnMut(&ArtifactStep),
+        _ctx: &Context,
     ) -> Result<ArtifactSteps, PublicationError> {
         self.writes.lock().unwrap().push("release");
         *self.state.lock().unwrap() = PublisherState::Published;
@@ -161,29 +200,34 @@ fn reports_each_step_as_soon_as_it_completes() {
         published: AtomicBool,
     }
     impl Publisher for Streaming {
-        fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+        untested_remote!();
+        fn state(
+            &self,
+            _release: &Release,
+            _ctx: &Context,
+        ) -> Result<PublisherState, PublicationError> {
             Ok(if self.published.load(Ordering::SeqCst) {
                 PublisherState::Published
             } else {
                 PublisherState::Missing
             })
         }
-        fn publish_with_progress(
+        fn publish(
             &self,
             _release: &Release,
-            progress: &mut dyn FnMut(&ArtifactStep),
+            ctx: &Context,
         ) -> Result<ArtifactSteps, PublicationError> {
             let steps: ArtifactSteps = ["a", "b"]
                 .into_iter()
                 .map(|name| ArtifactStep {
-                    kind: ArtifactKind::Asset,
+                    kind: ASSET,
                     name: name.into(),
                     step: AssetStep::Uploaded,
                 })
                 .collect();
             for step in &steps {
                 self.log.lock().unwrap().push("upload");
-                progress(step);
+                ctx.progress(step);
             }
             self.published.store(true, Ordering::SeqCst);
             Ok(steps)
@@ -245,13 +289,18 @@ fn pending_aliases_do_not_keep_a_release_from_completing() {
 
     struct Stuck(FakePublisher);
     impl Publisher for Stuck {
-        fn state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
-            self.0.state(release)
+        untested_remote!();
+        fn state(
+            &self,
+            release: &Release,
+            _ctx: &Context,
+        ) -> Result<PublisherState, PublicationError> {
+            self.0.state(release, &Context::detached())
         }
-        fn publish_with_progress(
+        fn publish(
             &self,
             _release: &Release,
-            _progress: &mut dyn FnMut(&ArtifactStep),
+            _ctx: &Context,
         ) -> Result<ArtifactSteps, PublicationError> {
             self.0.writes.lock().unwrap().push("aliases");
             Ok(Vec::new())
@@ -370,7 +419,12 @@ struct OrderedPublisher {
 }
 
 impl Publisher for OrderedPublisher {
-    fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+    untested_remote!();
+    fn state(
+        &self,
+        _release: &Release,
+        _ctx: &Context,
+    ) -> Result<PublisherState, PublicationError> {
         Ok(if self.published.load(Ordering::SeqCst) {
             PublisherState::Published
         } else {
@@ -378,10 +432,10 @@ impl Publisher for OrderedPublisher {
         })
     }
 
-    fn publish_with_progress(
+    fn publish(
         &self,
         _release: &Release,
-        _progress: &mut dyn FnMut(&ArtifactStep),
+        _ctx: &Context,
     ) -> Result<ArtifactSteps, PublicationError> {
         self.writes.lock().unwrap().push(self.name);
         if self.fail {
@@ -571,14 +625,19 @@ fn preflight_checks_every_publisher_before_rejecting_a_conflict() {
         state: PublisherState,
     }
     impl Publisher for Checked {
-        fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+        untested_remote!();
+        fn state(
+            &self,
+            _release: &Release,
+            _ctx: &Context,
+        ) -> Result<PublisherState, PublicationError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(self.state.clone())
         }
-        fn publish_with_progress(
+        fn publish(
             &self,
             _release: &Release,
-            _progress: &mut dyn FnMut(&ArtifactStep),
+            _ctx: &Context,
         ) -> Result<ArtifactSteps, PublicationError> {
             unreachable!()
         }
@@ -632,7 +691,12 @@ struct CountingPublisher {
 }
 
 impl Publisher for CountingPublisher {
-    fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+    untested_remote!();
+    fn state(
+        &self,
+        _release: &Release,
+        _ctx: &Context,
+    ) -> Result<PublisherState, PublicationError> {
         if self.published.load(Ordering::SeqCst) {
             return Ok(PublisherState::Published);
         }
@@ -640,19 +704,19 @@ impl Publisher for CountingPublisher {
         Ok(PublisherState::Missing)
     }
 
-    fn publish_with_progress(
+    fn publish(
         &self,
         _release: &Release,
-        progress: &mut dyn FnMut(&ArtifactStep),
+        ctx: &Context,
     ) -> Result<ArtifactSteps, PublicationError> {
         count_concurrency(&self.publishing, &self.max_publishing);
         self.published.store(true, Ordering::SeqCst);
         let step = ArtifactStep {
-            kind: ArtifactKind::Asset,
+            kind: ASSET,
             name: self.name.clone(),
             step: AssetStep::Uploaded,
         };
-        progress(&step);
+        ctx.progress(&step);
         Ok(vec![step])
     }
 }
@@ -723,7 +787,12 @@ struct CoordinatedPublisher {
 }
 
 impl Publisher for CoordinatedPublisher {
-    fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+    untested_remote!();
+    fn state(
+        &self,
+        _release: &Release,
+        _ctx: &Context,
+    ) -> Result<PublisherState, PublicationError> {
         Ok(if self.published.load(Ordering::SeqCst) {
             PublisherState::Published
         } else {
@@ -731,10 +800,10 @@ impl Publisher for CoordinatedPublisher {
         })
     }
 
-    fn publish_with_progress(
+    fn publish(
         &self,
         _release: &Release,
-        _progress: &mut dyn FnMut(&ArtifactStep),
+        _ctx: &Context,
     ) -> Result<ArtifactSteps, PublicationError> {
         self.attempts.fetch_add(1, Ordering::SeqCst);
         if let Some(signal) = &self.signal {
@@ -768,7 +837,12 @@ struct CompletionPublisher {
 }
 
 impl Publisher for CompletionPublisher {
-    fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+    untested_remote!();
+    fn state(
+        &self,
+        _release: &Release,
+        _ctx: &Context,
+    ) -> Result<PublisherState, PublicationError> {
         Ok(if self.published.load(Ordering::SeqCst) {
             PublisherState::Published
         } else {
@@ -776,10 +850,10 @@ impl Publisher for CompletionPublisher {
         })
     }
 
-    fn publish_with_progress(
+    fn publish(
         &self,
         _release: &Release,
-        progress: &mut dyn FnMut(&ArtifactStep),
+        ctx: &Context,
     ) -> Result<ArtifactSteps, PublicationError> {
         if let Some(wait_for) = &self.wait_for {
             let deadline = std::time::Instant::now() + Duration::from_secs(1);
@@ -795,11 +869,11 @@ impl Publisher for CompletionPublisher {
         self.published.store(true, Ordering::SeqCst);
         self.completed.store(true, Ordering::SeqCst);
         let step = ArtifactStep {
-            kind: ArtifactKind::Asset,
+            kind: ASSET,
             name: self.name.into(),
             step: AssetStep::Uploaded,
         };
-        progress(&step);
+        ctx.progress(&step);
         Ok(vec![step])
     }
 }
@@ -866,14 +940,19 @@ fn live_events_follow_completion_order_while_the_report_keeps_declaration_order(
 struct PanickingPublisher;
 
 impl Publisher for PanickingPublisher {
-    fn state(&self, _release: &Release) -> Result<PublisherState, PublicationError> {
+    untested_remote!();
+    fn state(
+        &self,
+        _release: &Release,
+        _ctx: &Context,
+    ) -> Result<PublisherState, PublicationError> {
         Ok(PublisherState::Missing)
     }
 
-    fn publish_with_progress(
+    fn publish(
         &self,
         _release: &Release,
-        _progress: &mut dyn FnMut(&ArtifactStep),
+        _ctx: &Context,
     ) -> Result<ArtifactSteps, PublicationError> {
         panic!("boom")
     }
@@ -1213,11 +1292,14 @@ fn predecessor_verification_uses_the_tagged_commits_own_publishers() {
             assert_eq!(commit.to_string(), predecessor);
             Ok(previous_declaration.clone())
         },
-        |publisher, _tag, _version| {
-            repositories.borrow_mut().push(publisher.repository.clone());
-            Ok(GithubReleaseState::Published { prerelease: false })
+        |node, release, _ctx| {
+            repositories.borrow_mut().push(
+                node.publisher
+                    .describe(&release.version, &release.tag)
+                    .target,
+            );
+            Ok(Completeness::Complete)
         },
-        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap()
     .unwrap();
@@ -1264,7 +1346,6 @@ fn unreadable_predecessor_requires_the_exact_trust(unreadable: UnreadableDeclara
         None,
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
-        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap_err();
     let reported = error.as_unreadable_predecessor().unwrap();
@@ -1284,7 +1365,6 @@ fn unreadable_predecessor_requires_the_exact_trust(unreadable: UnreadableDeclara
         Some(&forged),
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
-        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap_err();
     assert!(error.to_string().contains("does not match expected"));
@@ -1303,7 +1383,6 @@ fn unreadable_predecessor_requires_the_exact_trust(unreadable: UnreadableDeclara
         Some(&trusted),
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
-        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap_err();
     assert!(error.to_string().contains("missing from the remote"));
@@ -1318,7 +1397,6 @@ fn unreadable_predecessor_requires_the_exact_trust(unreadable: UnreadableDeclara
         Some(&trusted),
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
-        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap()
     .unwrap();
@@ -1334,7 +1412,6 @@ fn unreadable_predecessor_requires_the_exact_trust(unreadable: UnreadableDeclara
         Some(&trusted),
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
-        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap()
     .unwrap();
@@ -1350,7 +1427,6 @@ fn unreadable_predecessor_requires_the_exact_trust(unreadable: UnreadableDeclara
         Some(&trusted),
         |_| Err(unsupported.clone()),
         |_, _, _| unreachable!("trusted crossings do not decode old publishers"),
-        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap_err();
     assert!(error.to_string().contains("lightweight"));
@@ -1395,7 +1471,6 @@ fn an_ordinary_predecessor_requires_an_annotated_tag() {
         None,
         |_| Ok(previous_declaration.clone()),
         |_, _, _| unreachable!("the tag is checked before publishers"),
-        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap_err();
     assert!(error.to_string().contains("lightweight"));
@@ -1429,7 +1504,6 @@ fn trusted_predecessor_must_be_an_ancestor() {
         Some(&trusted),
         |_| unreachable!("ancestry is checked before decoding"),
         |_, _, _| unreachable!("ancestry is checked before publishers"),
-        |_, _| unreachable!("no OCI image publishers are declared"),
     )
     .unwrap_err();
 
@@ -1460,8 +1534,7 @@ fn supported_predecessors_reject_unnecessary_trust() {
         &tag,
         Some(&trusted),
         |_| Ok(previous_declaration.clone()),
-        |_, _, _| Ok(GithubReleaseState::Published { prerelease: false }),
-        |_, _| unreachable!("no OCI image publishers are declared"),
+        |_, _, _| Ok(Completeness::Complete),
     )
     .unwrap_err();
 
@@ -1477,7 +1550,9 @@ fn a_predecessor_without_publishers_is_complete_with_its_remote_tag() {
     let candidate = repository.commit("✨ Change publisher");
     let current_declaration = declaration("0.1.0", "new/project");
     let mut previous_declaration = declaration("0.1.0", "old/project");
-    previous_declaration.publishers.github_release.clear();
+    previous_declaration
+        .publishers
+        .remove_type("github-release");
     let tag = fake_tag(RemoteState::Matching);
     let verify = || {
         verify_predecessor_with(
@@ -1489,7 +1564,6 @@ fn a_predecessor_without_publishers_is_complete_with_its_remote_tag() {
             None,
             |_commit| Ok(previous_declaration.clone()),
             |_, _, _| unreachable!("no GitHub Release publishers are declared"),
-            |_, _| unreachable!("no OCI image publishers are declared"),
         )
     };
 
@@ -1506,11 +1580,11 @@ fn a_predecessor_without_publishers_is_complete_with_its_remote_tag() {
 
 fn oci_image_predecessor(tags: &[&str], aliases: &[&str]) -> ReleaseDeclaration {
     let mut declaration = declaration("0.1.0", "old/project");
-    declaration.publishers.github_release.clear();
-    declaration.publishers.oci_image.insert(
-        "default".into(),
-        OciImagePublisher {
-            after: Vec::new(),
+    declaration.publishers.remove_type("github-release");
+    declaration.publishers.insert(
+        "oci-image",
+        "default",
+        OciImageDeclaration {
             repository: "ghcr.io/owner/project".into(),
             platforms: [("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into())].into(),
             tags: tags.iter().map(|tag| (*tag).into()).collect(),
@@ -1554,14 +1628,22 @@ fn verify_oci_image_predecessor(
         &tag,
         None,
         |_commit| Ok(previous_declaration.clone()),
-        |_, _, _| unreachable!("no GitHub Release publishers are declared"),
-        |publisher, tag| {
-            assert_eq!(publisher.repository, "ghcr.io/owner/project");
-            read.push(tag.to_owned());
-            Ok(manifests
-                .iter()
-                .find(|(name, _)| *name == tag)
-                .map(|(_, manifest)| manifest.clone()))
+        |node, release, _ctx| {
+            assert_eq!(node.name, "oci-image.default");
+            let image: OciImageDeclaration = instance(previous_declaration, "oci-image", "default");
+            presswerk::publishers::oci::image::completeness_with(
+                &image.repository,
+                &image.tags,
+                &image.aliases,
+                release,
+                |tag| {
+                    read.push(tag.to_owned());
+                    Ok(manifests
+                        .iter()
+                        .find(|(name, _)| *name == tag)
+                        .map(|(_, manifest)| manifest.clone()))
+                },
+            )
         },
     )
     .map(|verified| assert!(verified.is_some()));
@@ -1660,11 +1742,13 @@ fn an_oci_helm_predecessor_needs_its_version_tag_and_store_path() {
     let candidate = repository.commit("✨ Add a feature");
     let current_declaration = declaration("0.1.0", "new/project");
     let mut previous_declaration = declaration("0.1.0", "old/project");
-    previous_declaration.publishers.github_release.clear();
-    previous_declaration.publishers.oci_helm.insert(
-        "default".into(),
-        OciHelmPublisher {
-            after: Vec::new(),
+    previous_declaration
+        .publishers
+        .remove_type("github-release");
+    previous_declaration.publishers.insert(
+        "oci-helm",
+        "default",
+        OciHelmDeclaration {
             repository: "ghcr.io/owner/charts/project".into(),
             chart: "/nix/store/abc-project-0.1.0.tgz".into(),
             public: true,
@@ -1676,7 +1760,7 @@ fn an_oci_helm_predecessor_needs_its_version_tag_and_store_path() {
     );
     let tag = fake_tag(RemoteState::Matching);
     let verify = |manifest: Option<Vec<u8>>| {
-        verify_predecessor_with_oci_helm(
+        verify_predecessor_with(
             repository.path(),
             candidate.parse().unwrap(),
             &Version::new(0, 1, 0),
@@ -1684,12 +1768,19 @@ fn an_oci_helm_predecessor_needs_its_version_tag_and_store_path() {
             &tag,
             None,
             |_commit| Ok(previous_declaration.clone()),
-            |_, _, _| unreachable!("no GitHub Release publishers are declared"),
-            |_, _| unreachable!("no OCI image publishers are declared"),
-            |publisher, read_tag| {
-                assert_eq!(publisher.repository, "ghcr.io/owner/charts/project");
-                assert_eq!(read_tag, "0.1.0");
-                Ok(manifest.clone())
+            |node, release, _ctx| {
+                assert_eq!(node.name, "oci-helm.default");
+                let helm: OciHelmDeclaration =
+                    instance(&previous_declaration, "oci-helm", "default");
+                presswerk::publishers::oci::helm::completeness_with(
+                    &helm.repository,
+                    &helm.chart,
+                    release,
+                    |read_tag| {
+                        assert_eq!(read_tag, "0.1.0");
+                        Ok(manifest.clone())
+                    },
+                )
             },
         )
     };
@@ -1942,7 +2033,10 @@ fn github_publishes_a_matching_custom_body_draft_found_only_in_the_release_listi
     .with_body("{{ notes }}\nInstall {{ version }}");
 
     publisher
-        .publish(&release("0123456789012345678901234567890123456789".into()))
+        .publish(
+            &release("0123456789012345678901234567890123456789".into()),
+            &Context::detached(),
+        )
         .unwrap();
 
     server.join().unwrap();
@@ -2005,7 +2099,10 @@ fn github_rejects_an_existing_draft_with_a_different_custom_body() {
     .with_body("{{ notes }}\nInstall {{ version }}");
 
     let error = publisher
-        .publish(&release("0123456789012345678901234567890123456789".into()))
+        .publish(
+            &release("0123456789012345678901234567890123456789".into()),
+            &Context::detached(),
+        )
         .unwrap_err();
 
     assert!(error.to_string().contains("does not match"), "{error}");
@@ -2107,7 +2204,10 @@ fn github_rejects_listed_releases_without_a_tag_name() {
         );
 
         let error = publisher
-            .publish(&release("0123456789012345678901234567890123456789".into()))
+            .publish(
+                &release("0123456789012345678901234567890123456789".into()),
+                &Context::detached(),
+            )
             .unwrap_err();
         assert!(error.to_string().contains(expected), "{entry}: {error}");
         server.join().unwrap();
@@ -2208,7 +2308,10 @@ fn github_reinspects_ambiguous_post_and_patch_failures() {
         "owner/project",
     );
     publisher
-        .publish(&release("0123456789012345678901234567890123456789".into()))
+        .publish(
+            &release("0123456789012345678901234567890123456789".into()),
+            &Context::detached(),
+        )
         .unwrap();
     server.join().unwrap();
 
@@ -2275,7 +2378,10 @@ fn github_reinspects_ambiguous_post_and_patch_failures() {
         "owner/project",
     );
     publisher
-        .publish(&release("0123456789012345678901234567890123456789".into()))
+        .publish(
+            &release("0123456789012345678901234567890123456789".into()),
+            &Context::detached(),
+        )
         .unwrap();
     server.join().unwrap();
 }
@@ -2339,7 +2445,10 @@ fn github_reinspection_rejects_a_still_draft_release() {
     );
 
     let error = publisher
-        .publish(&release("0123456789012345678901234567890123456789".into()))
+        .publish(
+            &release("0123456789012345678901234567890123456789".into()),
+            &Context::detached(),
+        )
         .unwrap_err();
 
     assert!(error.to_string().contains("could not publish draft"));
@@ -2404,7 +2513,10 @@ fn github_creates_a_draft_then_publishes_and_verifies_it() {
         .with_body("{{ notes }}\nInstall {{ version }} from {{ tag }}");
 
     publisher
-        .publish(&release("0123456789012345678901234567890123456789".into()))
+        .publish(
+            &release("0123456789012345678901234567890123456789".into()),
+            &Context::detached(),
+        )
         .unwrap();
 
     server.join().unwrap();
@@ -2457,7 +2569,7 @@ fn github_links_the_changelog_when_the_body_exceeds_the_limit() {
     let mut release = release("0123456789012345678901234567890123456789".into());
     release.notes = "x".repeat(GITHUB_RELEASE_BODY_LIMIT + 1);
 
-    publisher.publish(&release).unwrap();
+    publisher.publish(&release, &Context::detached()).unwrap();
 
     server.join().unwrap();
 }
@@ -2471,7 +2583,10 @@ fn github_body_template_errors_before_reading_remote_state() {
     .with_body("{{ unknown }}");
 
     let error = publisher
-        .state(&release("0123456789012345678901234567890123456789".into()))
+        .state(
+            &release("0123456789012345678901234567890123456789".into()),
+            &Context::detached(),
+        )
         .unwrap_err();
 
     assert!(error.to_string().contains("body template"), "{error}");
@@ -2562,13 +2677,16 @@ fn github_uploads_assets_into_the_draft_before_publishing_it() {
     .with_assets(vec![asset]);
 
     let steps = publisher
-        .publish(&release("0123456789012345678901234567890123456789".into()))
+        .publish(
+            &release("0123456789012345678901234567890123456789".into()),
+            &Context::detached(),
+        )
         .unwrap();
 
     assert_eq!(
         steps,
         [ArtifactStep {
-            kind: ArtifactKind::Asset,
+            kind: ASSET,
             name: "tool-x86_64-linux".to_owned(),
             step: AssetStep::Uploaded,
         }]
@@ -2614,7 +2732,10 @@ fn github_assets_decide_whether_a_published_release_is_complete() {
         )
         .with_assets(vec![asset.clone()]);
 
-        match (publisher.state(&release).unwrap(), expected) {
+        match (
+            publisher.state(&release, &Context::detached()).unwrap(),
+            expected,
+        ) {
             (PublisherState::Conflicting(message), Err(expected)) => {
                 assert!(message.contains(expected), "{message}");
             }

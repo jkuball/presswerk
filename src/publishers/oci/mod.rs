@@ -3,14 +3,15 @@
 pub mod helm;
 pub mod image;
 
-use crate::publication::PublicationError;
+use crate::publication::{ArtifactKind, PublicationError};
+use crate::publishers::Labels;
+use crate::publishers::shared::secrets::{Secrets, Token, Username};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
 use std::fs::File;
-use std::io::{self, BufReader, Read, Seek};
+use std::io::{BufReader, Read, Seek};
 use std::sync::Mutex;
 use url::Url;
 
@@ -27,6 +28,80 @@ pub const ORIGIN_ANNOTATION: &str = "dev.presswerk.origin";
 
 const VERSION_PLACEHOLDER: &str = "{version}";
 const MANIFEST_ACCEPT: &str = "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json";
+/// A tag that names the release version, of an image or a chart.
+pub const TAG: ArtifactKind = ArtifactKind::new("tag", "pushed");
+
+const LABELS: Labels = Labels {
+    publisher: "registry",
+    artifacts: "tags",
+};
+
+/// Where a registry publisher pushes, and with which credentials.
+pub(crate) struct Registry<'a> {
+    pub repository: &'a str,
+    pub public: bool,
+    pub username: &'a Username,
+    pub password: &'a Token,
+}
+
+impl Registry<'_> {
+    fn validate(&self) -> Result<(), String> {
+        RepositoryReference::parse(self.repository)?;
+        if let Username::Secret(name) | Username::Value(name) = self.username
+            && name.is_empty()
+        {
+            return Err("the registry username must not be empty".into());
+        }
+        self.password.validate().map_err(|error| error.to_string())
+    }
+
+    /// The claim on one tag of the repository.
+    fn claim(&self, tag: &str) -> crate::publishers::Claim {
+        crate::publishers::Claim {
+            destination: format!("oci://{}", self.repository),
+            key: tag.into(),
+        }
+    }
+
+    fn credentials(&self, secrets: &Secrets) -> Result<Credentials, PublicationError> {
+        Credentials::resolve(self.username, self.password, secrets)
+    }
+
+    /// A client that pushes with the credentials.
+    fn writing_client(&self, secrets: &Secrets) -> Result<RegistryClient, PublicationError> {
+        RegistryClient::new(self.repository, Some(self.credentials(secrets)?))
+    }
+
+    /// A client that reads as `plan` and `prepare` do: anonymously if the repository is public, so
+    /// its credentials are not needed.
+    fn reading_client(&self, secrets: &Secrets) -> Result<RegistryClient, PublicationError> {
+        let credentials = if self.public {
+            None
+        } else {
+            Some(self.credentials(secrets)?)
+        };
+        RegistryClient::new(self.repository, credentials)
+    }
+
+    /// The credential variables that are unset or empty, as `lookup` reads them; none for a
+    /// public repository, which `plan` and `prepare` read anonymously.
+    fn missing_credentials(&self, lookup: impl Fn(&str) -> Option<String>) -> Vec<String> {
+        if self.public {
+            return Vec::new();
+        }
+        let username = match self.username {
+            Username::Secret(name) => Some(name.as_str()),
+            Username::Value(_) => None,
+        };
+        username
+            .into_iter()
+            .chain([self.password.secret.as_str()])
+            .filter(|name| lookup(name).is_none_or(|value| value.is_empty()))
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
 /// A registry repository such as `ghcr.io/owner/project`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepositoryReference {
@@ -184,31 +259,9 @@ impl fmt::Display for Platform {
     }
 }
 
-pub(crate) fn sha256_digest(bytes: &[u8]) -> String {
-    hex_digest(&Sha256::digest(bytes))
-}
-
-pub(crate) fn sha256_digest_reader(mut reader: impl Read) -> io::Result<String> {
-    let mut hash = Sha256::new();
-    let mut buffer = [0; 64 * 1024];
-    loop {
-        let read = reader.read(&mut buffer)?;
-        if read == 0 {
-            return Ok(hex_digest(&hash.finalize()));
-        }
-        hash.update(&buffer[..read]);
-    }
-}
-
-pub(crate) fn hex_digest(digest: &[u8]) -> String {
-    digest
-        .iter()
-        .fold(String::from("sha256:"), |mut output, byte| {
-            use fmt::Write as _;
-            let _ = write!(output, "{byte:02x}");
-            output
-        })
-}
+pub(crate) use crate::publishers::shared::digest::{
+    hex_digest, sha256_digest, sha256_digest_reader,
+};
 
 /// A blob of an image, as it is uploaded: a compressed layer or the config.
 #[derive(Debug)]
@@ -277,10 +330,29 @@ impl fmt::Debug for Credentials {
 }
 
 impl Credentials {
-    pub fn from_environment(
-        username: &crate::declaration::Username,
-        password: &str,
+    /// The credentials, with the secrets read from `secrets`.
+    pub fn resolve(
+        username: &Username,
+        password: &Token,
+        secrets: &Secrets,
     ) -> Result<Self, PublicationError> {
+        let read = |name: &str| {
+            secrets.env(name).ok_or_else(|| {
+                PublicationError::new(format!(
+                    "OCI credential environment variable {name:?} is not set or empty"
+                ))
+            })
+        };
+        Ok(Self {
+            username: match username {
+                Username::Secret(name) => read(name)?,
+                Username::Value(username) => username.clone(),
+            },
+            password: read(&password.secret)?,
+        })
+    }
+
+    pub fn from_environment(username: &Username, password: &str) -> Result<Self, PublicationError> {
         let read = |name: &str| {
             let value = env::var(name).map_err(|_| {
                 PublicationError::new(format!(
@@ -296,8 +368,8 @@ impl Credentials {
         };
         Ok(Self {
             username: match username {
-                crate::declaration::Username::Secret(name) => read(name)?,
-                crate::declaration::Username::Value(username) => username.clone(),
+                Username::Secret(name) => read(name)?,
+                Username::Value(username) => username.clone(),
             },
             password: read(password)?,
         })

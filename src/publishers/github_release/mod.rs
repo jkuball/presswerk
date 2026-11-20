@@ -1,18 +1,236 @@
 //! The GitHub Release publisher: creates a release for the tag, uploads its assets into the
 //! draft, and publishes it.
 
-use crate::declaration::GithubReleasePublisher as GithubReleaseDeclaration;
+use crate::declaration::{DeclarationError, validate_template};
 use crate::publication::{
-    ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, Publisher,
-    PublisherState, Release,
+    ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, PublisherState, Release,
+};
+use crate::publishers::shared::secrets::Token;
+use crate::publishers::{
+    Completeness, Context, Description, Labels, Publisher, PublisherType, shared,
 };
 use minijinja::{Environment, UndefinedBehavior, context};
+use semver::Version;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::env;
+use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use url::Url;
+
+pub const DEFAULT_GITHUB_RELEASE_BODY: &str = "{{ notes }}";
+
+/// A file attached to a GitHub Release.
+pub const ASSET: ArtifactKind = ArtifactKind::new("asset", "uploaded");
+
+/// `publishers.github-release.<name>`: a GitHub Release for the release tag.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GithubReleaseDeclaration {
+    pub api_url: String,
+    pub repository: String,
+    pub token: Token,
+    #[serde(default = "default_github_release_body")]
+    pub body: String,
+    /// Files attached to the release, by asset name. Each is a path in the Nix store.
+    #[serde(default)]
+    pub assets: BTreeMap<String, String>,
+}
+
+fn default_github_release_body() -> String {
+    DEFAULT_GITHUB_RELEASE_BODY.into()
+}
+
+impl GithubReleaseDeclaration {
+    fn validate(&self) -> Result<(), DeclarationError> {
+        let mut repository_parts = self.repository.split('/');
+        if repository_parts.next().is_none_or(str::is_empty)
+            || repository_parts.next().is_none_or(str::is_empty)
+            || repository_parts.next().is_some()
+        {
+            return Err(DeclarationError::Invalid(format!(
+                "GitHub repository {:?} must use owner/name form",
+                self.repository
+            )));
+        }
+        let api_url = Url::parse(&self.api_url).map_err(|error| {
+            DeclarationError::Invalid(format!(
+                "invalid GitHub API URL {:?}: {error}",
+                self.api_url
+            ))
+        })?;
+        if !matches!(api_url.scheme(), "http" | "https")
+            || api_url.cannot_be_a_base()
+            || api_url.query().is_some()
+            || api_url.fragment().is_some()
+        {
+            return Err(DeclarationError::Invalid(format!(
+                "GitHub API URL {:?} must be an HTTP(S) base URL",
+                self.api_url
+            )));
+        }
+        validate_template(
+            &self.body,
+            "publishers.github-release.<name>.body",
+            serde_json::json!({
+                "notes": "### Features\n\n- Add search\n",
+                "version": "1.2.3",
+                "tag": "v1.2.3"
+            }),
+        )?;
+        for (name, path) in &self.assets {
+            if name.is_empty() || name.contains('/') {
+                return Err(DeclarationError::Invalid(format!(
+                    "GitHub Release asset name {name:?} must be non-empty and contain no slash"
+                )));
+            }
+            if !path.starts_with('/') {
+                return Err(DeclarationError::Invalid(format!(
+                    "GitHub Release asset {name} must be an absolute store path, not {path:?}"
+                )));
+            }
+        }
+        self.token.validate()
+    }
+
+    fn client(&self, ctx: &Context) -> Result<GithubClient, PublicationError> {
+        let secret = &self.token.secret;
+        let token = ctx.session.secrets.env(secret).ok_or_else(|| {
+            PublicationError::new(format!(
+                "GitHub credential environment variable {secret:?} is not set or empty"
+            ))
+        })?;
+        GithubClient::new(&self.api_url, token)
+    }
+}
+
+/// The `github-release` publisher type.
+#[derive(Debug)]
+pub struct GithubRelease {
+    declaration: GithubReleaseDeclaration,
+    /// Built on first use, once the assets are fetched and the token is known.
+    runner: OnceLock<GithubPublisher>,
+}
+
+impl GithubRelease {
+    #[must_use]
+    pub fn declaration(&self) -> &GithubReleaseDeclaration {
+        &self.declaration
+    }
+
+    fn runner(&self, ctx: &Context) -> Result<&GithubPublisher, PublicationError> {
+        if let Some(runner) = self.runner.get() {
+            return Ok(runner);
+        }
+        let assets = self
+            .declaration
+            .assets
+            .iter()
+            .map(|(name, path)| LocalAsset::from_file(name, path))
+            .collect::<Result<_, _>>()?;
+        let runner =
+            GithubPublisher::new(self.declaration.client(ctx)?, &self.declaration.repository)
+                .with_body(&self.declaration.body)
+                .with_changelog(&ctx.session.changelog)
+                .with_assets(assets);
+        Ok(self.runner.get_or_init(|| runner))
+    }
+}
+
+/// Whether a GitHub Release in `state` completes `release`: published, with the expected
+/// prerelease flag. Its assets are not checked; a republish repairs a missing one.
+#[must_use]
+pub fn completeness_of(
+    repository: &str,
+    release: &Release,
+    state: &GithubReleaseState,
+) -> Completeness {
+    let expected_prerelease = !release.version.pre.is_empty();
+    match state {
+        GithubReleaseState::Published { prerelease } if *prerelease == expected_prerelease => {
+            Completeness::Complete
+        }
+        state => Completeness::Incomplete {
+            target: format!("GitHub Release {:?} in {repository}", release.tag),
+            reason: format!("{state:?}"),
+        },
+    }
+}
+
+impl PublisherType for GithubRelease {
+    const NAME: &'static str = "github-release";
+
+    fn from_declaration(declaration: &Value) -> Result<Self, DeclarationError> {
+        let declaration: GithubReleaseDeclaration = shared::decode(declaration)?;
+        declaration.validate()?;
+        Ok(Self {
+            declaration,
+            runner: OnceLock::new(),
+        })
+    }
+}
+
+impl Publisher for GithubRelease {
+    fn describe(&self, _version: &Version, tag: &str) -> Description {
+        Description {
+            target: self.declaration.repository.clone(),
+            // Store paths are left out: the release commit's artifacts get their own paths.
+            items: std::iter::once(("release".into(), tag.into()))
+                .chain(
+                    self.declaration
+                        .assets
+                        .keys()
+                        .map(|asset| ("asset".into(), asset.clone())),
+                )
+                .collect(),
+        }
+    }
+
+    fn artifacts(&self) -> Vec<(String, String)> {
+        self.declaration
+            .assets
+            .iter()
+            .map(|(name, path)| (format!("asset {name}"), path.clone()))
+            .collect()
+    }
+
+    fn completeness(
+        &self,
+        release: &Release,
+        ctx: &Context,
+    ) -> Result<Completeness, PublicationError> {
+        let state = self
+            .declaration
+            .client(ctx)?
+            .release_state(&self.declaration.repository, &release.tag)?;
+        Ok(completeness_of(
+            &self.declaration.repository,
+            release,
+            &state,
+        ))
+    }
+
+    fn state(&self, release: &Release, ctx: &Context) -> Result<PublisherState, PublicationError> {
+        self.runner(ctx)?.state(release, ctx)
+    }
+
+    fn publish(&self, release: &Release, ctx: &Context) -> Result<ArtifactSteps, PublicationError> {
+        self.runner(ctx)?.publish(release, ctx)
+    }
+
+    fn complete_steps(
+        &self,
+        release: &Release,
+        ctx: &Context,
+    ) -> Result<ArtifactSteps, PublicationError> {
+        self.runner(ctx)?.complete_steps(release, ctx)
+    }
+
+    fn labels(&self) -> Labels {
+        GithubPublisher::LABELS
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GithubReleaseState {
@@ -47,20 +265,6 @@ impl fmt::Debug for GithubClient {
 }
 
 impl GithubClient {
-    pub fn from_environment(api_url: &str, secret: &str) -> Result<Self, PublicationError> {
-        let token = env::var(secret).map_err(|_| {
-            PublicationError::new(format!(
-                "GitHub credential environment variable {secret:?} is not set"
-            ))
-        })?;
-        if token.is_empty() {
-            return Err(PublicationError::new(format!(
-                "GitHub credential environment variable {secret:?} is empty"
-            )));
-        }
-        Self::new(api_url, token)
-    }
-
     pub fn new(api_url: &str, token: impl Into<String>) -> Result<Self, PublicationError> {
         let api_url = Url::parse(api_url).map_err(|error| {
             PublicationError::new(format!("invalid GitHub API URL {api_url:?}: {error}"))
@@ -152,12 +356,12 @@ impl GithubClient {
         &self,
         repository: &str,
         tag: &str,
-    ) -> Result<Option<GithubRelease>, PublicationError> {
+    ) -> Result<Option<RemoteRelease>, PublicationError> {
         self.validate_repository(repository)?;
         let url = self.endpoint(repository, &["releases", "tags", tag])?;
         match self.request("GET", &url).call() {
             Ok(response) => response
-                .into_json::<GithubRelease>()
+                .into_json::<RemoteRelease>()
                 .map(Some)
                 .map_err(|error| {
                     PublicationError::new(format!(
@@ -179,7 +383,7 @@ impl GithubClient {
         &self,
         repository: &str,
         tag: &str,
-    ) -> Result<Option<GithubRelease>, PublicationError> {
+    ) -> Result<Option<RemoteRelease>, PublicationError> {
         const PER_PAGE: usize = 100;
         let mut matches = Vec::new();
         for page in 1.. {
@@ -187,7 +391,7 @@ impl GithubClient {
             url.query_pairs_mut()
                 .append_pair("per_page", &PER_PAGE.to_string())
                 .append_pair("page", &page.to_string());
-            let releases: Vec<ListedGithubRelease> = match self.request("GET", &url).call() {
+            let releases: Vec<ListedRemoteRelease> = match self.request("GET", &url).call() {
                 Ok(response) => response.into_json().map_err(|error| {
                     PublicationError::new(format!(
                         "could not decode GitHub Releases of {repository}: {error}"
@@ -234,7 +438,7 @@ impl GithubClient {
         repository: &str,
         release: &Release,
         body: &str,
-    ) -> Result<GithubRelease, PublicationError> {
+    ) -> Result<RemoteRelease, PublicationError> {
         let url = self.endpoint(repository, &["releases"])?;
         let request = GithubReleaseRequest {
             tag_name: &release.tag,
@@ -246,7 +450,7 @@ impl GithubClient {
         };
         match self.request("POST", &url).send_json(&request) {
             Ok(response) => {
-                let created: GithubRelease = response.into_json().map_err(|error| {
+                let created: RemoteRelease = response.into_json().map_err(|error| {
                     PublicationError::new(format!(
                         "could not decode created GitHub Release {:?} in {repository}: {error}",
                         release.tag
@@ -286,7 +490,7 @@ impl GithubClient {
         repository: &str,
         release: &Release,
         id: u64,
-    ) -> Result<GithubRelease, PublicationError> {
+    ) -> Result<RemoteRelease, PublicationError> {
         let id = id.to_string();
         let url = self.endpoint(repository, &["releases", &id])?;
         match self
@@ -330,7 +534,7 @@ impl GithubClient {
         &self,
         repository: &str,
         release: &Release,
-        github_release: &GithubRelease,
+        github_release: &RemoteRelease,
         asset: &LocalAsset,
     ) -> Result<(), PublicationError> {
         let template = github_release.upload_url.as_deref().ok_or_else(|| {
@@ -426,14 +630,7 @@ impl LocalAsset {
                 path.display()
             ))
         })?;
-        let digest =
-            Sha256::digest(&bytes)
-                .iter()
-                .fold(String::from("sha256:"), |mut digest, byte| {
-                    use fmt::Write as _;
-                    let _ = write!(digest, "{byte:02x}");
-                    digest
-                });
+        let digest = shared::digest::sha256_digest(&bytes);
         Ok(Self { name, path, digest })
     }
 }
@@ -451,33 +648,16 @@ pub struct GithubPublisher {
 pub const GITHUB_RELEASE_BODY_LIMIT: usize = 125_000;
 
 impl GithubPublisher {
-    /// Build the publisher from its declaration; its assets must already be fetched.
-    pub fn from_declaration(
-        declaration: &GithubReleaseDeclaration,
-        changelog: &str,
-    ) -> Result<Self, PublicationError> {
-        let assets = declaration
-            .assets
-            .iter()
-            .map(|(name, path)| LocalAsset::from_file(name, path))
-            .collect::<Result<_, _>>()?;
-        Ok(Self {
-            client: GithubClient::from_environment(
-                &declaration.api_url,
-                &declaration.token.secret,
-            )?,
-            repository: declaration.repository.clone(),
-            body: declaration.body.clone(),
-            changelog: changelog.into(),
-            assets,
-        })
-    }
+    const LABELS: Labels = Labels {
+        publisher: "release",
+        artifacts: "assets",
+    };
 
     pub fn new(client: GithubClient, repository: impl Into<String>) -> Self {
         Self {
             client,
             repository: repository.into(),
-            body: crate::declaration::DEFAULT_GITHUB_RELEASE_BODY.into(),
+            body: DEFAULT_GITHUB_RELEASE_BODY.into(),
             changelog: "CHANGELOG.md".into(),
             assets: Vec::new(),
         }
@@ -582,7 +762,7 @@ impl GithubPublisher {
     fn remote_asset(
         &self,
         release: &Release,
-        github_release: &GithubRelease,
+        github_release: &RemoteRelease,
         asset: &LocalAsset,
     ) -> Result<bool, String> {
         let Some(remote) = github_release
@@ -606,16 +786,35 @@ impl GithubPublisher {
     }
 }
 
+/// A GitHub Release publisher with its own client, such as one for a test server.
 impl Publisher for GithubPublisher {
-    fn state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
+    fn describe(&self, _version: &Version, tag: &str) -> Description {
+        Description {
+            target: self.repository.clone(),
+            items: std::iter::once(("release".into(), tag.into()))
+                .chain(
+                    self.assets
+                        .iter()
+                        .map(|asset| ("asset".into(), asset.name.clone())),
+                )
+                .collect(),
+        }
+    }
+
+    fn completeness(
+        &self,
+        release: &Release,
+        _ctx: &Context,
+    ) -> Result<Completeness, PublicationError> {
+        let state = self.client.release_state(&self.repository, &release.tag)?;
+        Ok(completeness_of(&self.repository, release, &state))
+    }
+
+    fn state(&self, release: &Release, _ctx: &Context) -> Result<PublisherState, PublicationError> {
         self.checked_state(release)
     }
 
-    fn publish_with_progress(
-        &self,
-        release: &Release,
-        progress: &mut dyn FnMut(&ArtifactStep),
-    ) -> Result<ArtifactSteps, PublicationError> {
+    fn publish(&self, release: &Release, ctx: &Context) -> Result<ArtifactSteps, PublicationError> {
         let body = self.body(release)?;
         let github_release = match self.client.release(&self.repository, &release.tag)? {
             None => self.client.create_draft(&self.repository, release, &body)?,
@@ -648,11 +847,11 @@ impl Publisher for GithubPublisher {
                 AssetStep::Uploaded
             };
             let step = ArtifactStep {
-                kind: ArtifactKind::Asset,
+                kind: ASSET,
                 name: asset.name.clone(),
                 step,
             };
-            progress(&step);
+            ctx.progress(&step);
             steps.push(step);
         }
         if github_release.draft {
@@ -669,21 +868,29 @@ impl Publisher for GithubPublisher {
         }
     }
 
-    fn complete_steps(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
+    fn complete_steps(
+        &self,
+        _release: &Release,
+        _ctx: &Context,
+    ) -> Result<ArtifactSteps, PublicationError> {
         Ok(self
             .assets
             .iter()
             .map(|asset| ArtifactStep {
-                kind: ArtifactKind::Asset,
+                kind: ASSET,
                 name: asset.name.clone(),
                 step: AssetStep::AlreadyUploaded,
             })
             .collect())
     }
+
+    fn labels(&self) -> Labels {
+        Self::LABELS
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct GithubRelease {
+struct RemoteRelease {
     id: u64,
     draft: bool,
     prerelease: bool,
@@ -691,11 +898,11 @@ struct GithubRelease {
     #[serde(default)]
     upload_url: Option<String>,
     #[serde(default)]
-    assets: Vec<GithubAsset>,
+    assets: Vec<RemoteAsset>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct GithubAsset {
+struct RemoteAsset {
     name: String,
     /// The asset's content digest, such as `sha256:…`; GitHub reports it for uploaded assets.
     #[serde(default)]
@@ -703,10 +910,10 @@ struct GithubAsset {
 }
 
 #[derive(Debug, Deserialize)]
-struct ListedGithubRelease {
+struct ListedRemoteRelease {
     tag_name: String,
     #[serde(flatten)]
-    release: GithubRelease,
+    release: RemoteRelease,
 }
 
 #[derive(Debug, Serialize)]
