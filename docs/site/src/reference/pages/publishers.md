@@ -46,6 +46,38 @@ Publishers form a dependency graph. Name a publisher as `<type>.<name>` in [`aft
 [`before`](/reference/options/#publishers.github-release.name.before) expresses the same edge from
 the other side. Unknown publisher names and cycles fail module evaluation.
 
+## Claims
+
+Two publishers must never write the same remote object, such as the same tag in one OCI repository
+or two GitHub Releases for one tag in one repository: the second would only conflict once the tag is
+pushed and leave a partial release. Every publisher claims what it writes, and two publishers that
+claim the same object fail module evaluation. Tag templates are rendered with the sample version
+`1.2.3`. `plan`, `prepare`, and `publish` check the claims again with the version they release, so
+a collision that only that version renders, such as an alias `0.1.0` next to the Helm chart of
+`0.1.0`, stops before anything is written.
+
+## Credentials
+
+Every credential of every publisher has the same shape: the value itself, `{ value = "…"; }`, for
+what is no secret, such as a registry username, or a secret read at run time,
+`{ secret.env = "NAME"; }`, from the environment variable `NAME`.
+
+```nix
+{
+  publishers.oci-image.api = {
+    # …
+    username.value = "oauth2accesstoken";
+    password.secret.env = "REGISTRY_TOKEN";
+  };
+}
+```
+
+Secrets never enter the declaration or the Nix store. `publish` reads every secret the declaration
+names before it writes anything and stops if one is unset or empty, even if this run would not need
+it, so a release never stops halfway for a missing secret. `plan` and `prepare` only warn about
+missing secrets, unless they need one to check the previous release. Presswerk replaces every
+secret value it read with `[redacted]` in what it prints.
+
 ## Publishing
 
 Before anything is written, `presswerk publish` checks the release tag and the state of every
