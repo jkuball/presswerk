@@ -5,7 +5,8 @@
 Credentials share one shape across all publishers: the value itself, `{ value = "…"; }`, or a
 secret read at run time, `{ secret.env = "NAME"; }`. Rename `token.secret = "NAME";`,
 `username.secret = "NAME";`, and `password.secret = "NAME";` to `token.secret.env`,
-`username.secret.env`, and `password.secret.env`; `username.value` stays as it is.
+`username.secret.env`, and `password.secret.env`; `username.value` stays as it is. Tokens and
+passwords are always secrets.
 
 This CLI cannot read a release declaration written with the old shape. Once you have confirmed that
 the previous release is complete, the first release after updating needs

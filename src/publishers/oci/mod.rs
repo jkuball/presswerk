@@ -48,7 +48,7 @@ impl Registry<'_> {
         RepositoryReference::parse(self.repository)?;
         self.username
             .validate()
-            .and_then(|()| self.password.validate())
+            .and_then(|()| self.password.validate_secret("registry password"))
             .map_err(|error| error.to_string())
     }
 

@@ -59,9 +59,10 @@ a collision that only that version renders, such as an alias `0.1.0` next to the
 
 ## Credentials
 
-Every credential of every publisher has the same shape: the value itself, `{ value = "…"; }`, for
-what is no secret, such as a registry username, or a secret read at run time,
-`{ secret.env = "NAME"; }`, from the environment variable `NAME`.
+Every credential of every publisher has the same shape: a secret read at run time,
+`{ secret.env = "NAME"; }`, from the environment variable `NAME`, or, for what is no secret, such
+as a registry username, the value itself, `{ value = "…"; }`. Tokens and passwords are always
+secrets.
 
 ```nix
 {

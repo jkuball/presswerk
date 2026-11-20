@@ -1151,6 +1151,16 @@ mod tests {
         });
         ReleaseDeclaration::from_json(&logical_name).unwrap();
 
+        let literal = declaration(|value| {
+            value["publishers"]["github-release"]["default"]["token"] = json!({ "value": "ghp_x" });
+        });
+        assert!(
+            ReleaseDeclaration::from_json(&literal)
+                .unwrap_err()
+                .to_string()
+                .contains("the GitHub token must be a secret")
+        );
+
         let empty_name = declaration(|value| {
             value["publishers"]["github-release"]["default"]["token"]["secret"]["env"] = json!("");
         });

@@ -91,7 +91,7 @@ impl GithubReleaseDeclaration {
                 )));
             }
         }
-        self.token.validate()
+        self.token.validate_secret("GitHub token")
     }
 
     fn client(&self, ctx: &Context) -> Result<GithubClient, PublicationError> {

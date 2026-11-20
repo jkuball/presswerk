@@ -26,7 +26,7 @@ in
     };
 
     password = mkOption {
-      type = publisherLib.credential { what = "registry password or token"; };
+      type = publisherLib.credential { what = "registry password or token"; secretOnly = true; };
       example = { secret.env = "REGISTRY_TOKEN"; };
       description = "Registry password or token, such as `{ secret.env = \"REGISTRY_TOKEN\"; }`, read from an environment variable at run time.";
     };

@@ -37,7 +37,7 @@
           };
 
           token = mkOption {
-            type = publisherLib.credential { what = "GitHub API token"; };
+            type = publisherLib.credential { what = "GitHub API token"; secretOnly = true; };
             default = { secret.env = "GITHUB_TOKEN"; };
             example = { secret.env = "PRESSWERK_GITHUB_TOKEN"; };
             description = "The GitHub API token: `{ secret.env = \"NAME\"; }` reads it from an environment variable at run time.";
@@ -63,7 +63,8 @@
           declaration = { inherit (config) apiUrl repository body token assets; };
           # One repository has one release per tag.
           claims = [{
-            destination = "${lib.removeSuffix "/" config.apiUrl}/repos/${config.repository}";
+            # GitHub names are case-insensitive, so `Owner/Project` is `owner/project`.
+            destination = "${lib.removeSuffix "/" config.apiUrl}/repos/${lib.toLower config.repository}";
             key = tagFormat;
           }];
         };

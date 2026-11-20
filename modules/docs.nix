@@ -69,7 +69,7 @@ in
         loc = [ "publishers" "github-release" "<name>" "token" ];
         anchor = "publishers.github-release.name.token";
         readOnly = false;
-        type = "attribute-tagged union with choices: secret, value";
+        type = "attribute-tagged union with choices: secret";
         default = {
           kind = "nix";
           text = ''

@@ -622,7 +622,7 @@ in
       expected = [ true true false false true ];
     };
 
-    "test credentials are a value or a secret source, never the old secret name" = {
+    "test a token is a secret source, never a value or the old secret name" = {
       expr = map
         (token: succeeds (mkRelease {
           sourceRoot = fixtureRoot;
@@ -634,13 +634,13 @@ in
         }).publishers)
         [
           { secret.env = "PRESSWERK_GITHUB_TOKEN"; }
-          { value = "not-a-secret"; }
+          { value = "ghp_written-into-the-declaration"; }
           { secret = "GITHUB_TOKEN"; }
           { }
           { secret.env = ""; }
           { secret.env = "GITHUB_TOKEN"; value = "token"; }
         ];
-      expected = [ true true false false false false ];
+      expected = [ true false false false false false ];
     };
 
     "test a literal OCI username normalizes without the secret" = {
@@ -704,6 +704,8 @@ in
           { aliases = [ "{unknown}" ]; }
           { aliases = [ "latest" "latest" ]; }
           { aliases = [ "{major}.{minor}.{patch}" ]; }
+          # A password is always a secret.
+          { password.value = "written-into-the-declaration"; }
           # A username comes from exactly one source.
           { username = { secret.env = "REGISTRY_USERNAME"; value = "user"; }; }
           # Exactly one compression, with a level in range.
@@ -711,7 +713,7 @@ in
           { compression.gzip.enable = false; }
           { compression.zstd = { enable = true; level = 23; }; }
         ];
-      expected = [ true true true true true true true true true false false false false false false false false false false false false false false false false false false false false false false ];
+      expected = [ true true true true true true true true true false false false false false false false false false false false false false false false false false false false false false false false ];
     };
 
     "test OCI image publishers of one repository share no image tag" = {
@@ -776,8 +778,10 @@ in
           { repository = "owner/other"; }
           { repository = "owner/project"; apiUrl = "https://github.example/api/v3"; }
           { repository = "owner/project"; }
+          # GitHub names are case-insensitive.
+          { repository = "Owner/Project"; }
         ];
-      expected = [ true true false ];
+      expected = [ true true false false ];
     };
 
     "test publisher dependencies normalize to after edges" = {

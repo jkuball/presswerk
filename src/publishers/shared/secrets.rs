@@ -32,6 +32,17 @@ impl Credential {
         Self::Secret(SecretSource::Env(name.into()))
     }
 
+    /// Validates a credential that is always a secret, such as a token or password, which must
+    /// never be written into the declaration.
+    pub fn validate_secret(&self, what: &str) -> Result<(), DeclarationError> {
+        if let Self::Value(_) = self {
+            return Err(DeclarationError::Invalid(format!(
+                "the {what} must be a secret, such as {{ \"secret\": {{ \"env\": \"NAME\" }} }}, never a value in the declaration"
+            )));
+        }
+        self.validate()
+    }
+
     pub fn validate(&self) -> Result<(), DeclarationError> {
         match self {
             Self::Value(value) if value.is_empty() => Err(DeclarationError::Invalid(

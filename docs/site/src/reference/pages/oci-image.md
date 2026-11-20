@@ -146,8 +146,7 @@ most registries use.
 
 A username that is no secret can be given as `username.value` instead, such as
 `oauth2accesstoken` for Google Artifact Registry. It is written into the declaration like any
-other option. Every credential of every publisher has this shape: `{ value = "…"; }` or
-`{ secret.env = "NAME"; }`.
+other option. The password is always a secret.
 
 `publish` always needs the credentials. By default, `plan` and `prepare` need them too, as soon as a
 previous release declared this publisher, since they read that release's tags. With

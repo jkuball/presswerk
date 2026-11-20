@@ -604,11 +604,9 @@
           );
           # A credential, in the shape every publisher type shares: the value itself, or where
           # to read it at run time. More sources may follow.
-          credential = { what, valueExample ? null }: types.attrTag {
-            value = mkOption ({
-              type = types.nonEmptyStr;
-              description = "The ${what} itself, written into the release declaration; only for what is no secret.";
-            } // lib.optionalAttrs (valueExample != null) { example = valueExample; });
+          # `secretOnly` is for what is always a secret, such as a token or password: it may never
+          # be written into the declaration.
+          credential = { what, valueExample ? null, secretOnly ? false }: types.attrTag ({
             secret = mkOption {
               type = types.attrTag {
                 env = mkOption {
@@ -619,7 +617,12 @@
               };
               description = "Where to read the ${what} at run time. `publish` reads every declared secret before it writes anything and stops if one is missing.";
             };
-          };
+          } // lib.optionalAttrs (!secretOnly) {
+            value = mkOption ({
+              type = types.nonEmptyStr;
+              description = "The ${what} itself, written into the release declaration; only for what is no secret.";
+            } // lib.optionalAttrs (valueExample != null) { example = valueExample; });
+          });
           # The version that claims and templates are rendered with; its parts differ.
           inherit sampleVersion renderTemplate;
         };
