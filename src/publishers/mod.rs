@@ -471,8 +471,8 @@ mod tests {
                     },
                     "tags": ["v{version}"],
                     "aliases": ["0.1.0"],
-                    "username": { "secret": { "env": "REGISTRY_USERNAME" } },
-                    "password": { "secret": { "env": "REGISTRY_TOKEN" } },
+                    "username": { "env": "REGISTRY_USERNAME" },
+                    "password": { "env": "REGISTRY_TOKEN" },
                     "claims": [
                         { "destination": "oci://ghcr.io/owner/project", "key": "v{version}" },
                         { "destination": "oci://ghcr.io/owner/project", "key": "0.1.0" }
@@ -483,8 +483,8 @@ mod tests {
                 "chart": {
                     "repository": "ghcr.io/owner/project",
                     "chart": "/nix/store/00000000000000000000000000000000-chart.tgz",
-                    "username": { "secret": { "env": "REGISTRY_USERNAME" } },
-                    "password": { "secret": { "env": "REGISTRY_TOKEN" } },
+                    "username": { "env": "REGISTRY_USERNAME" },
+                    "password": { "env": "REGISTRY_TOKEN" },
                     "claims": [
                         { "destination": "oci://ghcr.io/owner/project", "key": "{version}" }
                     ]

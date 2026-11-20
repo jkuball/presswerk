@@ -1662,7 +1662,7 @@ mod tests {
     fn an_image_executable_inherits_no_secret() {
         let _secrets = crate::publishers::shared::secrets::Secrets::resolve_with(
             &serde_json::json!({ "oci-image": { "default": {
-                "password": { "secret": { "env": "PRESSWERK_TEST_IMAGE_EXECUTABLE_SECRET" } }
+                "password": { "env": "PRESSWERK_TEST_IMAGE_EXECUTABLE_SECRET" }
             } } }),
             // A multiline value, such as JSON registry credentials.
             |_| Some("{\n  \"password\": \"presswerk-multiline-sentinel\"\n}".into()),
@@ -1678,7 +1678,7 @@ mod tests {
         // Resolving a secret is what makes its value one that output never shows.
         let _secrets = crate::publishers::shared::secrets::Secrets::resolve_with(
             &serde_json::json!({ "oci-image": { "default": {
-                "password": { "secret": { "env": "PRESSWERK_TEST_DIAGNOSTICS" } }
+                "password": { "env": "PRESSWERK_TEST_DIAGNOSTICS" }
             } } }),
             |_| Some("presswerk-diagnostics-sentinel".into()),
         );

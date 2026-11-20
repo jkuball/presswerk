@@ -939,7 +939,7 @@ mod tests {
             "repository": "ghcr.io/owner/charts/project",
             "chart": "/nix/store/abc-project.tgz",
             "username": { "value": "user" },
-            "password": { "secret": { "env": "REGISTRY_TOKEN" } }
+            "password": { "env": "REGISTRY_TOKEN" }
         }))
         .unwrap();
         let version = Version::parse(&format!("1.2.3-{}", "a".repeat(123))).unwrap();

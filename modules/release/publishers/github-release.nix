@@ -38,9 +38,9 @@
 
           token = mkOption {
             type = publisherLib.credential { what = "GitHub API token"; secretOnly = true; };
-            default = { secret.env = "GITHUB_TOKEN"; };
-            example = { secret.env = "PRESSWERK_GITHUB_TOKEN"; };
-            description = "The GitHub API token: `{ secret.env = \"NAME\"; }` reads it from an environment variable at run time.";
+            default = { env = "GITHUB_TOKEN"; };
+            example = { env = "PRESSWERK_GITHUB_TOKEN"; };
+            description = "The GitHub API token: `{ env = \"NAME\"; }` reads it from an environment variable at run time.";
           };
 
           assets = mkOption {

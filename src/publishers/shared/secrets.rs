@@ -1,28 +1,50 @@
 //! Credentials that publishers need, such as API tokens and registry passwords.
 //!
-//! A declaration gives each credential in one shape, whatever its publisher: the value itself,
-//! `{ "value": "…" }`, for what is no secret, or a source to read it from at run time,
-//! `{ "secret": { "env": "NAME" } }`. The core finds every secret of a declaration, resolves them
+//! A declaration gives each credential in one shape, whatever its publisher: exactly one of the
+//! value itself, `{ "value": "…" }`, for what is no secret, or a secret source to read it from at
+//! run time, such as `{ "env": "NAME" }`. The core finds every secret of a declaration, resolves them
 //! all before a publisher runs, and redacts their values from everything it prints.
 
 use crate::declaration::DeclarationError;
 use crate::publication::PublicationError;
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
 use std::sync::{Mutex, PoisonError};
 
-/// A credential of a publisher: given in the declaration, or read from a secret source.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase", deny_unknown_fields)]
+/// A credential of a publisher: given in the declaration, or read from a secret source. Each
+/// source is a sibling of `value`, such as `{ "env": "NAME" }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Credential {
     /// The value itself, written into the declaration, such as a registry username that is no
     /// secret.
     Value(String),
     /// Where to read the value at run time.
+    #[serde(untagged)]
     Secret(SecretSource),
+}
+
+impl<'de> Deserialize<'de> for Credential {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        /// Every shape a credential may have, flat, so that an unknown one is named.
+        #[derive(Deserialize)]
+        #[serde(rename_all = "lowercase", deny_unknown_fields)]
+        enum Shape {
+            Value(String),
+            Env(String),
+        }
+        match Shape::deserialize(deserializer) {
+            Ok(Shape::Value(value)) => Ok(Self::Value(value)),
+            Ok(Shape::Env(name)) => Ok(Self::env(name)),
+            Err(error) => Err(D::Error::custom(format!(
+                "a credential is exactly one of {{ \"value\": \"…\" }} or a secret source such as {{ \"env\": \"NAME\" }}: {error}"
+            ))),
+        }
+    }
 }
 
 impl Credential {
@@ -37,7 +59,7 @@ impl Credential {
     pub fn validate_secret(&self, what: &str) -> Result<(), DeclarationError> {
         if let Self::Value(_) = self {
             return Err(DeclarationError::Invalid(format!(
-                "the {what} must be a secret, such as {{ \"secret\": {{ \"env\": \"NAME\" }} }}, never a value in the declaration"
+                "the {what} must be a secret, such as {{ \"env\": \"NAME\" }}, never a value in the declaration"
             )));
         }
         self.validate()
@@ -80,8 +102,7 @@ pub fn collect(publishers: &Value) -> Vec<(String, SecretSource)> {
         match value {
             Value::Object(object) => {
                 if object.len() == 1
-                    && object.contains_key("secret")
-                    && let Ok(Credential::Secret(source)) = Credential::deserialize(value.clone())
+                    && let Ok(source) = SecretSource::deserialize(value.clone())
                 {
                     found.push((path.to_owned(), source));
                     return;
@@ -234,20 +255,18 @@ mod tests {
     fn reads_a_value_or_a_secret_source() {
         for (json, expected) in [
             (json!({ "value": "user" }), Credential::Value("user".into())),
-            (
-                json!({ "secret": { "env": "TOKEN" } }),
-                Credential::env("TOKEN"),
-            ),
+            (json!({ "env": "TOKEN" }), Credential::env("TOKEN")),
         ] {
             assert_eq!(Credential::deserialize(json).unwrap(), expected);
         }
         for invalid in [
             json!({}),
-            json!({ "value": "user", "secret": { "env": "TOKEN" } }),
-            json!({ "secret": { "vault": "path" } }),
-            // The shape before credentials were shared; such a declaration is one this CLI
-            // cannot read.
+            json!({ "value": "user", "env": "TOKEN" }),
+            json!({ "vault": "path" }),
+            // The shapes before credentials were flat; such a declaration is one this CLI cannot
+            // read.
             json!({ "secret": "TOKEN" }),
+            json!({ "secret": { "env": "TOKEN" } }),
         ] {
             assert!(
                 Credential::deserialize(invalid.clone()).is_err(),
@@ -256,18 +275,18 @@ mod tests {
         }
         assert_eq!(
             serde_json::to_value(Credential::env("TOKEN")).unwrap(),
-            json!({ "secret": { "env": "TOKEN" } })
+            json!({ "env": "TOKEN" })
         );
     }
 
     #[test]
     fn collects_every_secret_of_every_publisher_and_reports_the_missing_ones() {
         let publishers = json!({
-            "github-release": { "default": { "token": { "secret": { "env": "GITHUB_TOKEN" } } } },
+            "github-release": { "default": { "token": { "env": "GITHUB_TOKEN" } } },
             "oci-image": {
                 "default": {
                     "username": { "value": "oauth2accesstoken" },
-                    "password": { "secret": { "env": "REGISTRY_TOKEN" } }
+                    "password": { "env": "REGISTRY_TOKEN" }
                 }
             }
         });

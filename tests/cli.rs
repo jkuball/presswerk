@@ -62,7 +62,7 @@ fn ordinary_repository() -> GitRepo {
       publishers."github-release".default = {
         apiUrl = "https://api.github.com";
         repository = "owner/project";
-        token.secret.env = "GITHUB_TOKEN";
+        token.env = "GITHUB_TOKEN";
       };
     };
   };
@@ -97,7 +97,7 @@ const RELEASE_FLAKE: &str = r#"{
       publishers."github-release".default = {
         apiUrl = "https://api.github.com";
         repository = "owner/project";
-        token.secret.env = "GITHUB_TOKEN";
+        token.env = "GITHUB_TOKEN";
       };
     };
   };
@@ -464,8 +464,16 @@ fn prepare_adopts_a_release_of_another_tool_once_it_is_trusted() {
 #[test]
 fn a_predecessor_with_the_old_secret_shape_needs_trust() {
     predecessor_this_cli_cannot_read_needs_trust(
-        &RELEASE_FLAKE.replace("token.secret.env = ", "token.secret = "),
-        "unknown variant `GITHUB_TOKEN`, expected `env`",
+        &RELEASE_FLAKE.replace("token.env = ", "token.secret = "),
+        "unknown variant `secret`, expected `value` or `env`",
+    );
+}
+
+#[test]
+fn a_predecessor_with_the_nested_secret_shape_needs_trust() {
+    predecessor_this_cli_cannot_read_needs_trust(
+        &RELEASE_FLAKE.replace("token.env = ", "token.secret.env = "),
+        "unknown variant `secret`, expected `value` or `env`",
     );
 }
 
@@ -712,7 +720,7 @@ fn a_release_tagged_on_only_one_side_is_not_pending() {
         r#"publishers."github-release".default = {
         apiUrl = "https://api.github.com";
         repository = "owner/project";
-        token.secret.env = "GITHUB_TOKEN";
+        token.env = "GITHUB_TOKEN";
       };"#,
         r#"publishers."github-release" = { };"#,
     );

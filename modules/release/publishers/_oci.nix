@@ -21,14 +21,14 @@ in
 
     username = mkOption {
       type = publisherLib.credential { what = "registry username"; valueExample = "oauth2accesstoken"; };
-      example = { secret.env = "REGISTRY_USERNAME"; };
-      description = "Registry username: `{ secret.env = \"NAME\"; }` reads it from an environment variable at run time; `{ value = \"…\"; }` writes it into the release declaration, for registries where it is no secret, such as `oauth2accesstoken` for Google Artifact Registry.";
+      example = { env = "REGISTRY_USERNAME"; };
+      description = "Registry username: `{ env = \"NAME\"; }` reads it from an environment variable at run time; `{ value = \"…\"; }` writes it into the release declaration, for registries where it is no secret, such as `oauth2accesstoken` for Google Artifact Registry.";
     };
 
     password = mkOption {
       type = publisherLib.credential { what = "registry password or token"; secretOnly = true; };
-      example = { secret.env = "REGISTRY_TOKEN"; };
-      description = "Registry password or token, such as `{ secret.env = \"REGISTRY_TOKEN\"; }`, read from an environment variable at run time.";
+      example = { env = "REGISTRY_TOKEN"; };
+      description = "Registry password or token, such as `{ env = \"REGISTRY_TOKEN\"; }`, read from an environment variable at run time.";
     };
   };
 

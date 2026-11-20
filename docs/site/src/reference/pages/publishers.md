@@ -59,9 +59,9 @@ a collision that only that version renders, such as an alias `0.1.0` next to the
 
 ## Credentials
 
-Every credential of every publisher has the same shape: a secret read at run time,
-`{ secret.env = "NAME"; }`, from the environment variable `NAME`, or, for what is no secret, such
-as a registry username, the value itself, `{ value = "…"; }`. Tokens and passwords are always
+Every credential of every publisher has the same shape: exactly one of a secret source read at run
+time, such as `{ env = "NAME"; }` for the environment variable `NAME`, or, for what is no secret,
+such as a registry username, the value itself, `{ value = "…"; }`. Tokens and passwords are always
 secrets.
 
 ```nix
@@ -69,7 +69,7 @@ secrets.
   publishers.oci-image.api = {
     # …
     username.value = "oauth2accesstoken";
-    password.secret.env = "REGISTRY_TOKEN";
+    password.env = "REGISTRY_TOKEN";
   };
 }
 ```

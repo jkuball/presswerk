@@ -602,20 +602,16 @@
             types.addCheck types.str (path: builtins.hasContext path && lib.hasPrefix "${builtins.storeDir}/" path)
             // { description = "file in a flake output"; }
           );
-          # A credential, in the shape every publisher type shares: the value itself, or where
-          # to read it at run time. More sources may follow.
+          # A credential, in the shape every publisher type shares: exactly one of the value
+          # itself or a secret source to read it from at run time. More sources, siblings of
+          # `env`, may follow.
           # `secretOnly` is for what is always a secret, such as a token or password: it may never
           # be written into the declaration.
           credential = { what, valueExample ? null, secretOnly ? false }: types.attrTag ({
-            secret = mkOption {
-              type = types.attrTag {
-                env = mkOption {
-                  type = types.nonEmptyStr;
-                  example = "PRESSWERK_TOKEN";
-                  description = "Name of the environment variable that holds the ${what}.";
-                };
-              };
-              description = "Where to read the ${what} at run time. `publish` reads every declared secret before it writes anything and stops if one is missing.";
+            env = mkOption {
+              type = types.nonEmptyStr;
+              example = "PRESSWERK_TOKEN";
+              description = "Name of the environment variable that holds the ${what}, read at run time. `publish` reads every declared secret before it writes anything and stops if one is missing.";
             };
           } // lib.optionalAttrs (!secretOnly) {
             value = mkOption ({

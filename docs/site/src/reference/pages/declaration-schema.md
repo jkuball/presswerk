@@ -52,8 +52,8 @@ Every field is required, and unknown fields are rejected.
   name. All may be empty. Every publisher has `after`, a list of publisher addresses in
   `<type>.<name>` form that must complete first. It may be missing in older declarations and then
   means an empty list. The module-only `before` option never enters the declaration. A credential
-  is either `{ "value": "…" }` or `{ "secret": { "env": "NAME" } }`; a `token` or `password` is
-  always a secret. Every publisher also has `claims`, the remote objects it writes, each with a
+  is exactly one of `{ "value": "…" }` or a secret source, `{ "env": "NAME" }`; a `token` or
+  `password` is always a secret. Every publisher also has `claims`, the remote objects it writes, each with a
   `destination`, such as `oci://ghcr.io/owner/project`, and a `key`, a version template such as
   `{version}` or `latest`. The CLI renders the keys with the version it releases and refuses two
   publishers that claim the same object. `claims` may be missing in older declarations and then

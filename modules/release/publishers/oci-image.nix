@@ -93,8 +93,8 @@
               tags = [ "{version}" ];
               aliases = [ "latest" "{major}" ];
               public = true;
-              username.secret.env = "GITHUB_ACTOR";
-              password.secret.env = "GITHUB_TOKEN";
+              username.env = "GITHUB_ACTOR";
+              password.env = "GITHUB_TOKEN";
             };
           }
         '';

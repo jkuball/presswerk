@@ -69,23 +69,19 @@ in
         loc = [ "publishers" "github-release" "<name>" "token" ];
         anchor = "publishers.github-release.name.token";
         readOnly = false;
-        type = "attribute-tagged union with choices: secret";
+        type = "attribute-tagged union with choices: env";
         default = {
           kind = "nix";
           text = ''
             {
-              secret = {
-                env = "GITHUB_TOKEN";
-              };
+              env = "GITHUB_TOKEN";
             }'';
         };
         example = {
           kind = "nix";
           text = ''
             {
-              secret = {
-                env = "PRESSWERK_GITHUB_TOKEN";
-              };
+              env = "PRESSWERK_GITHUB_TOKEN";
             }'';
         };
       };
@@ -230,7 +226,7 @@ in
         grep -q 'href="/reference/options/?filter=versionFiles.cargo" class="pw-code-link"' "$site/index.html"
         grep -q 'href="/reference/options/?filter=publishers.oci-image.%3Cname%3E.platforms" class="pw-code-link"' "$site/reference/publishers/oci-image/index.html"
         grep -q 'href="/reference/options/?filter=publishers.oci-helm.%3Cname%3E.chart" class="pw-code-link"' "$site/reference/publishers/oci-helm/index.html"
-        grep -q 'id="publishers.github-release.name.token.secret"' "$site/reference/options/index.html"
+        grep -q 'id="publishers.github-release.name.token.env"' "$site/reference/options/index.html"
         ! grep -q 'id="publishers.oci"' "$site/reference/options/index.html"
         grep -q '^# Reproducible releases for Nix flakes$' "$site/index.md"
         grep -q '^# Walkthrough: release automatically from GitHub Actions$' "$site/guide/walkthrough.md"

@@ -14,8 +14,8 @@ with the image for each platform. The Nix option `publishers.oci` is an alias fo
     tags = [ "{version}" ];
     aliases = [ "latest" "{major}.{minor}" ];
     public = true;
-    username.secret.env = "GITHUB_ACTOR";
-    password.secret.env = "GITHUB_TOKEN";
+    username.env = "GITHUB_ACTOR";
+    password.env = "GITHUB_TOKEN";
   };
 }
 ```
@@ -138,7 +138,7 @@ pushed again.
 
 ## Credentials
 
-`username.secret.env` and `password.secret.env` name the environment variables that hold the
+`username.env` and `password.env` name the environment variables that hold the
 registry username and password or token. Neither enters the declaration or the Nix store; Presswerk
 reads them at run time, stops if one is unset or empty, and never prints them. They answer the registry's
 authentication challenge, either with HTTP basic authentication or with the bearer token flow that

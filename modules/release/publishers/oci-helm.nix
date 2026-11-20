@@ -33,8 +33,8 @@
               repository = "ghcr.io/owner/charts/project";
               chart = self.packages.x86_64-linux.chart;
               public = true;
-              username.secret.env = "GITHUB_ACTOR";
-              password.secret.env = "GITHUB_TOKEN";
+              username.env = "GITHUB_ACTOR";
+              password.env = "GITHUB_TOKEN";
             };
           }
         '';

@@ -2,10 +2,10 @@
 
 ## [Unreleased]
 
-Credentials share one shape across all publishers: the value itself, `{ value = "…"; }`, or a
-secret read at run time, `{ secret.env = "NAME"; }`. Rename `token.secret = "NAME";`,
-`username.secret = "NAME";`, and `password.secret = "NAME";` to `token.secret.env`,
-`username.secret.env`, and `password.secret.env`; `username.value` stays as it is. Tokens and
+Credentials share one shape across all publishers: exactly one of the value itself,
+`{ value = "…"; }`, or a secret source read at run time, `{ env = "NAME"; }`. Rename
+`token.secret = "NAME";`, `username.secret = "NAME";`, and `password.secret = "NAME";` to
+`token.env`, `username.env`, and `password.env`; `username.value` stays as it is. Tokens and
 passwords are always secrets.
 
 This CLI cannot read a release declaration written with the old shape. Once you have confirmed that
@@ -16,8 +16,8 @@ the previous release is complete, the first release after updating needs
 
 ```nix
 publishers.oci-image.default = {
-  username.secret.env = "GITHUB_ACTOR";
-  password.secret.env = "GITHUB_TOKEN";
+  username.env = "GITHUB_ACTOR";
+  password.env = "GITHUB_TOKEN";
 };
 ```
 

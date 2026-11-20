@@ -83,7 +83,7 @@ fn declaration(version: &str, repository: &str) -> ReleaseDeclaration {
               "default": {{
                 "apiUrl": "https://api.github.com",
                 "repository": "{repository}",
-                "token": {{ "secret": {{ "env": "GITHUB_TOKEN" }} }}
+                "token": {{ "env": "GITHUB_TOKEN" }}
               }}
             }}
           }}
