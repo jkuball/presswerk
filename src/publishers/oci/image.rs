@@ -748,14 +748,7 @@ impl Image {
         let mut read = |reader: &mut dyn Read| Members::read(reader, compression, spool_limit, put);
 
         let members = if metadata.permissions().mode() & 0o111 != 0 {
-            let mut command = Command::new(path);
-            // An image executable never needs a publisher's secret. Without them, its
-            // diagnostics cannot show one, not even a value that spans several lines, which
-            // line-by-line redaction would miss.
-            for name in crate::publishers::shared::secrets::secret_variables() {
-                command.env_remove(name);
-            }
-            let mut child = command
+            let mut child = image_command(path)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -958,6 +951,17 @@ fn read_prefix(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
         }
     }
     Ok(read)
+}
+
+/// The command that runs an image executable. It never needs a publisher's secret; without them,
+/// its diagnostics cannot show one, not even a value that spans several lines, which line-by-line
+/// redaction would miss.
+fn image_command(path: &Path) -> Command {
+    let mut command = Command::new(path);
+    for name in crate::publishers::shared::secrets::secret_variables() {
+        command.env_remove(name);
+    }
+    command
 }
 
 /// Copies what an image executable prints on stderr to `sink`, line by line, with every secret
@@ -1653,6 +1657,21 @@ impl OciImagePublisher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_image_executable_inherits_no_secret() {
+        let _secrets = crate::publishers::shared::secrets::Secrets::resolve_with(
+            &serde_json::json!({ "oci-image": { "default": {
+                "password": { "secret": { "env": "PRESSWERK_TEST_IMAGE_EXECUTABLE_SECRET" } }
+            } } }),
+            // A multiline value, such as JSON registry credentials.
+            |_| Some("{\n  \"password\": \"presswerk-multiline-sentinel\"\n}".into()),
+        );
+        let command = image_command(Path::new("/nix/store/abc-image"));
+        assert!(command.get_envs().any(|(name, value)| {
+            name == "PRESSWERK_TEST_IMAGE_EXECUTABLE_SECRET" && value.is_none()
+        }));
+    }
 
     #[test]
     fn image_executable_diagnostics_never_show_a_secret() {

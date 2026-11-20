@@ -295,42 +295,6 @@ fn a_noisy_image_executable_streams_its_image() {
 }
 
 #[test]
-fn an_image_executable_inherits_no_secret() {
-    use std::os::unix::fs::PermissionsExt as _;
-    const VARIABLE: &str = "PRESSWERK_TEST_IMAGE_EXECUTABLE_SECRET";
-    // A multiline value, such as JSON registry credentials, that line-by-line redaction of the
-    // executable's diagnostics could not catch.
-    // SAFETY: no other test reads or writes this variable.
-    unsafe {
-        std::env::set_var(
-            VARIABLE,
-            "{\n  \"password\": \"presswerk-multiline-sentinel\"\n}",
-        )
-    };
-    let _secrets = Secrets::resolve(&json!({ "oci-image": { "default": {
-        "password": { "secret": { "env": VARIABLE } }
-    } } }));
-    let directory = tempfile::tempdir().unwrap();
-    let archive = write(
-        directory.path(),
-        "image.tar",
-        &docker_archive("amd64", "hello"),
-    );
-    let seen = directory.path().join("seen");
-    let script = format!(
-        "#!/bin/sh\nprintf '%s' \"${{{VARIABLE}:-unset}}\" > '{}'\nexec cat '{}'\n",
-        seen.display(),
-        archive.display()
-    );
-    let path = write(directory.path(), "image", script.as_bytes());
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-    convert("linux/amd64", &path, Compression::default()).unwrap();
-
-    assert_eq!(std::fs::read_to_string(seen).unwrap(), "unset");
-}
-
-#[test]
 fn only_executables_are_run_whatever_the_file_starts_with() {
     use std::os::unix::fs::PermissionsExt as _;
     let directory = tempfile::tempdir().unwrap();
