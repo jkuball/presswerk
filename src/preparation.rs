@@ -3,8 +3,8 @@ use crate::analysis::{
 };
 use crate::declaration::{Publishers, ReleaseDeclaration, Tag};
 use crate::evaluation::{EvaluatedReleaseDeclaration, evaluate_release_declaration};
-use crate::oci::ForeignAlias;
 use crate::publication::{VerifiedPredecessor, short_oid, verify_head_predecessor};
+use crate::publishers::oci::image::ForeignAlias;
 use crate::release_commit::{
     ReleaseFile, TrustedPredecessor, create_release_commit, release_subject,
 };
@@ -135,18 +135,20 @@ fn check_foreign_aliases(plan: &mut ReleasePlan) {
         if publisher.aliases.is_empty() {
             continue;
         }
-        let variables = crate::oci::missing_credentials(publisher, |name| std::env::var(name).ok());
+        let variables = crate::publishers::oci::image::missing_credentials(publisher, |name| {
+            std::env::var(name).ok()
+        });
         // Without credentials, an anonymous read may still succeed, such as for a repository
         // that is public without being marked so.
         let registry = if variables.is_empty() {
-            crate::oci::reading_client(publisher)
+            crate::publishers::oci::image::reading_client(publisher)
         } else {
             plan.anonymous_alias_reads
                 .push((format!("oci-image.{name}"), variables));
-            crate::oci::RegistryClient::new(&publisher.repository, None)
+            crate::publishers::oci::RegistryClient::new(&publisher.repository, None)
         };
         let found = registry.and_then(|registry| {
-            crate::oci::foreign_aliases(
+            crate::publishers::oci::image::foreign_aliases(
                 &registry,
                 &publisher.repository,
                 &publisher.tags,
@@ -486,12 +488,16 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
             for platform in publisher.platforms.keys() {
                 let _ = writeln!(output, "    image    {platform}");
             }
-            for tag in crate::oci::render_tags(&publisher.tags, &publisher.aliases, version)
-                .unwrap_or_default()
+            for tag in crate::publishers::oci::image::render_tags(
+                &publisher.tags,
+                &publisher.aliases,
+                version,
+            )
+            .unwrap_or_default()
             {
                 let kind = match tag {
-                    crate::oci::OciTag::Version(_) => "tag",
-                    crate::oci::OciTag::Alias(_) => "alias",
+                    crate::publishers::oci::image::OciTag::Version(_) => "tag",
+                    crate::publishers::oci::image::OciTag::Alias(_) => "alias",
                 };
                 let _ = writeln!(output, "    {kind:<8} {}", tag.name());
             }
@@ -502,7 +508,7 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
                 output,
                 "    tag      {}:{}",
                 publisher.repository,
-                crate::helm::tag(version)
+                crate::publishers::oci::helm::tag(version)
             );
         }
         for (name, publisher) in &plan.publishers.github_release {

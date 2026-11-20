@@ -1,12 +1,12 @@
 //! The OCI Helm publisher: pushes a packaged chart as one OCI manifest under its release version.
 
-use crate::oci::{
-    Blob, BlobData, Credentials, Descriptor, MANIFEST_MEDIA_TYPE, Manifest, ORIGIN_ANNOTATION,
-    RegistryClient, VERSION_ANNOTATION, sha256_digest, sha256_digest_reader,
-};
 use crate::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, Publisher,
     PublisherState, Release,
+};
+use crate::publishers::oci::{
+    Blob, BlobData, Credentials, Descriptor, MANIFEST_MEDIA_TYPE, Manifest, ORIGIN_ANNOTATION,
+    RegistryClient, VERSION_ANNOTATION, sha256_digest, sha256_digest_reader,
 };
 use flate2::read::GzDecoder;
 use semver::Version;

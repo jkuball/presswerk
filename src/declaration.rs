@@ -146,8 +146,12 @@ impl ReleaseDeclaration {
             Ok(())
         };
         for (name, publisher) in &self.publishers.oci_image {
-            for tag in crate::oci::render_tags(&publisher.tags, &publisher.aliases, version)
-                .map_err(|error| DeclarationError::Invalid(format!("oci-image.{name}: {error}")))?
+            for tag in crate::publishers::oci::image::render_tags(
+                &publisher.tags,
+                &publisher.aliases,
+                version,
+            )
+            .map_err(|error| DeclarationError::Invalid(format!("oci-image.{name}: {error}")))?
             {
                 register(
                     format!("oci-image.{name}"),
@@ -157,7 +161,7 @@ impl ReleaseDeclaration {
             }
         }
         for (name, publisher) in &self.publishers.oci_helm {
-            let tag = crate::helm::validate_tag(version)
+            let tag = crate::publishers::oci::helm::validate_tag(version)
                 .map_err(|error| DeclarationError::Invalid(format!("oci-helm.{name}: {error}")))?;
             register(format!("oci-helm.{name}"), &publisher.repository, tag)?;
         }
@@ -561,7 +565,7 @@ pub struct OciHelmPublisher {
 
 impl OciHelmPublisher {
     fn validate(&self) -> Result<(), String> {
-        crate::oci::RepositoryReference::parse(&self.repository)?;
+        crate::publishers::oci::RepositoryReference::parse(&self.repository)?;
         if !self.chart.starts_with('/') {
             return Err(format!(
                 "chart must be an absolute store path, not {:?}",
@@ -626,19 +630,19 @@ pub enum Username {
 
 impl OciImagePublisher {
     fn validate(&self) -> Result<(), String> {
-        crate::oci::RepositoryReference::parse(&self.repository)?;
+        crate::publishers::oci::RepositoryReference::parse(&self.repository)?;
         if self.platforms.is_empty() {
             return Err("an OCI image publisher needs at least one image".into());
         }
         for (platform, path) in &self.platforms {
-            crate::oci::Platform::parse(platform)?;
+            crate::publishers::oci::Platform::parse(platform)?;
             if !path.starts_with('/') {
                 return Err(format!(
                     "image {platform} must be an absolute store path, not {path:?}"
                 ));
             }
         }
-        crate::oci::validate_tag_templates(&self.tags, &self.aliases)?;
+        crate::publishers::oci::image::validate_tag_templates(&self.tags, &self.aliases)?;
         match self.compression {
             Compression::Gzip { level } if !(1..=9).contains(&level) => {
                 return Err(format!("gzip level {level} must be between 1 and 9"));

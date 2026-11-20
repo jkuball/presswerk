@@ -7,13 +7,15 @@ use presswerk::declaration::{
     Compression, OciHelmPublisher, OciImagePublisher, ReleaseDeclaration, Token, Username,
 };
 use presswerk::publication::{
-    ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GITHUB_RELEASE_BODY_LIMIT,
-    GitTagPublisher, GithubClient, GithubPublisher, GithubReleaseReader, GithubReleaseState,
-    LocalAsset, PublicationError, PublishEvent, Publisher, PublisherNode, PublisherOutcome,
-    PublisherState, PublisherStep, Release, RemoteState, TagPublisher, TagStep,
-    UnreadableDeclaration, UntaggedRelease, is_valid_successor, pending_predecessor,
-    publish_ordered, publish_ordered_with_jobs, validate_new_release, verify_predecessor_with,
-    verify_predecessor_with_oci_helm,
+    ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, GitTagPublisher, PublicationError,
+    PublishEvent, Publisher, PublisherNode, PublisherOutcome, PublisherState, PublisherStep,
+    Release, RemoteState, TagPublisher, TagStep, UnreadableDeclaration, UntaggedRelease,
+    is_valid_successor, pending_predecessor, publish_ordered, publish_ordered_with_jobs,
+    validate_new_release, verify_predecessor_with, verify_predecessor_with_oci_helm,
+};
+use presswerk::publishers::github_release::{
+    GITHUB_RELEASE_BODY_LIMIT, GithubClient, GithubPublisher, GithubReleaseReader,
+    GithubReleaseState, LocalAsset,
 };
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;

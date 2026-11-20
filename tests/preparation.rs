@@ -12,9 +12,10 @@ use presswerk::declaration::{
 use presswerk::evaluation::EvaluatedReleaseDeclaration;
 use presswerk::preparation::{build_release_plan, is_worktree_dirty, prepare_release, render_plan};
 use presswerk::publication::{
-    GithubReleaseState, PublicationError, Release, RemoteState, TagPublisher, VerifiedPredecessor,
+    PublicationError, Release, RemoteState, TagPublisher, VerifiedPredecessor,
     verify_predecessor_with,
 };
+use presswerk::publishers::github_release::GithubReleaseState;
 use semver::Version;
 use std::cell::RefCell;
 use std::collections::BTreeMap;

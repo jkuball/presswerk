@@ -1,11 +1,13 @@
 use presswerk::declaration::{Compression, Username};
-use presswerk::oci::{
-    BlobData, Credentials, ForeignAlias, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, Image,
-    OciImagePublisher, RegistryClient, ZSTD_LAYER_MEDIA_TYPE, foreign_aliases, image_index,
-    missing_credentials,
-};
 use presswerk::publication::{
     ArtifactKind, ArtifactStep, AssetStep, Publisher, PublisherState, Release,
+};
+use presswerk::publishers::oci::image::{
+    ForeignAlias, Image, OciImagePublisher, foreign_aliases, image_index, missing_credentials,
+};
+use presswerk::publishers::oci::{
+    BlobData, Credentials, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, RegistryClient,
+    ZSTD_LAYER_MEDIA_TYPE,
 };
 use semver::Version;
 use serde_json::{Value, json};
@@ -1533,7 +1535,7 @@ fn credentials_are_checked_and_never_printed() {
     assert!(!error.contains("wrong-password"));
     assert!(!format!("{publisher:?}").contains("wrong-password"));
 
-    let missing = presswerk::oci::Credentials::from_environment(
+    let missing = presswerk::publishers::oci::Credentials::from_environment(
         &Username::Secret("PRESSWERK_TEST_UNSET_USERNAME".into()),
         "PRESSWERK_TEST_UNSET_PASSWORD",
     )
@@ -1545,7 +1547,7 @@ fn credentials_are_checked_and_never_printed() {
     );
 
     // A literal username needs no variable; only the password is read.
-    let missing = presswerk::oci::Credentials::from_environment(
+    let missing = presswerk::publishers::oci::Credentials::from_environment(
         &Username::Value("oauth2accesstoken".into()),
         "PRESSWERK_TEST_UNSET_PASSWORD",
     )
