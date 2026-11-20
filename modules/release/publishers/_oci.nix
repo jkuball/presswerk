@@ -35,15 +35,14 @@ in
   # What the declaration holds about the registry and its credentials.
   registryDeclaration = config: { inherit (config) repository public username password; };
 
-  # A claim on one tag of the repository; image and chart tags share one namespace.
+  # A claim on one tag template of the repository; image and chart tags share one namespace.
   claim = repository: tag: {
     destination = "oci://${repository}";
     key = tag;
   };
 
   # Renders a tag template like the CLI does, with a version whose parts differ.
-  renderTag = builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ]
-    (let parts = lib.splitString "." publisherLib.sampleVersion; in [ publisherLib.sampleVersion ] ++ parts);
+  renderTag = publisherLib.renderTemplate;
 
   # Rendered with a stand-in version, a tag must be a valid OCI tag.
   tag = types.addCheck types.nonEmptyStr

@@ -52,14 +52,6 @@ impl Registry<'_> {
             .map_err(|error| error.to_string())
     }
 
-    /// The claim on one tag of the repository.
-    fn claim(&self, tag: &str) -> crate::publishers::Claim {
-        crate::publishers::Claim {
-            destination: format!("oci://{}", self.repository),
-            key: tag.into(),
-        }
-    }
-
     fn credentials(&self, secrets: &Secrets) -> Result<Credentials, PublicationError> {
         Credentials::resolve(self.username, self.password, secrets)
     }

@@ -157,6 +157,10 @@ in
           body = "{{ notes }}";
           token.secret.env = "GITHUB_TOKEN";
           assets = { };
+          claims = [{
+            destination = "https://api.github.com/repos/owner/project";
+            key = "v{version}";
+          }];
         };
         publishers.oci-image = { };
         publishers.oci-helm = { };
@@ -507,6 +511,10 @@ in
         compression.gzip.level = 6;
         username.secret.env = "REGISTRY_USERNAME";
         password.secret.env = "REGISTRY_TOKEN";
+        claims = [{
+          destination = "oci://ghcr.io/owner/project";
+          key = "{version}";
+        }];
       };
     };
 
@@ -531,6 +539,10 @@ in
         public = true;
         username.secret.env = "REGISTRY_USERNAME";
         password.secret.env = "REGISTRY_TOKEN";
+        claims = [{
+          destination = "oci://ghcr.io/owner/charts/project";
+          key = "{version}";
+        }];
       };
     };
 

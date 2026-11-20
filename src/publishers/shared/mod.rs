@@ -1,7 +1,8 @@
-//! What several publisher types share: decoding, secrets, and digests.
+//! What several publisher types share: decoding, secrets, digests, and version templates.
 
 pub mod digest;
 pub mod secrets;
+pub mod template;
 
 use crate::declaration::DeclarationError;
 use serde::de::DeserializeOwned;

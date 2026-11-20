@@ -31,13 +31,6 @@ pub trait Publisher: Send + Sync {
     /// What the release writes, for `presswerk plan`.
     fn describe(&self, version: &Version, tag: &str) -> Description;
 
-    /// The remote objects the release writes, keyed so that two publishers never write the same
-    /// one. Nix checks them with a sample version; the CLI checks them again with the version it
-    /// releases, since some only collide for certain versions.
-    fn claims(&self, _version: &Version) -> Result<Vec<Claim>, String> {
-        Ok(Vec::new())
-    }
-
     /// The local files the release needs, as store paths with a label, such as `asset tool`.
     /// `publish` fetches them before anything is written.
     fn artifacts(&self) -> Vec<(String, String)> {
@@ -85,8 +78,8 @@ pub trait PublisherType: Publisher + Sized + 'static {
     /// Earlier names of the key that declarations may still use.
     const ALIASES: &'static [&'static str] = &[];
 
-    /// Parses and validates one instance, without `after`. Pure: no environment, network, or
-    /// store access.
+    /// Parses and validates one instance, without the core's `after` and `claims`. Pure: no
+    /// environment, network, or store access.
     fn from_declaration(declaration: &Value) -> Result<Self, DeclarationError>;
 }
 
@@ -129,12 +122,16 @@ pub struct Description {
     pub items: Vec<(String, String)>,
 }
 
-/// A remote object a publisher writes, such as one tag in one OCI repository.
+/// A remote object a publisher writes, such as one tag in one OCI repository. Each type's Nix
+/// module derives the claims of an instance into the declaration, beside `after`, and checks them
+/// with a sample version; the CLI checks them again with the version it releases, since some only
+/// collide for certain versions.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Claim {
     /// The remote, such as `oci://ghcr.io/owner/project`.
     pub destination: String,
-    /// The object within it, such as the tag `1.2.3`.
+    /// The object within it, as a version template such as the tag `{major}.{minor}`.
     pub key: String,
 }
 
@@ -313,6 +310,24 @@ impl Publishers {
         self.0.values().all(BTreeMap::is_empty)
     }
 
+    /// The claims of every instance, by address, in [`TYPES`] order, then by name. Declarations
+    /// written before claims existed have none.
+    pub fn claims(&self) -> Result<Vec<(String, Claim)>, DeclarationError> {
+        let mut claims = Vec::new();
+        for registration in TYPES {
+            for (name, declaration) in self.0.get(registration.name).into_iter().flatten() {
+                let address = format!("{}.{name}", registration.name);
+                let Some(declared) = declaration.get("claims") else {
+                    continue;
+                };
+                let declared: Vec<Claim> = Vec::deserialize(declared)
+                    .map_err(|error| shared::incompatible(format!("{address}.claims: {error}")))?;
+                claims.extend(declared.into_iter().map(|claim| (address.clone(), claim)));
+            }
+        }
+        Ok(claims)
+    }
+
     /// The instances in [`TYPES`] order, then by name, each decoded through its type. An unknown
     /// type fails, so nothing is written for a declaration this CLI cannot fully read.
     pub fn nodes(&self) -> Result<Vec<PublisherNode>, DeclarationError> {
@@ -349,6 +364,10 @@ impl Publishers {
                         return Err(shared::incompatible(format!("{address} must be an object")));
                     }
                 };
+                // Claims are the core's; each type reads only its own options.
+                if let Some(object) = declaration.as_object_mut() {
+                    object.remove("claims");
+                }
                 let publisher =
                     (registration.decode)(&declaration).map_err(|error| match error {
                         DeclarationError::Invalid(message) => {
@@ -388,23 +407,22 @@ impl<'de> Deserialize<'de> for Publishers {
     }
 }
 
-/// Checks that no two publishers write the same remote object for `version`.
-pub fn check_claims(nodes: &[PublisherNode], version: &Version) -> Result<(), String> {
-    let mut claimed: BTreeMap<Claim, &str> = BTreeMap::new();
-    for node in nodes {
-        for claim in node
-            .publisher
-            .claims(version)
-            .map_err(|error| format!("{}: {error}", node.name))?
-        {
-            if let Some(other) = claimed.get(&claim) {
-                return Err(format!(
-                    "{other} and {} both push to {} and both render {} for version {version}",
-                    node.name, claim.destination, claim.key
-                ));
-            }
-            claimed.insert(claim, &node.name);
+/// Checks that no two publishers write the same remote object for `version`, with each claim's
+/// key rendered for it.
+pub fn check_claims(publishers: &Publishers, version: &Version) -> Result<(), String> {
+    let mut claimed: BTreeMap<Claim, String> = BTreeMap::new();
+    for (address, claim) in publishers.claims().map_err(|error| error.to_string())? {
+        let claim = Claim {
+            key: shared::template::render(&claim.key, version),
+            ..claim
+        };
+        if let Some(other) = claimed.get(&claim) {
+            return Err(format!(
+                "{other} and {address} both push to {} and both render {} for version {version}",
+                claim.destination, claim.key
+            ));
         }
+        claimed.insert(claim, address);
     }
     Ok(())
 }
@@ -452,7 +470,11 @@ mod tests {
                     "tags": ["v{version}"],
                     "aliases": ["0.1.0"],
                     "username": { "secret": { "env": "REGISTRY_USERNAME" } },
-                    "password": { "secret": { "env": "REGISTRY_TOKEN" } }
+                    "password": { "secret": { "env": "REGISTRY_TOKEN" } },
+                    "claims": [
+                        { "destination": "oci://ghcr.io/owner/project", "key": "v{version}" },
+                        { "destination": "oci://ghcr.io/owner/project", "key": "0.1.0" }
+                    ]
                 }
             },
             "oci-helm": {
@@ -460,16 +482,20 @@ mod tests {
                     "repository": "ghcr.io/owner/project",
                     "chart": "/nix/store/00000000000000000000000000000000-chart.tgz",
                     "username": { "secret": { "env": "REGISTRY_USERNAME" } },
-                    "password": { "secret": { "env": "REGISTRY_TOKEN" } }
+                    "password": { "secret": { "env": "REGISTRY_TOKEN" } },
+                    "claims": [
+                        { "destination": "oci://ghcr.io/owner/project", "key": "{version}" }
+                    ]
                 }
             }
         })))
         .unwrap();
-        let nodes = declaration.publishers.nodes().unwrap();
+        // The claims decode apart from each type's own options.
+        assert_eq!(declaration.publishers.nodes().unwrap().len(), 2);
 
         // The sample version that Nix checks with does not collide.
-        check_claims(&nodes, &Version::new(1, 2, 3)).unwrap();
-        let error = check_claims(&nodes, &declaration.version).unwrap_err();
+        check_claims(&declaration.publishers, &Version::new(1, 2, 3)).unwrap();
+        let error = check_claims(&declaration.publishers, &declaration.version).unwrap_err();
         assert!(
             error.contains("oci-image.image and oci-helm.chart"),
             "{error}"

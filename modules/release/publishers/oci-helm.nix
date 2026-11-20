@@ -19,7 +19,7 @@
         config = {
           declaration = oci.registryDeclaration config // { inherit (config) chart; };
           # A chart is pushed under the release version itself.
-          claims = [ (oci.claim config.repository publisherLib.sampleVersion) ];
+          claims = [ (oci.claim config.repository "{version}") ];
         };
       };
     in

@@ -11,7 +11,7 @@ use crate::publishers::oci::{
 };
 use crate::publishers::shared::secrets::Credential;
 use crate::publishers::{
-    Claim, Completeness, Context, Description, Labels, Publisher, PublisherType, shared,
+    Completeness, Context, Description, Labels, Publisher, PublisherType, shared,
 };
 use flate2::read::GzDecoder;
 use semver::Version;
@@ -165,12 +165,6 @@ fn describe(repository: &str, version: &Version) -> Description {
 impl Publisher for OciHelm {
     fn describe(&self, version: &Version, _tag: &str) -> Description {
         describe(&self.declaration.repository, version)
-    }
-
-    fn claims(&self, version: &Version) -> Result<Vec<Claim>, String> {
-        Ok(vec![
-            self.declaration.registry().claim(&validate_tag(version)?),
-        ])
     }
 
     fn artifacts(&self) -> Vec<(String, String)> {

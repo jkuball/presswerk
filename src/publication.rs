@@ -662,7 +662,7 @@ pub fn publish_to_remote(
         .publishers
         .nodes()
         .map_err(|error| PublicationError::new(error.to_string()))?;
-    crate::publishers::check_claims(&publishers, &declaration.version)
+    crate::publishers::check_claims(&declaration.publishers, &declaration.version)
         .map_err(PublicationError::new)?;
     // Every declared secret is resolved up front, so a missing one stops before anything is
     // written, even if this run would not have needed it.

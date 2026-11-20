@@ -310,7 +310,7 @@ pub fn build_release_plan(
         .transpose()?;
     // Catch tags that the next version cannot fill before the release commit uses it up.
     if let Some(version) = &next_version {
-        crate::publishers::check_claims(&declaration.publishers.nodes()?, version)
+        crate::publishers::check_claims(&declaration.publishers, version)
             .map_err(anyhow::Error::msg)?;
     }
     let release_subject = next_tag

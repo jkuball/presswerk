@@ -74,9 +74,18 @@
       publisherCycleHints = lib.unique (builtins.filter (hint: hint != null)
         (map (address: publisherNodes.${address}.cycleHint) publisherCycle));
       # Two publishers that write the same remote object would only conflict once the tag is
-      # pushed, so every instance claims what it writes, rendered with the sample version.
+      # pushed, so every instance claims what it writes, rendered with the sample version. The CLI
+      # renders the same templates again with the version it releases.
+      sampleVersion = "1.2.3";
+      renderTemplate = builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ]
+        ([ sampleVersion ] ++ lib.splitString "." sampleVersion);
       publisherClaims = lib.concatLists (lib.mapAttrsToList
-        (address: publisher: map (claim: claim // { inherit address; }) publisher.claims)
+        (address: publisher: map
+          (claim: claim // {
+            inherit address;
+            key = renderTemplate claim.key;
+          })
+          publisher.claims)
         publisherNodes);
       sharedClaims = lib.concatLists (lib.imap0
         (index: claim: map
@@ -380,14 +389,14 @@
                   };
                   key = mkOption {
                     type = types.str;
-                    description = "The object within it, such as the tag `1.2.3`.";
+                    description = "The object within it, as a version template such as the tag `{major}.{minor}`.";
                   };
                 };
               });
               readOnly = true;
               internal = true;
               visible = false;
-              description = "The remote objects this publisher writes, rendered with the sample version 1.2.3; set by its type. No two publishers may claim the same one.";
+              description = "The remote objects this publisher writes, set by its type. No two publishers may claim the same one, rendered with the sample version 1.2.3 here and with the released version by the CLI.";
             };
           };
 
@@ -612,7 +621,7 @@
             };
           };
           # The version that claims and templates are rendered with; its parts differ.
-          sampleVersion = "1.2.3";
+          inherit sampleVersion renderTemplate;
         };
 
         analyzer.gitmoji.catalog = lib.mapAttrs (_shortcode: lib.mapAttrs (_field: lib.mkDefault)) gitmojiCatalog;

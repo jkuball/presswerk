@@ -572,6 +572,26 @@ mod tests {
         node.after.clone()
     }
 
+    /// An OCI instance with the claims its Nix module derives: one per tag template.
+    fn claimed(mut instance: Value) -> Value {
+        let destination = format!("oci://{}", instance["repository"].as_str().unwrap());
+        let keys: Vec<Value> = match instance.get("tags") {
+            Some(tags) => tags
+                .as_array()
+                .unwrap()
+                .iter()
+                .chain(instance["aliases"].as_array().unwrap())
+                .cloned()
+                .collect(),
+            None => vec![json!("{version}")],
+        };
+        instance["claims"] = keys
+            .into_iter()
+            .map(|key| json!({ "destination": destination, "key": key }))
+            .collect();
+        instance
+    }
+
     fn github(declaration: &ReleaseDeclaration) -> GithubReleaseDeclaration {
         instance(declaration, "github-release", "default")
     }
@@ -1237,32 +1257,29 @@ mod tests {
     fn oci_helm_and_oci_image_publishers_do_not_share_the_release_tag() {
         let json = declaration(|value| {
             value["publishers"]["oci-helm"] = json!({
-                "default": {
+                "default": claimed(json!({
                     "repository": "ghcr.io/owner/charts/project",
                     "chart": "/nix/store/abc-project.tgz",
                     "username": { "secret": { "env": "REGISTRY_USERNAME" } },
                     "password": { "secret": { "env": "REGISTRY_TOKEN" } }
-                }
+                }))
             });
             value["publishers"]["oci-image"] = json!({
-                "default": {
+                "default": claimed(json!({
                     "repository": "ghcr.io/owner/charts/project",
                     "platforms": { "linux/amd64": "/nix/store/abc-image.tar.gz" },
                     "tags": ["{version}"],
                     "aliases": [],
                     "username": { "secret": { "env": "REGISTRY_USERNAME" } },
                     "password": { "secret": { "env": "REGISTRY_TOKEN" } }
-                }
+                }))
             });
         });
 
         // Nix rejects this with the sample version already; the CLI checks the released one.
         let declaration = ReleaseDeclaration::from_json(&json).unwrap();
-        let error = crate::publishers::check_claims(
-            &declaration.publishers.nodes().unwrap(),
-            &declaration.version,
-        )
-        .unwrap_err();
+        let error = crate::publishers::check_claims(&declaration.publishers, &declaration.version)
+            .unwrap_err();
         assert!(
             error.contains("oci-image.default and oci-helm.default"),
             "{error}"
@@ -1273,14 +1290,14 @@ mod tests {
     #[test]
     fn oci_image_publishers_of_one_repository_share_no_image_tag() {
         let oci = |repository: &str, tags: Value, aliases: Value| {
-            json!({
+            claimed(json!({
                 "repository": repository,
                 "platforms": { "linux/amd64": "/nix/store/00000000000000000000000000000000-image.tar.gz" },
                 "tags": tags,
                 "aliases": aliases,
                 "username": { "secret": { "env": "REGISTRY_USERNAME" } },
                 "password": { "secret": { "env": "REGISTRY_TOKEN" } }
-            })
+            }))
         };
         let with = |debug: Value| {
             let default = oci(
@@ -1295,10 +1312,7 @@ mod tests {
         // Nix rejects these with the sample version already; the CLI checks the released one.
         let claims = |json: String| {
             let declaration = ReleaseDeclaration::from_json(&json).unwrap();
-            crate::publishers::check_claims(
-                &declaration.publishers.nodes().unwrap(),
-                &declaration.version,
-            )
+            crate::publishers::check_claims(&declaration.publishers, &declaration.version)
         };
         assert!(
             claims(with(oci(

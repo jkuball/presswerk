@@ -102,9 +102,10 @@ in
             (lib.filterAttrs (_identifier: entry: entry != null) releaseConfig.analyzer.gitmoji.catalog);
         };
       changelog = releaseConfig.changelog;
-      # Each type decides what its instances write into the declaration; `after` is shared.
+      # Each type decides what its instances write into the declaration; `after` and `claims` are
+      # shared.
       publishers = lib.mapAttrs
-        (_type: lib.mapAttrs (_name: publisher: publisher.declaration // { after = publisher.resolvedAfter; }))
+        (_type: lib.mapAttrs (_name: publisher: publisher.declaration // { after = publisher.resolvedAfter; inherit (publisher) claims; }))
         (builtins.removeAttrs releaseConfig.publishers releaseConfig.publisherAliases);
     };
 }

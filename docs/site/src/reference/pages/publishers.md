@@ -51,8 +51,9 @@ the other side. Unknown publisher names and cycles fail module evaluation.
 Two publishers must never write the same remote object, such as the same tag in one OCI repository
 or two GitHub Releases for one tag in one repository: the second would only conflict once the tag is
 pushed and leave a partial release. Every publisher claims what it writes, and two publishers that
-claim the same object fail module evaluation. Tag templates are rendered with the sample version
-`1.2.3`. `plan`, `prepare`, and `publish` check the claims again with the version they release, so
+claim the same object fail module evaluation. Claims are templates, such as the tag `{major}`,
+rendered with the sample version `1.2.3`. They are part of the release declaration, and `plan`,
+`prepare`, and `publish` render them again with the version they release, so
 a collision that only that version renders, such as an alias `0.1.0` next to the Helm chart of
 `0.1.0`, stops before anything is written.
 

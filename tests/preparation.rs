@@ -859,21 +859,37 @@ fn the_plan_rejects_an_oci_helm_tag_shared_with_an_oci_image_publisher() {
     repository.commit("✨ Add the first feature");
     let mut evaluated = evaluated(&repository, "0.0.0");
     // Only the next version collides: the alias names it, and the chart's tag is the version.
+    // Each type's Nix module derives the claims into the declaration, as tag templates.
+    let claimed = |declaration: serde_json::Value, keys: &[&str]| {
+        let mut declaration = declaration;
+        declaration["claims"] = keys
+            .iter()
+            .map(|key| serde_json::json!({ "destination": "oci://ghcr.io/owner/project", "key": key }))
+            .collect();
+        declaration
+    };
     evaluated.declaration.publishers.insert(
         "oci-image",
         "image",
-        oci_image_publisher(&["v{version}"], &["0.1.0"]),
+        claimed(
+            serde_json::to_value(oci_image_publisher(&["v{version}"], &["0.1.0"])).unwrap(),
+            &["v{version}", "0.1.0"],
+        ),
     );
     evaluated.declaration.publishers.insert(
         "oci-helm",
         "chart",
-        OciHelmDeclaration {
-            repository: "ghcr.io/owner/project".into(),
-            chart: "/nix/store/abc-project-0.1.0.tgz".into(),
-            public: true,
-            username: Credential::env("REGISTRY_USERNAME"),
-            password: Credential::env("REGISTRY_TOKEN"),
-        },
+        claimed(
+            serde_json::to_value(OciHelmDeclaration {
+                repository: "ghcr.io/owner/project".into(),
+                chart: "/nix/store/abc-project-0.1.0.tgz".into(),
+                public: true,
+                username: Credential::env("REGISTRY_USERNAME"),
+                password: Credential::env("REGISTRY_TOKEN"),
+            })
+            .unwrap(),
+            &["{version}"],
+        ),
     );
 
     let error = build_release_plan(

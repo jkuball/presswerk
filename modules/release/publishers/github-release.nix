@@ -3,8 +3,7 @@
     { config, lib, publisherLib, ... }:
     let
       inherit (lib) mkOption types;
-      # The release tag, rendered like the CLI does with the sample version.
-      sampleTag = builtins.replaceStrings [ "{version}" ] [ publisherLib.sampleVersion ] config.tag.format;
+      tagFormat = config.tag.format;
 
       githubReleaseModule = { config, name, options, ... }: {
         imports = [
@@ -65,7 +64,7 @@
           # One repository has one release per tag.
           claims = [{
             destination = "${lib.removeSuffix "/" config.apiUrl}/repos/${config.repository}";
-            key = sampleTag;
+            key = tagFormat;
           }];
         };
       };

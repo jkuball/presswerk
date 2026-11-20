@@ -67,7 +67,7 @@
               if config.compression.zstd.enable then { zstd.level = config.compression.zstd.level; }
               else { gzip.level = config.compression.gzip.level; };
           };
-          claims = map (oci.claim config.repository) (renderTags config);
+          claims = map (oci.claim config.repository) (config.tags ++ config.aliases);
         };
       };
     in

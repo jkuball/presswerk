@@ -13,8 +13,7 @@ use crate::publication::{
 };
 use crate::publishers::shared::secrets::Credential;
 use crate::publishers::{
-    Claim, Completeness, Context, Description, Labels, Publisher, PublisherType, WarningLevel,
-    shared,
+    Completeness, Context, Description, Labels, Publisher, PublisherType, WarningLevel, shared,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -239,17 +238,6 @@ impl Publisher for OciImage {
         )
     }
 
-    fn claims(&self, version: &Version) -> Result<Vec<Claim>, String> {
-        let declaration = &self.declaration;
-        let registry = declaration.registry();
-        Ok(
-            render_tags(&declaration.tags, &declaration.aliases, version)?
-                .iter()
-                .map(|tag| registry.claim(tag.name()))
-                .collect(),
-        )
-    }
-
     fn artifacts(&self) -> Vec<(String, String)> {
         self.declaration
             .platforms
@@ -415,11 +403,7 @@ pub fn validate_tag_templates(tags: &[String], aliases: &[String]) -> Result<(),
 
 /// Replace the version placeholders of a template.
 fn render_template(template: &str, version: &Version) -> String {
-    template
-        .replace(VERSION_PLACEHOLDER, &version.to_string())
-        .replace("{major}", &version.major.to_string())
-        .replace("{minor}", &version.minor.to_string())
-        .replace("{patch}", &version.patch.to_string())
+    shared::template::render(template, version)
 }
 
 /// Render the tag and alias templates for a version, tags first.
