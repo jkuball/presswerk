@@ -274,6 +274,27 @@ fn an_image_must_match_its_declared_platform() {
 }
 
 #[test]
+fn a_noisy_image_executable_streams_its_image() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let directory = tempfile::tempdir().unwrap();
+    let archive = write(
+        directory.path(),
+        "image.tar",
+        &docker_archive("amd64", "hello"),
+    );
+    // More diagnostics than a pipe buffer holds, before and after the archive: stderr must be
+    // drained while stdout is read.
+    let script = format!(
+        "#!/bin/sh\nhead -c 131072 /dev/zero | tr '\\0' 'x' >&2\ncat '{}'\necho done >&2\n",
+        archive.display()
+    );
+    let path = write(directory.path(), "noisy", script.as_bytes());
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    convert("linux/amd64", &path, Compression::default()).unwrap();
+}
+
+#[test]
 fn only_executables_are_run_whatever_the_file_starts_with() {
     use std::os::unix::fs::PermissionsExt as _;
     let directory = tempfile::tempdir().unwrap();

@@ -751,13 +751,20 @@ impl Image {
             let mut child = Command::new(path)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
+                .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|error| failed(&format!("could not run the image executable: {error}")))?;
+            // The executable inherits the environment, so its diagnostics could show a secret.
+            // They are drained while stdout is read, so a noisy executable cannot block.
+            let stderr = child.stderr.take().expect("piped stderr");
+            let diagnostics = thread::spawn(move || {
+                forward_diagnostics(BufReader::new(stderr), &mut io::stderr())
+            });
             let mut stdout = child.stdout.take().expect("piped stdout");
             let members = read(&mut stdout);
             drop(stdout);
             let status = child.wait().map_err(|error| failed(&error))?;
+            let _ = diagnostics.join();
             let members = members.map_err(read_failed)?;
             if !status.success() {
                 return Err(failed(&format!(
@@ -944,6 +951,18 @@ fn read_prefix(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
         }
     }
     Ok(read)
+}
+
+/// Copies what an image executable prints on stderr to `sink`, line by line, with every secret
+/// value replaced.
+fn forward_diagnostics(reader: impl io::BufRead, sink: &mut dyn io::Write) {
+    for line in reader.split(b'\n') {
+        let Ok(line) = line else {
+            return;
+        };
+        let line = crate::publishers::shared::secrets::redact(&String::from_utf8_lossy(&line));
+        let _ = writeln!(sink, "{line}");
+    }
 }
 
 /// The image index for a release: one manifest per platform, annotated with the version.
@@ -1627,6 +1646,26 @@ impl OciImagePublisher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_executable_diagnostics_never_show_a_secret() {
+        // Resolving a secret is what makes its value one that output never shows.
+        let _secrets = crate::publishers::shared::secrets::Secrets::resolve_with(
+            &serde_json::json!({ "oci-image": { "default": {
+                "password": { "secret": { "env": "PRESSWERK_TEST_DIAGNOSTICS" } }
+            } } }),
+            |_| Some("presswerk-diagnostics-sentinel".into()),
+        );
+        let mut sink = Vec::new();
+        forward_diagnostics(
+            &b"pushing with presswerk-diagnostics-sentinel\nsecond line"[..],
+            &mut sink,
+        );
+        assert_eq!(
+            String::from_utf8(sink).unwrap(),
+            "pushing with [redacted]\nsecond line\n"
+        );
+    }
 
     #[test]
     fn an_unreadable_tag_is_unknown_not_incomplete() {
