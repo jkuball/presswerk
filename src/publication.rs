@@ -69,6 +69,25 @@ impl PublicationError {
         )
     }
 
+    /// A predecessor whose declaration has the unstable schema version but does not decode, with
+    /// the reason, such as the unknown publisher type it names.
+    pub fn incompatible_predecessor(
+        tag: impl Into<String>,
+        commit: Oid,
+        reason: &impl fmt::Display,
+    ) -> Self {
+        let tag = tag.into();
+        let message = format!(
+            "previous release tag {tag:?} at {commit} uses a declaration with schemaVersion {UNSTABLE_SCHEMA_VERSION} that this CLI cannot read ({reason}); verify that release with its original Presswerk toolchain, then run `presswerk prepare --trust-predecessor {tag}={commit}`"
+        );
+        Self::unreadable_predecessor(
+            message,
+            tag,
+            commit,
+            UnreadableDeclaration::UnsupportedSchema(UNSTABLE_SCHEMA_VERSION),
+        )
+    }
+
     pub fn undeclared_predecessor(tag: impl Into<String>, commit: Oid) -> Self {
         let tag = tag.into();
         let message = format!(
@@ -1497,13 +1516,14 @@ fn verify_predecessor_with_trust_mode(
                 commit,
                 schema_version,
             )),
-            Err(EvaluationError::Declaration(DeclarationError::IncompatibleUnstableSchema(_))) => {
-                Err(PublicationError::unsupported_predecessor(
-                    previous_tag.clone(),
-                    commit,
-                    UNSTABLE_SCHEMA_VERSION,
-                ))
-            }
+            // Such as an unknown publisher type, or an option shape of another Presswerk version.
+            Err(EvaluationError::Declaration(DeclarationError::IncompatibleUnstableSchema(
+                reason,
+            ))) => Err(PublicationError::incompatible_predecessor(
+                previous_tag.clone(),
+                commit,
+                &reason,
+            )),
             // Presswerk never released a commit without a lock file, so it has no declaration either.
             Err(EvaluationError::MissingDeclaration(_) | EvaluationError::MissingLockFile(_)) => {
                 Err(PublicationError::undeclared_predecessor(

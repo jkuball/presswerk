@@ -411,12 +411,29 @@ fn prepare_adopts_a_release_of_another_tool_once_it_is_trusted() {
 
 #[test]
 fn a_predecessor_with_the_old_secret_shape_needs_trust() {
+    predecessor_this_cli_cannot_read_needs_trust(
+        &RELEASE_FLAKE.replace("token.secret.env = ", "token.secret = "),
+        "unknown variant `GITHUB_TOKEN`, expected `env`",
+    );
+}
+
+#[test]
+fn a_predecessor_with_an_unknown_publisher_type_needs_trust() {
+    predecessor_this_cli_cannot_read_needs_trust(
+        &RELEASE_FLAKE.replace(
+            "publishers.\"github-release\".default = {",
+            "publishers.npm.default = { };\n      publishers.\"github-release\".default = {",
+        ),
+        "unknown publisher type \"npm\"",
+    );
+}
+
+/// A previous release whose declaration this CLI cannot read stops `prepare` with the reason and
+/// the trust command, and the command crosses it.
+fn predecessor_this_cli_cannot_read_needs_trust(predecessor_flake: &str, reason: &str) {
     let repository = GitRepo::new();
     write_cargo_version(&repository, "0.1.0");
-    repository.write(
-        "flake.nix",
-        RELEASE_FLAKE.replace("token.secret.env = ", "token.secret = "),
-    );
+    repository.write("flake.nix", predecessor_flake);
     repository.write("flake.lock", LOCK_FILE);
     repository.write(
         "CHANGELOG.md",
@@ -445,6 +462,7 @@ fn a_predecessor_with_the_old_secret_shape_needs_trust() {
         stderr.contains("uses a declaration with schemaVersion 0 that this CLI cannot read"),
         "{stderr}"
     );
+    assert!(stderr.contains(reason), "{stderr}");
     assert!(
         stderr.contains(&format!(
             "presswerk prepare --trust-predecessor v0.1.0={predecessor}"
