@@ -5,8 +5,13 @@
 Credentials share one shape across all publishers: the value itself, `{ value = "…"; }`, or a
 secret read at run time, `{ secret.env = "NAME"; }`. Rename `token.secret = "NAME";`,
 `username.secret = "NAME";`, and `password.secret = "NAME";` to `token.secret.env`,
-`username.secret.env`, and `password.secret.env`; `username.value` stays as it is. Release
-declarations written with the old shape, such as the previous release's, are still read.
+`username.secret.env`, and `password.secret.env`; `username.value` stays as it is.
+
+This CLI cannot read a release declaration written with the old shape. Once you have confirmed that
+the previous release is complete, the first release after updating needs
+`presswerk prepare --trust-predecessor <tag>=<commit>`, as described in
+[Recovery](https://presswerk.dev/guide/recovery/#the-previous-release-uses-an-unsupported-declaration);
+`prepare` prints the exact command.
 
 ```nix
 publishers.oci-image.default = {

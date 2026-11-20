@@ -7,7 +7,7 @@
 
 use crate::declaration::DeclarationError;
 use crate::publication::PublicationError;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::env;
@@ -15,8 +15,8 @@ use std::fmt;
 use std::sync::{Mutex, PoisonError};
 
 /// A credential of a publisher: given in the declaration, or read from a secret source.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
 pub enum Credential {
     /// The value itself, written into the declaration, such as a registry username that is no
     /// secret.
@@ -42,31 +42,6 @@ impl Credential {
             ),
             _ => Ok(()),
         }
-    }
-}
-
-/// Reads `{ "value": "…" }` and `{ "secret": { "env": "NAME" } }`. Declarations written before
-/// this shape, such as those of earlier releases, name the variable directly:
-/// `{ "secret": "NAME" }`.
-impl<'de> Deserialize<'de> for Credential {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "lowercase", deny_unknown_fields)]
-        enum Shape {
-            Value(String),
-            Secret(Source),
-        }
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Source {
-            Current(SecretSource),
-            Legacy(String),
-        }
-        Ok(match Shape::deserialize(deserializer)? {
-            Shape::Value(value) => Self::Value(value),
-            Shape::Secret(Source::Current(source)) => Self::Secret(source),
-            Shape::Secret(Source::Legacy(name)) => Self::Secret(SecretSource::Env(name)),
-        })
     }
 }
 
@@ -227,14 +202,13 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn reads_both_shapes_and_the_legacy_one() {
+    fn reads_a_value_or_a_secret_source() {
         for (json, expected) in [
             (json!({ "value": "user" }), Credential::Value("user".into())),
             (
                 json!({ "secret": { "env": "TOKEN" } }),
                 Credential::env("TOKEN"),
             ),
-            (json!({ "secret": "TOKEN" }), Credential::env("TOKEN")),
         ] {
             assert_eq!(Credential::deserialize(json).unwrap(), expected);
         }
@@ -242,6 +216,9 @@ mod tests {
             json!({}),
             json!({ "value": "user", "secret": { "env": "TOKEN" } }),
             json!({ "secret": { "vault": "path" } }),
+            // The shape before credentials were shared; such a declaration is one this CLI
+            // cannot read.
+            json!({ "secret": "TOKEN" }),
         ] {
             assert!(
                 Credential::deserialize(invalid.clone()).is_err(),

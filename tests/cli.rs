@@ -410,6 +410,61 @@ fn prepare_adopts_a_release_of_another_tool_once_it_is_trusted() {
 }
 
 #[test]
+fn a_predecessor_with_the_old_secret_shape_needs_trust() {
+    let repository = GitRepo::new();
+    write_cargo_version(&repository, "0.1.0");
+    repository.write(
+        "flake.nix",
+        RELEASE_FLAKE.replace("token.secret.env = ", "token.secret = "),
+    );
+    repository.write("flake.lock", LOCK_FILE);
+    repository.write(
+        "CHANGELOG.md",
+        "# Changelog\n\n## [0.1.0] - 2026-11-10\n\n- Old\n",
+    );
+    let predecessor = repository.commit("🔖 Release v0.1.0");
+    repository.annotated_tag("v0.1.0");
+    repository.write("flake.nix", RELEASE_FLAKE);
+    repository.write("feature", "implemented\n");
+    repository.commit("✨ Add a feature");
+    let remote = tempfile::tempdir().unwrap();
+    repository.git(["init", "--quiet", "--bare", remote.path().to_str().unwrap()]);
+    repository.git(["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    repository.git([
+        "push",
+        "--quiet",
+        "origin",
+        "HEAD:refs/heads/main",
+        "v0.1.0",
+    ]);
+
+    let refused = presswerk_in(repository.path(), &["prepare"]);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success());
+    assert!(
+        stderr.contains("uses a declaration with schemaVersion 0 that this CLI cannot read"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "presswerk prepare --trust-predecessor v0.1.0={predecessor}"
+        )),
+        "{stderr}"
+    );
+
+    let trust = format!("v0.1.0={predecessor}");
+    let prepared = presswerk_in(
+        repository.path(),
+        &["prepare", "--trust-predecessor", &trust],
+    );
+    assert!(
+        prepared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared.stderr)
+    );
+}
+
+#[test]
 fn prepare_adopts_a_lightweight_tag_of_another_tool() {
     let (repository, predecessor, _remote) = adopted_repository(true);
 
