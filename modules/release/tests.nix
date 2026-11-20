@@ -708,6 +708,45 @@ in
       expected = [ true true true false false false ];
     };
 
+    "test publishers that claim the same remote object fail with both names" = {
+      expr = {
+        image = failedAssertion {
+          publishers.oci-image.image = imagePublisher;
+          publishers.oci-helm.chart = {
+            inherit (imagePublisher) repository username password;
+            chart = image;
+          };
+        };
+        github = failedAssertion {
+          publishers.github-release.a.repository = "owner/project";
+          publishers.github-release.b = {
+            repository = "owner/project";
+            after = [ ];
+          };
+        };
+      };
+      expected = {
+        image = "publishers.oci-helm.chart and publishers.oci-image.image both push to oci://ghcr.io/owner/project and both render 1.2.3 for version 1.2.3";
+        github = "publishers.github-release.a and publishers.github-release.b both push to https://api.github.com/repos/owner/project and both render v1.2.3 for version 1.2.3";
+      };
+    };
+
+    "test GitHub Releases of other repositories or API URLs claim nothing in common" = {
+      expr = map
+        (other: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          publishers.github-release.default.repository = "owner/project";
+          publishers.github-release.other = { after = [ ]; } // other;
+        }).publishers)
+        [
+          { repository = "owner/other"; }
+          { repository = "owner/project"; apiUrl = "https://github.example/api/v3"; }
+          { repository = "owner/project"; }
+        ];
+      expected = [ true true false ];
+    };
+
     "test publisher dependencies normalize to after edges" = {
       expr = {
         githubDefault = (mkRelease {

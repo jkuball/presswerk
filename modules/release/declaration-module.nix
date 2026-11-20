@@ -34,44 +34,10 @@
         (builtins.attrNames (lib.filterAttrs (_type: entry: entry != null) config.analyzer.conventional.catalog));
       catalogEmojis = map (entry: normalizedEmoji entry.emoji) catalogEntries;
       catalogShortcodes = map (entry: entry.shortcode) catalogEntries;
-      # OCI tag templates rendered with a stand-in version whose parts differ, as the CLI checks them.
-      renderOciTags = oci:
-        map (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "1.2.3" "1" "2" "3" ])
-          (oci.tags ++ oci.aliases);
-      registryPublishers =
-        lib.mapAttrs'
-          (name: oci: lib.nameValuePair "oci-image.${name}" {
-            inherit (oci) repository;
-            tags = renderOciTags oci;
-          })
-          config.publishers.oci-image
-        // lib.mapAttrs'
-          (name: helm: lib.nameValuePair "oci-helm.${name}" {
-            inherit (helm) repository;
-            tags = [ "1.2.3" ];
-          })
-          config.publishers.oci-helm;
-      sharedRegistryTags = lib.concatLists (lib.mapAttrsToList
-        (name: publisher: lib.concatLists (lib.mapAttrsToList
-          (other: otherPublisher:
-            map
-              (tag: {
-                name = "publishers.${name}";
-                other = "publishers.${other}";
-                inherit (publisher) repository;
-                inherit tag;
-              })
-              (lib.optionals (name < other && publisher.repository == otherPublisher.repository)
-                (lib.intersectLists publisher.tags otherPublisher.tags)))
-          registryPublishers))
-        registryPublishers);
-      canonicalPublishers = builtins.removeAttrs config.publishers [ "oci" ];
+      canonicalPublishers = builtins.removeAttrs config.publishers config.publisherAliases;
       publisherAddresses = lib.concatLists (lib.mapAttrsToList
         (type: publishers: map (name: "${type}.${name}") (builtins.attrNames publishers))
         canonicalPublishers);
-      nonGithubPublisherAddresses = lib.concatLists (lib.mapAttrsToList
-        (type: publishers: map (name: "${type}.${name}") (builtins.attrNames publishers))
-        (builtins.removeAttrs canonicalPublishers [ "github-release" ]));
       publisherNodes = builtins.listToAttrs (lib.concatLists (lib.mapAttrsToList
         (type: publishers: lib.mapAttrsToList
           (name: publisher: lib.nameValuePair "${type}.${name}" publisher)
@@ -107,6 +73,18 @@
       publisherCyclePath = publisherCycle ++ lib.optionals (publisherCycle != [ ]) [ publisherLoop ];
       publisherCycleHints = lib.unique (builtins.filter (hint: hint != null)
         (map (address: publisherNodes.${address}.cycleHint) publisherCycle));
+      # Two publishers that write the same remote object would only conflict once the tag is
+      # pushed, so every instance claims what it writes, rendered with the sample version.
+      publisherClaims = lib.concatLists (lib.mapAttrsToList
+        (address: publisher: map (claim: claim // { inherit address; }) publisher.claims)
+        publisherNodes);
+      sharedClaims = lib.concatLists (lib.imap0
+        (index: claim: map
+          (other: { inherit claim other; })
+          (builtins.filter
+            (other: other.destination == claim.destination && other.key == claim.key && other.address != claim.address)
+            (lib.drop (index + 1) publisherClaims)))
+        publisherClaims);
 
       relativePath = types.addCheck types.str (
         path:
@@ -346,233 +324,77 @@
         };
       };
 
-      publisherGraphOptions =
-        { afterDefault ? [ ]
+      # The options every publisher instance has, whatever its type: its place in the dependency
+      # graph, and what it writes into the declaration and claims on its remote.
+      publisherInstance =
+        { type
+        , afterDefault ? [ ]
         , afterDefaultText ? null
         }:
-        {
-          after = mkOption ({
-            type = types.listOf types.nonEmptyStr;
-            default = afterDefault;
-            example = [ "oci-image.api" ];
-            description = "Publishers that must complete before this publisher starts. Defining this option replaces its default.";
-          } // lib.optionalAttrs (afterDefaultText != null) { defaultText = afterDefaultText; });
+        { name, ... }: {
+          options = {
+            after = mkOption ({
+              type = types.listOf types.nonEmptyStr;
+              default = afterDefault;
+              example = [ "oci-image.api" ];
+              description = "Publishers that must complete before this publisher starts. Defining this option replaces its default.";
+            } // lib.optionalAttrs (afterDefaultText != null) { defaultText = afterDefaultText; });
 
-          before = mkOption {
-            type = types.listOf types.nonEmptyStr;
-            default = [ ];
-            example = [ "github-release.default" ];
-            description = "Publishers that start only after this publisher completes.";
-          };
+            before = mkOption {
+              type = types.listOf types.nonEmptyStr;
+              default = [ ];
+              example = [ "github-release.default" ];
+              description = "Publishers that start only after this publisher completes.";
+            };
 
-          cycleHint = mkOption {
-            type = types.nullOr types.str;
-            default = null;
-            internal = true;
-            visible = false;
-            description = "Hint appended when this publisher participates in a dependency cycle.";
-          };
-
-          resolvedAfter = mkOption {
-            type = types.listOf types.nonEmptyStr;
-            readOnly = true;
-            internal = true;
-            visible = false;
-            description = "Publisher dependencies after rewriting `before` edges.";
-          };
-        };
-
-      # A file in a flake output: a derivation, or a string built from one, such as "${pkg}/bin/tool".
-      # The string context proves that the path comes from a derivation the flake evaluates.
-      artifactFile = types.coercedTo types.package (package: "${package}") (
-        types.addCheck types.str (path: builtins.hasContext path && lib.hasPrefix "${builtins.storeDir}/" path)
-        // { description = "file in a flake output"; }
-      );
-
-      githubReleaseModule = { name, options, ... }: {
-        options = publisherGraphOptions
-          {
-            afterDefault = nonGithubPublisherAddresses;
-            afterDefaultText = lib.literalMD "every publisher that is not a GitHub Release";
-          } // {
-          apiUrl = mkOption {
-            type = types.nonEmptyStr;
-            default = "https://api.github.com";
-            description = "Base URL of the GitHub API.";
-          };
-
-          repository = mkOption {
-            type = types.strMatching "[^/]+/[^/]+";
-            example = "owner/project";
-            description = "GitHub repository in owner/name form.";
-          };
-
-          body = mkOption {
-            type = types.str;
-            default = "{{ notes }}";
-            example = lib.literalExpression ''
-              builtins.readFile ./github-release.md.j2
-            '';
-            description = "MiniJinja template for the GitHub Release body. The context contains `notes`, the committed changelog section; `version`, the release version; and `tag`, the release tag.";
-          };
-
-          token.secret = mkOption {
-            type = types.nonEmptyStr;
-            default = "GITHUB_TOKEN";
-            example = "PRESSWERK_GITHUB_TOKEN";
-            description = "Name of the environment variable that holds the GitHub API token.";
-          };
-
-          assets = mkOption {
-            type = types.attrsOf artifactFile;
-            default = { };
-            example = lib.literalExpression ''
-              {
-                "my-tool-x86_64-linux" = "''${self.packages.x86_64-linux.default}/bin/my-tool";
-                "my-tool-aarch64-darwin" = "''${self.packages.aarch64-darwin.default}/bin/my-tool";
-              }
-            '';
-            description = "Files attached to the release, keyed by asset name. Each is a file in a flake output, which `publish` fetches from the local store or a substituter without building.";
-          };
-        };
-
-        config = {
-          cycleHint = lib.mkIf
-            (!options.after.isDefined || options.after.highestPrio >= 1500)
-            (lib.mkDefault "github-release.${name}.after defaults to every other publisher; set it explicitly to change that");
-          resolvedAfter = resolvePublisherAfter "github-release.${name}";
-        };
-      };
-
-      secretModule = what: example: {
-        options.secret = mkOption {
-          type = types.nonEmptyStr;
-          inherit example;
-          description = "Name of the environment variable that holds the ${what}.";
-        };
-      };
-
-      registryPublisherOptions = what: publisherGraphOptions { } // {
-        repository = mkOption {
-          # A plain host and optional port: no credentials, query, or fragment in the declaration.
-          type = types.strMatching "(([A-Za-z0-9-]+[.])+[A-Za-z0-9-]+(:[0-9]+)?|[A-Za-z0-9.-]+:[0-9]+|localhost|\\[[0-9A-Fa-f:]+](:[0-9]+)?)/[a-z0-9._-]+(/[a-z0-9._-]+)*";
-          example = "ghcr.io/owner/project";
-          description = "Registry host, with an optional port, and repository path the ${what} are pushed to. Credentials never go here, only into `username` and `password`. Loopback registries such as `localhost:5000` use plain HTTP, every other registry HTTPS.";
-        };
-
-        public = mkOption {
-          type = types.bool;
-          default = false;
-          description = "Whether anyone may pull the ${what} without credentials. `plan` and `prepare` then check the previous release anonymously and never read `username` or `password`; otherwise they need the credentials for that check. `publish` always needs the credentials.";
-        };
-
-        username = mkOption {
-          type = types.submodule {
-            options.secret = mkOption {
-              type = types.nullOr types.nonEmptyStr;
+            cycleHint = mkOption {
+              type = types.nullOr types.str;
               default = null;
-              example = "REGISTRY_USERNAME";
-              description = "Name of the environment variable that holds the registry username.";
+              internal = true;
+              visible = false;
+              description = "Hint appended when this publisher participates in a dependency cycle.";
             };
-            options.value = mkOption {
-              type = types.nullOr types.nonEmptyStr;
-              default = null;
-              example = "oauth2accesstoken";
-              description = "The registry username itself, for registries where it is no secret, such as `oauth2accesstoken` for Google Artifact Registry. It is written into the release declaration.";
+
+            resolvedAfter = mkOption {
+              type = types.listOf types.nonEmptyStr;
+              readOnly = true;
+              internal = true;
+              visible = false;
+              description = "Publisher dependencies after rewriting `before` edges.";
             };
-          };
-          description = "Registry username: either `secret`, read from an environment variable at run time, or `value`.";
-        };
 
-        password = mkOption {
-          type = types.submodule (secretModule "registry password or token" "REGISTRY_TOKEN");
-          description = "Registry password or token, read from an environment variable at run time.";
-        };
-      };
-
-      # Rendered with a stand-in version, a tag must be a valid OCI tag.
-      ociTag = types.addCheck types.nonEmptyStr
-        (
-          template: builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" (builtins.replaceStrings [ "{version}" "{major}" "{minor}" "{patch}" ] [ "0.0.0" "0" "0" "0" ] template) != null
-        ) // { description = "OCI tag, optionally containing {version}, {major}, {minor}, or {patch}"; };
-
-      ociImageModule = { config, name, ... }: {
-        options = registryPublisherOptions "images" // {
-          platforms = mkOption {
-            type = types.attrsOf artifactFile;
-            example = lib.literalExpression ''
-              {
-                "linux/amd64" = self.packages.x86_64-linux.image;
-                "linux/arm64" = self.packages.aarch64-linux.image;
-              }
-            '';
-            description = "The image for each platform, keyed by `os/architecture[/variant]`, which must match the image's config. Each is a Docker image archive, gzip- or zstd-compressed or not, such as the output of `dockerTools.buildImage` or `buildLayeredImage`, or an executable that writes an uncompressed one to stdout, such as the output of `streamLayeredImage`. `publish` fetches them from the local store or a substituter without building. The images of all platforms form one image index.";
-          };
-
-          tags = mkOption {
-            type = types.listOf ociTag;
-            default = [ "{version}" ];
-            example = [ "{version}" "v{version}" ];
-            description = "Tags of the release. Each contains `{version}`, which is replaced by the version, and may also use `{major}`, `{minor}`, and `{patch}`. A tag is never moved once it exists.";
-          };
-
-          aliases = mkOption {
-            type = types.listOf ociTag;
-            default = [ ];
-            example = [ "latest" "{major}" "{major}.{minor}" ];
-            description = "Floating tags, also called rolling tags, that follow the release line, such as `latest`, `{major}`, or `{major}.{minor}`. An alias may use `{major}`, `{minor}`, and `{patch}`, but not `{version}`. It moves only to a higher final version than the one it points to, so `{major}` stays within its major version.";
-          };
-
-          compression = {
-            gzip = {
-              enable = mkOption {
-                type = types.bool;
-                default = !config.compression.zstd.enable;
-                defaultText = lib.literalExpression "!compression.zstd.enable";
-                description = "Compress layers with gzip, which every client can pull. This is the default.";
-              };
-              level = mkOption {
-                type = types.ints.between 1 9;
-                default = 6;
-                description = "The gzip level, from 1 (fastest) to 9 (smallest).";
-              };
+            declaration = mkOption {
+              type = types.attrsOf types.anything;
+              readOnly = true;
+              internal = true;
+              visible = false;
+              description = "What the release declaration holds for this publisher, apart from `after`; set by its type.";
             };
-            zstd = {
-              enable = lib.mkEnableOption "zstd compression of layers, which is smaller and faster to unpack, but needs Docker 23, containerd 1.5, or a similarly recent client to pull";
-              level = mkOption {
-                type = types.ints.between 1 22;
-                default = 3;
-                description = "The zstd level, from 1 (fastest) to 22 (smallest).";
-              };
+
+            claims = mkOption {
+              type = types.listOf (types.submodule {
+                options = {
+                  destination = mkOption {
+                    type = types.str;
+                    description = "The remote, such as `oci://ghcr.io/owner/project`.";
+                  };
+                  key = mkOption {
+                    type = types.str;
+                    description = "The object within it, such as the tag `1.2.3`.";
+                  };
+                };
+              });
+              readOnly = true;
+              internal = true;
+              visible = false;
+              description = "The remote objects this publisher writes, rendered with the sample version 1.2.3; set by its type. No two publishers may claim the same one.";
             };
           };
 
+          config.resolvedAfter = resolvePublisherAfter "${type}.${name}";
         };
-        config.resolvedAfter = resolvePublisherAfter "oci-image.${name}";
-      };
-
-      ociHelmModule = { name, ... }: {
-        options = registryPublisherOptions "chart" // {
-          chart = mkOption {
-            type = artifactFile;
-            example = lib.literalExpression "self.packages.x86_64-linux.chart";
-            description = "Chart archive written by `helm package`. `publish` fetches it from the local store or a substituter without building.";
-          };
-        };
-        config.resolvedAfter = resolvePublisherAfter "oci-helm.${name}";
-      };
     in
     {
-      imports = [
-        (lib.doRename {
-          from = [ "publishers" "oci" ];
-          to = [ "publishers" "oci-image" ];
-          visible = false;
-          warn = false;
-          use = lib.id;
-        })
-      ];
-
       options = {
         sourceRoot = mkOption {
           type = types.path;
@@ -737,51 +559,12 @@
           };
         };
 
-        publishers.github-release = mkOption {
-          type = types.attrsOf (types.submodule githubReleaseModule);
-          default = { };
-          example = lib.literalExpression ''
-            {
-              default.repository = "owner/project";
-            }
-          '';
-          description = "GitHub Release publishers.";
-        };
-
-        publishers.oci-image = mkOption {
-          type = types.attrsOf (types.submodule ociImageModule);
-          default = { };
-          example = lib.literalExpression ''
-            {
-              default = {
-                repository = "ghcr.io/owner/project";
-                platforms."linux/amd64" = self.packages.x86_64-linux.image;
-                tags = [ "{version}" ];
-                aliases = [ "latest" "{major}" ];
-                public = true;
-                username.secret = "GITHUB_ACTOR";
-                password.secret = "GITHUB_TOKEN";
-              };
-            }
-          '';
-          description = "OCI image publishers.";
-        };
-
-        publishers.oci-helm = mkOption {
-          type = types.attrsOf (types.submodule ociHelmModule);
-          default = { };
-          example = lib.literalExpression ''
-            {
-              default = {
-                repository = "ghcr.io/owner/charts/project";
-                chart = self.packages.x86_64-linux.chart;
-                public = true;
-                username.secret = "GITHUB_ACTOR";
-                password.secret = "GITHUB_TOKEN";
-              };
-            }
-          '';
-          description = "OCI Helm publishers.";
+        publisherAliases = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          internal = true;
+          visible = false;
+          description = "Earlier names of publisher types under `publishers`, which forward to the current one.";
         };
 
         assertions = mkOption {
@@ -799,6 +582,21 @@
       };
 
       config = {
+        # What publisher types share. Each type lives in `publishers/<type>.nix`.
+        _module.args.publisherLib = {
+          instance = publisherInstance;
+          addresses = publisherAddresses;
+          # A file in a flake output: a derivation, or a string built from one, such as
+          # "${pkg}/bin/tool". The string context proves that the path comes from a derivation the
+          # flake evaluates.
+          artifactFile = types.coercedTo types.package (package: "${package}") (
+            types.addCheck types.str (path: builtins.hasContext path && lib.hasPrefix "${builtins.storeDir}/" path)
+            // { description = "file in a flake output"; }
+          );
+          # The version that claims and templates are rendered with; its parts differ.
+          sampleVersion = "1.2.3";
+        };
+
         analyzer.gitmoji.catalog = lib.mapAttrs (_shortcode: lib.mapAttrs (_field: lib.mkDefault)) gitmojiCatalog;
         analyzer.conventional.catalog = lib.mapAttrs (_type: lib.mapAttrs (_field: lib.mkDefault)) conventionalCatalog;
 
@@ -820,53 +618,16 @@
             message = "publishers form a cycle: ${lib.concatStringsSep " → " publisherCyclePath}${lib.optionalString (publisherCycleHints != [ ]) " (${lib.concatStringsSep "; " publisherCycleHints})"}";
           }
         ]
-        ++ lib.concatLists
-          (lib.mapAttrsToList
-            (name: oci: [
-              {
-                assertion = oci.platforms != { };
-                message = "publishers.oci-image.${name}.platforms must contain at least one image";
-              }
-              {
-                assertion = oci.tags != [ ] && lib.all (lib.hasInfix "{version}") oci.tags;
-                message = "publishers.oci-image.${name}.tags must contain {version} in every tag, and at least one tag, so every release has a tag of its own; declare tags that follow other versions under aliases";
-              }
-              {
-                assertion = !lib.any (lib.hasInfix "{version}") oci.aliases;
-                message = "publishers.oci-image.${name}.aliases must not contain {version}, which names a single version; declare such tags under tags";
-              }
-              {
-                assertion = oci.compression.gzip.enable != oci.compression.zstd.enable;
-                message = "publishers.oci-image.${name}.compression needs exactly one of gzip and zstd enabled";
-              }
-              {
-                assertion = (oci.username.secret == null) != (oci.username.value == null);
-                message = "publishers.oci-image.${name}.username needs exactly one of secret and value";
-              }
-              {
-                assertion = lib.allUnique (renderOciTags oci);
-                message = "publishers.oci-image.${name}.tags and aliases must not render to the same tag";
-              }
-            ])
-            config.publishers.oci-image)
-        ++ lib.concatLists (lib.mapAttrsToList
-          (name: helm: [
-            {
-              assertion = (helm.username.secret == null) != (helm.username.value == null);
-              message = "publishers.oci-helm.${name}.username needs exactly one of secret and value";
-            }
-          ])
-          config.publishers.oci-helm)
         ++ [
+          {
+            assertion = sharedClaims == [ ];
+            message =
+              let shared = builtins.head sharedClaims;
+              in "publishers.${shared.claim.address} and publishers.${shared.other.address} both push to ${shared.claim.destination} and both render ${shared.claim.key} for version 1.2.3";
+          }
           {
             assertion = config.stable || versionMajor == "0";
             message = "stable may be false only while the version's major component is 0";
-          }
-          {
-            assertion = sharedRegistryTags == [ ];
-            message =
-              let shared = builtins.head sharedRegistryTags;
-              in "${shared.name} and ${shared.other} both push to ${shared.repository} and must not share a tag; both render ${shared.tag} for version 1.2.3";
           }
           {
             assertion = builtins.length enabledAnalyzers == 1;
