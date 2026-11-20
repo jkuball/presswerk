@@ -140,6 +140,7 @@ impl Secrets {
         let mut values = BTreeMap::new();
         for (_, source) in &declared {
             let SecretSource::Env(name) = source;
+            register_name(name);
             if let Some(value) = lookup(name).filter(|value| !value.is_empty()) {
                 register(&value);
                 values.insert(source.clone(), value);
@@ -189,6 +190,23 @@ impl Secrets {
 /// Every secret value read so far in this process, longest first, so that output never shows
 /// one.
 static KNOWN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// The environment variables that hold a declared secret, so that programs Presswerk runs for
+/// other purposes do not inherit them.
+static NAMES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn register_name(name: &str) {
+    let mut names = NAMES.lock().unwrap_or_else(PoisonError::into_inner);
+    if !names.iter().any(|known| known == name) {
+        names.push(name.to_owned());
+    }
+}
+
+/// Every environment variable that a secret read so far in this process is declared in.
+#[must_use]
+pub fn secret_variables() -> Vec<String> {
+    NAMES.lock().unwrap_or_else(PoisonError::into_inner).clone()
+}
 
 fn register(value: &str) {
     let mut known = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);

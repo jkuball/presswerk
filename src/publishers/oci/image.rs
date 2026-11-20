@@ -748,7 +748,14 @@ impl Image {
         let mut read = |reader: &mut dyn Read| Members::read(reader, compression, spool_limit, put);
 
         let members = if metadata.permissions().mode() & 0o111 != 0 {
-            let mut child = Command::new(path)
+            let mut command = Command::new(path);
+            // An image executable never needs a publisher's secret. Without them, its
+            // diagnostics cannot show one, not even a value that spans several lines, which
+            // line-by-line redaction would miss.
+            for name in crate::publishers::shared::secrets::secret_variables() {
+                command.env_remove(name);
+            }
+            let mut child = command
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
