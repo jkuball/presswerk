@@ -133,7 +133,8 @@ impl PublisherType for OciHelm {
 }
 
 /// Whether the release tag of `release` points to its chart from `chart`, as `manifest` reads
-/// the manifest a tag points to.
+/// the manifest a tag points to. A tag that cannot be read, such as when the registry denies
+/// access or is unreachable, makes the release `Unknown`.
 pub fn completeness_with(
     repository: &str,
     chart: &str,
@@ -142,7 +143,11 @@ pub fn completeness_with(
 ) -> Result<Completeness, PublicationError> {
     let version = &release.version;
     let tag = tag(version);
-    let found = match manifest(&tag)? {
+    let read = match manifest(&tag) {
+        Ok(read) => read,
+        Err(error) => return Ok(Completeness::Unknown(error.to_string())),
+    };
+    let found = match read {
         None => "the tag is missing",
         Some(manifest) if is_release_manifest(&manifest, version, chart) => {
             return Ok(Completeness::Complete);
@@ -910,6 +915,21 @@ mod tests {
         assert!(
             wrong_root.contains("root directory \"other\""),
             "{wrong_root}"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_chart_tag_is_unknown_not_incomplete() {
+        let completeness = completeness_with(
+            "ghcr.io/owner/charts/project",
+            "/nix/store/abc-project.tgz",
+            &release("1.2.3"),
+            |_| Err(PublicationError::new("could not reach the registry")),
+        )
+        .unwrap();
+        assert_eq!(
+            completeness,
+            Completeness::Unknown("could not reach the registry".into())
         );
     }
 

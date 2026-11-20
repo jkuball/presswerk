@@ -152,6 +152,20 @@ pub fn completeness_of(
     }
 }
 
+/// Whether the GitHub Release of `release` is complete, as `client` reads it. A release that
+/// cannot be read, such as when GitHub denies access or is unreachable, is `Unknown`.
+#[must_use]
+pub fn remote_completeness(
+    client: &impl GithubReleaseReader,
+    repository: &str,
+    release: &Release,
+) -> Completeness {
+    match client.release_state(repository, &release.tag) {
+        Ok(state) => completeness_of(repository, release, &state),
+        Err(error) => Completeness::Unknown(error.to_string()),
+    }
+}
+
 impl PublisherType for GithubRelease {
     const NAME: &'static str = "github-release";
 
@@ -194,14 +208,10 @@ impl Publisher for GithubRelease {
         release: &Release,
         ctx: &Context,
     ) -> Result<Completeness, PublicationError> {
-        let state = self
-            .declaration
-            .client(ctx)?
-            .release_state(&self.declaration.repository, &release.tag)?;
-        Ok(completeness_of(
+        Ok(remote_completeness(
+            &self.declaration.client(ctx)?,
             &self.declaration.repository,
             release,
-            &state,
         ))
     }
 
@@ -800,8 +810,7 @@ impl Publisher for GithubPublisher {
         release: &Release,
         _ctx: &Context,
     ) -> Result<Completeness, PublicationError> {
-        let state = self.client.release_state(&self.repository, &release.tag)?;
-        Ok(completeness_of(&self.repository, release, &state))
+        Ok(remote_completeness(&self.client, &self.repository, release))
     }
 
     fn state(&self, release: &Release, _ctx: &Context) -> Result<PublisherState, PublicationError> {

@@ -192,7 +192,8 @@ fn describe(
 
 /// Whether every version tag of `release` points to its image index, as `manifest` reads the
 /// manifest a tag points to. Aliases do not count: they are best effort and may point to another
-/// release.
+/// release. A tag that cannot be read, such as when the registry denies access or is unreachable,
+/// makes the release `Unknown`.
 pub fn completeness_with(
     repository: &str,
     tags: &[String],
@@ -205,7 +206,11 @@ pub fn completeness_with(
         let OciTag::Version(tag) = tag else {
             continue;
         };
-        let found = match manifest(&tag)? {
+        let read = match manifest(&tag) {
+            Ok(read) => read,
+            Err(error) => return Ok(Completeness::Unknown(error.to_string())),
+        };
+        let found = match read {
             None => "the tag is missing".to_owned(),
             Some(manifest) => match annotated_version(&manifest) {
                 Some(found) if found == *version => continue,
@@ -1622,6 +1627,40 @@ impl OciImagePublisher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unreadable_tag_is_unknown_not_incomplete() {
+        let release = Release {
+            commit: "0".repeat(40),
+            version: Version::new(1, 2, 3),
+            tag: "v1.2.3".into(),
+            notes: String::new(),
+        };
+        let completeness = completeness_with(
+            "ghcr.io/owner/project",
+            &["{version}".into()],
+            &[],
+            &release,
+            |_| Err(PublicationError::new("the registry answered HTTP 403")),
+        )
+        .unwrap();
+        assert_eq!(
+            completeness,
+            Completeness::Unknown("the registry answered HTTP 403".into())
+        );
+        // A tag that is read and missing is incomplete.
+        assert!(matches!(
+            completeness_with(
+                "ghcr.io/owner/project",
+                &["{version}".into()],
+                &[],
+                &release,
+                |_| Ok(None)
+            )
+            .unwrap(),
+            Completeness::Incomplete { .. }
+        ));
+    }
 
     #[test]
     fn renders_tags_before_aliases_with_every_placeholder() {

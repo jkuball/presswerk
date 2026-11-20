@@ -1850,6 +1850,7 @@ fn serve_github_api(
             let reason = match expected.status {
                 200 => "OK",
                 201 => "Created",
+                403 => "Forbidden",
                 404 => "Not Found",
                 500 => "Internal Server Error",
                 status => panic!("unsupported test status {status}"),
@@ -1896,6 +1897,63 @@ fn read_request(stream: &mut std::net::TcpStream) -> String {
             }
         }
     }
+}
+
+#[test]
+fn an_inaccessible_github_release_is_unknown_not_incomplete() {
+    let (url, server) = mock_github_api(vec![ExpectedRequest {
+        method: "GET",
+        path: "/repos/owner/project",
+        status: 403,
+        response: "{}",
+        body_contains: None,
+    }]);
+    let publisher = GithubPublisher::new(
+        GithubClient::new(&url, "test-token").unwrap(),
+        "owner/project",
+    );
+
+    let completeness = publisher
+        .completeness(&release("0".repeat(40)), &Context::detached())
+        .unwrap();
+
+    server.join().unwrap();
+    let Completeness::Unknown(reason) = completeness else {
+        panic!("expected an unknown state, got {completeness:?}");
+    };
+    assert!(reason.contains("inaccessible (HTTP 403)"), "{reason}");
+}
+
+#[test]
+fn an_unknown_predecessor_publisher_blocks_the_next_release() {
+    let repository = GitRepo::new();
+    repository.commit_version("0.1.0", "🔖 Prepare predecessor");
+    repository.annotated_tag("v0.1.0");
+    repository.write("feature", "implemented\n");
+    let candidate = repository.commit("✨ Add a feature");
+    let current_declaration = declaration("0.1.0", "new/project");
+    let previous_declaration = declaration("0.1.0", "old/project");
+    let tag = fake_tag(RemoteState::Matching);
+
+    let error = verify_predecessor_with(
+        repository.path(),
+        candidate.parse().unwrap(),
+        &Version::new(0, 1, 0),
+        &current_declaration,
+        &tag,
+        None,
+        |_commit| Ok(previous_declaration.clone()),
+        |_, _, _| Ok(Completeness::Unknown("GitHub answered HTTP 503".into())),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(
+        error.contains(
+            "cannot tell whether the previous release of github-release.default is complete: GitHub answered HTTP 503"
+        ),
+        "{error}"
+    );
 }
 
 #[test]
