@@ -9,6 +9,7 @@ use presswerk::preparation::{
 use presswerk::publication::{
     AssetStep, PublishEvent, PublishOutcome, PublisherStep, TagStep, publish,
 };
+use presswerk::publishers::shared::secrets::redact;
 use presswerk::release_commit::TrustedPredecessor;
 
 fn main() -> std::process::ExitCode {
@@ -16,7 +17,7 @@ fn main() -> std::process::ExitCode {
         Ok(true) => std::process::ExitCode::SUCCESS,
         Ok(false) => std::process::ExitCode::FAILURE,
         Err(error) => {
-            eprintln!("error: {error:#}");
+            eprintln!("error: {}", redact(&format!("{error:#}")));
             std::process::ExitCode::FAILURE
         }
     }
@@ -156,7 +157,7 @@ fn run() -> Result<bool> {
 /// predecessor.
 fn print_warnings(plan: &ReleasePlan) {
     for warning in &plan.warnings {
-        eprintln!("{warning}");
+        eprintln!("{}", redact(&warning.to_string()));
     }
 }
 
@@ -214,7 +215,7 @@ fn print_publish_event(event: PublishEvent<'_>) {
             }
         }
     };
-    println!("  {kind:<9}  {status:<17}  {target}");
+    println!("  {kind:<9}  {status:<17}  {}", redact(&target));
 }
 
 /// Renders one indented line per step with aligned kind and target columns.

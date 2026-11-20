@@ -37,11 +37,11 @@
             description = "MiniJinja template for the GitHub Release body. The context contains `notes`, the committed changelog section; `version`, the release version; and `tag`, the release tag.";
           };
 
-          token.secret = mkOption {
-            type = types.nonEmptyStr;
-            default = "GITHUB_TOKEN";
-            example = "PRESSWERK_GITHUB_TOKEN";
-            description = "Name of the environment variable that holds the GitHub API token.";
+          token = mkOption {
+            type = publisherLib.credential { what = "GitHub API token"; };
+            default = { secret.env = "GITHUB_TOKEN"; };
+            example = { secret.env = "PRESSWERK_GITHUB_TOKEN"; };
+            description = "The GitHub API token: `{ secret.env = \"NAME\"; }` reads it from an environment variable at run time.";
           };
 
           assets = mkOption {

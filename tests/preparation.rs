@@ -20,7 +20,7 @@ use presswerk::publishers::github_release::{
 };
 use presswerk::publishers::oci::helm::OciHelmDeclaration;
 use presswerk::publishers::oci::image::{Compression, OciImageDeclaration};
-use presswerk::publishers::shared::secrets::{Token, Username};
+use presswerk::publishers::shared::secrets::Credential;
 use semver::Version;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -62,9 +62,7 @@ fn github_release(repository: &str, assets: BTreeMap<String, String>) -> Publish
         GithubReleaseDeclaration {
             api_url: "https://api.github.com".into(),
             repository: repository.into(),
-            token: Token {
-                secret: "GITHUB_TOKEN".into(),
-            },
+            token: Credential::env("GITHUB_TOKEN"),
             body: DEFAULT_GITHUB_RELEASE_BODY.into(),
             assets,
         },
@@ -781,10 +779,8 @@ fn oci_image_publisher(tags: &[&str], aliases: &[&str]) -> OciImageDeclaration {
         aliases: aliases.iter().map(|alias| (*alias).into()).collect(),
         public: false,
         compression: Compression::default(),
-        username: Username::Secret("REGISTRY_USERNAME".into()),
-        password: Token {
-            secret: "REGISTRY_TOKEN".into(),
-        },
+        username: Credential::env("REGISTRY_USERNAME"),
+        password: Credential::env("REGISTRY_TOKEN"),
     }
 }
 
@@ -835,10 +831,8 @@ fn the_plan_lists_an_oci_helm_chart_under_its_release_tag() {
             repository: "ghcr.io/owner/charts/project".into(),
             chart: "/nix/store/abc-project-0.1.0.tgz".into(),
             public: true,
-            username: Username::Secret("REGISTRY_USERNAME".into()),
-            password: Token {
-                secret: "REGISTRY_TOKEN".into(),
-            },
+            username: Credential::env("REGISTRY_USERNAME"),
+            password: Credential::env("REGISTRY_TOKEN"),
         },
     );
 
@@ -877,10 +871,8 @@ fn the_plan_rejects_an_oci_helm_tag_shared_with_an_oci_image_publisher() {
             repository: "ghcr.io/owner/project".into(),
             chart: "/nix/store/abc-project-0.1.0.tgz".into(),
             public: true,
-            username: Username::Secret("REGISTRY_USERNAME".into()),
-            password: Token {
-                secret: "REGISTRY_TOKEN".into(),
-            },
+            username: Credential::env("REGISTRY_USERNAME"),
+            password: Credential::env("REGISTRY_TOKEN"),
         },
     );
 

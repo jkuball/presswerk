@@ -4,7 +4,7 @@ use crate::analysis::{
 use crate::declaration::{Publishers, ReleaseDeclaration, Tag};
 use crate::evaluation::{EvaluatedReleaseDeclaration, evaluate_release_declaration};
 use crate::publication::{Release, VerifiedPredecessor, short_oid, verify_head_predecessor};
-use crate::publishers::{Context as PublisherContext, Session, Warning};
+use crate::publishers::{Context as PublisherContext, Session, Warning, WarningLevel};
 use crate::release_commit::{
     ReleaseFile, TrustedPredecessor, create_release_commit, release_subject,
 };
@@ -126,7 +126,10 @@ fn plan_session(plan: &ReleasePlan) -> Session {
             .as_ref()
             .and(plan.previous_release.as_ref())
             .map(|previous| previous.version.clone()),
-        ..Session::default()
+        secrets: crate::publishers::shared::secrets::Secrets::resolve(
+            &serde_json::to_value(&plan.publishers)
+                .expect("publisher declarations serialize to JSON"),
+        ),
     }
 }
 
@@ -134,25 +137,37 @@ fn plan_session(plan: &ReleasePlan) -> Session {
 /// something another tool left there does not stay behind unnoticed. Reading is best effort and
 /// never stops the plan.
 fn preview_publishers(plan: &mut ReleasePlan, session: &Session) -> Result<()> {
-    let (Some(version), Some(tag)) = (&plan.next_version, &plan.next_tag) else {
-        return Ok(());
-    };
-    let release = Release {
-        commit: plan.commit.to_string(),
-        version: version.clone(),
-        tag: tag.clone(),
-        notes: plan.notes.clone(),
-    };
-    let warnings = Mutex::new(Vec::new());
-    let warn = |warning: Warning| {
-        warnings
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(warning);
-    };
-    for node in plan.publishers.nodes()? {
-        let ctx = PublisherContext::new(session, &node.name).with_warnings(&warn);
-        node.publisher.preview(&release, &ctx);
+    // `publish` stops without them; `plan` and `prepare` only tell.
+    let warnings = Mutex::new(
+        session
+            .secrets
+            .missing()
+            .into_iter()
+            .map(|(path, source)| Warning {
+                level: WarningLevel::Warning,
+                message: format!(
+                    "secret {source} for publishers.{path} is not set; publish stops before writing anything without it"
+                ),
+            })
+            .collect::<Vec<_>>(),
+    );
+    if let (Some(version), Some(tag)) = (&plan.next_version, &plan.next_tag) {
+        let release = Release {
+            commit: plan.commit.to_string(),
+            version: version.clone(),
+            tag: tag.clone(),
+            notes: plan.notes.clone(),
+        };
+        let warn = |warning: Warning| {
+            warnings
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(warning);
+        };
+        for node in plan.publishers.nodes()? {
+            let ctx = PublisherContext::new(session, &node.name).with_warnings(&warn);
+            node.publisher.preview(&release, &ctx);
+        }
     }
     plan.warnings = warnings
         .into_inner()

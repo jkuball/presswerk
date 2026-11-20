@@ -604,7 +604,7 @@ mod tests {
                     "default": {
                         "apiUrl": "https://api.github.com",
                         "repository": "jkuball/presswerk",
-                        "token": { "secret": "GITHUB_TOKEN" }
+                        "token": { "secret": { "env": "GITHUB_TOKEN" } }
                     }
                 }
             }
@@ -1126,13 +1126,13 @@ mod tests {
     #[test]
     fn accepts_logical_secret_names_and_rejects_empty_names() {
         let logical_name = declaration(|value| {
-            value["publishers"]["github-release"]["default"]["token"]["secret"] =
+            value["publishers"]["github-release"]["default"]["token"]["secret"]["env"] =
                 json!("github-token");
         });
         ReleaseDeclaration::from_json(&logical_name).unwrap();
 
         let empty_name = declaration(|value| {
-            value["publishers"]["github-release"]["default"]["token"]["secret"] = json!("");
+            value["publishers"]["github-release"]["default"]["token"]["secret"]["env"] = json!("");
         });
         assert!(
             ReleaseDeclaration::from_json(&empty_name)
@@ -1161,7 +1161,7 @@ mod tests {
                         "chart": chart,
                         "public": true,
                         "username": { "value": "oauth2accesstoken" },
-                        "password": { "secret": "REGISTRY_TOKEN" }
+                        "password": { "secret": { "env": "REGISTRY_TOKEN" } }
                     }
                 });
             })
@@ -1203,8 +1203,8 @@ mod tests {
                 "platforms": { "linux/amd64": "/nix/store/abc-image.tar.gz" },
                 "tags": ["{version}"],
                 "aliases": [],
-                "username": { "secret": "REGISTRY_USERNAME" },
-                "password": { "secret": "REGISTRY_TOKEN" }
+                "username": { "secret": { "env": "REGISTRY_USERNAME" } },
+                "password": { "secret": { "env": "REGISTRY_TOKEN" } }
             }
         });
         let legacy = declaration(|value| value["publishers"]["oci"] = publishers.clone());
@@ -1240,8 +1240,8 @@ mod tests {
                 "default": {
                     "repository": "ghcr.io/owner/charts/project",
                     "chart": "/nix/store/abc-project.tgz",
-                    "username": { "secret": "REGISTRY_USERNAME" },
-                    "password": { "secret": "REGISTRY_TOKEN" }
+                    "username": { "secret": { "env": "REGISTRY_USERNAME" } },
+                    "password": { "secret": { "env": "REGISTRY_TOKEN" } }
                 }
             });
             value["publishers"]["oci-image"] = json!({
@@ -1250,8 +1250,8 @@ mod tests {
                     "platforms": { "linux/amd64": "/nix/store/abc-image.tar.gz" },
                     "tags": ["{version}"],
                     "aliases": [],
-                    "username": { "secret": "REGISTRY_USERNAME" },
-                    "password": { "secret": "REGISTRY_TOKEN" }
+                    "username": { "secret": { "env": "REGISTRY_USERNAME" } },
+                    "password": { "secret": { "env": "REGISTRY_TOKEN" } }
                 }
             });
         });
@@ -1278,8 +1278,8 @@ mod tests {
                 "platforms": { "linux/amd64": "/nix/store/00000000000000000000000000000000-image.tar.gz" },
                 "tags": tags,
                 "aliases": aliases,
-                "username": { "secret": "REGISTRY_USERNAME" },
-                "password": { "secret": "REGISTRY_TOKEN" }
+                "username": { "secret": { "env": "REGISTRY_USERNAME" } },
+                "password": { "secret": { "env": "REGISTRY_TOKEN" } }
             })
         };
         let with = |debug: Value| {

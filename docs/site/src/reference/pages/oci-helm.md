@@ -8,8 +8,8 @@ your choice:
     repository = "ghcr.io/owner/charts/project";
     chart = self.packages.x86_64-linux.chart;
     public = true;
-    username.secret = "GITHUB_ACTOR";
-    password.secret = "GITHUB_TOKEN";
+    username.secret.env = "GITHUB_ACTOR";
+    password.secret.env = "GITHUB_TOKEN";
   };
 }
 ```
@@ -90,9 +90,9 @@ missing or different chart stops them, so the interrupted release is published a
 
 OCI Helm publishers use the same registry authentication as
 [OCI: Image](/reference/publishers/oci-image/#credentials).
-`username.secret` and `password.secret` name environment variables read at run time. A public
-username may instead use `username.value`, such as `oauth2accesstoken` for Google Artifact
-Registry. Credentials never enter the declaration or Nix store and are never printed.
+`username.secret.env` and `password.secret.env` name environment variables read at run time. A
+public username may instead use `username.value`, such as `oauth2accesstoken` for Google Artifact
+Registry. Secrets never enter the declaration or Nix store and are never printed.
 
 `publish` always needs the credentials. By default, `plan` and `prepare` need them when they check a
 previous release. With `public = true;`, that check reads anonymously with pull access only and

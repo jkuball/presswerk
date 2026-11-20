@@ -221,7 +221,10 @@ impl Session {
     #[must_use]
     pub fn for_declaration(declaration: &crate::declaration::ReleaseDeclaration) -> Self {
         Self {
-            secrets: shared::secrets::Secrets,
+            secrets: shared::secrets::Secrets::resolve(
+                &serde_json::to_value(&declaration.publishers)
+                    .expect("publisher declarations serialize to JSON"),
+            ),
             changelog: declaration.changelog.path.clone(),
             trusted_predecessor: None,
         }
@@ -448,16 +451,16 @@ mod tests {
                     },
                     "tags": ["v{version}"],
                     "aliases": ["0.1.0"],
-                    "username": { "secret": "REGISTRY_USERNAME" },
-                    "password": { "secret": "REGISTRY_TOKEN" }
+                    "username": { "secret": { "env": "REGISTRY_USERNAME" } },
+                    "password": { "secret": { "env": "REGISTRY_TOKEN" } }
                 }
             },
             "oci-helm": {
                 "chart": {
                     "repository": "ghcr.io/owner/project",
                     "chart": "/nix/store/00000000000000000000000000000000-chart.tgz",
-                    "username": { "secret": "REGISTRY_USERNAME" },
-                    "password": { "secret": "REGISTRY_TOKEN" }
+                    "username": { "secret": { "env": "REGISTRY_USERNAME" } },
+                    "password": { "secret": { "env": "REGISTRY_TOKEN" } }
                 }
             }
         })))

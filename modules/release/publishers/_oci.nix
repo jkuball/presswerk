@@ -3,13 +3,6 @@
 { lib, publisherLib }:
 let
   inherit (lib) mkOption types;
-  secretModule = what: example: {
-    options.secret = mkOption {
-      type = types.nonEmptyStr;
-      inherit example;
-      description = "Name of the environment variable that holds the ${what}.";
-    };
-  };
 in
 {
   registryOptions = what: {
@@ -27,41 +20,20 @@ in
     };
 
     username = mkOption {
-      type = types.submodule {
-        options.secret = mkOption {
-          type = types.nullOr types.nonEmptyStr;
-          default = null;
-          example = "REGISTRY_USERNAME";
-          description = "Name of the environment variable that holds the registry username.";
-        };
-        options.value = mkOption {
-          type = types.nullOr types.nonEmptyStr;
-          default = null;
-          example = "oauth2accesstoken";
-          description = "The registry username itself, for registries where it is no secret, such as `oauth2accesstoken` for Google Artifact Registry. It is written into the release declaration.";
-        };
-      };
-      description = "Registry username: either `secret`, read from an environment variable at run time, or `value`.";
+      type = publisherLib.credential { what = "registry username"; valueExample = "oauth2accesstoken"; };
+      example = { secret.env = "REGISTRY_USERNAME"; };
+      description = "Registry username: `{ secret.env = \"NAME\"; }` reads it from an environment variable at run time; `{ value = \"…\"; }` writes it into the release declaration, for registries where it is no secret, such as `oauth2accesstoken` for Google Artifact Registry.";
     };
 
     password = mkOption {
-      type = types.submodule (secretModule "registry password or token" "REGISTRY_TOKEN");
-      description = "Registry password or token, read from an environment variable at run time.";
+      type = publisherLib.credential { what = "registry password or token"; };
+      example = { secret.env = "REGISTRY_TOKEN"; };
+      description = "Registry password or token, such as `{ secret.env = \"REGISTRY_TOKEN\"; }`, read from an environment variable at run time.";
     };
   };
 
   # What the declaration holds about the registry and its credentials.
-  registryDeclaration = config: {
-    inherit (config) repository public password;
-    username = lib.filterAttrs (_source: value: value != null) config.username;
-  };
-
-  registryAssertions = address: config: [
-    {
-      assertion = (config.username.secret == null) != (config.username.value == null);
-      message = "publishers.${address}.username needs exactly one of secret and value";
-    }
-  ];
+  registryDeclaration = config: { inherit (config) repository public username password; };
 
   # A claim on one tag of the repository; image and chart tags share one namespace.
   claim = repository: tag: {

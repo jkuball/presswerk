@@ -11,7 +11,7 @@ use crate::declaration::DeclarationError;
 use crate::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, PublisherState, Release,
 };
-use crate::publishers::shared::secrets::{Token, Username};
+use crate::publishers::shared::secrets::Credential;
 use crate::publishers::{
     Claim, Completeness, Context, Description, Labels, Publisher, PublisherType, WarningLevel,
     shared,
@@ -62,8 +62,8 @@ pub struct OciImageDeclaration {
     /// Missing in declarations written before the option existed.
     #[serde(default)]
     pub compression: Compression,
-    pub username: Username,
-    pub password: Token,
+    pub username: Credential,
+    pub password: Credential,
 }
 
 /// The compression of pushed image layers, with its level.
@@ -284,7 +284,8 @@ impl Publisher for OciImage {
             return;
         }
         let secrets = &ctx.session.secrets;
-        let variables = missing_credentials(declaration, |name| secrets.env(name));
+        let variables =
+            missing_credentials(declaration, |name| secrets.env(name).map(str::to_owned));
         // Without credentials, an anonymous read may still succeed, such as for a repository
         // that is public without being marked so.
         let registry = if variables.is_empty() {

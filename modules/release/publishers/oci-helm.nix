@@ -1,6 +1,6 @@
 {
   flake.modules.presswerk.default =
-    { config, lib, publisherLib, ... }:
+    { lib, publisherLib, ... }:
     let
       inherit (lib) mkOption types;
       oci = import ./_oci.nix { inherit lib publisherLib; };
@@ -33,16 +33,13 @@
               repository = "ghcr.io/owner/charts/project";
               chart = self.packages.x86_64-linux.chart;
               public = true;
-              username.secret = "GITHUB_ACTOR";
-              password.secret = "GITHUB_TOKEN";
+              username.secret.env = "GITHUB_ACTOR";
+              password.secret.env = "GITHUB_TOKEN";
             };
           }
         '';
         description = "OCI Helm publishers.";
       };
 
-      config.assertions = lib.concatLists (lib.mapAttrsToList
-        (name: helm: oci.registryAssertions "oci-helm.${name}" helm)
-        config.publishers.oci-helm);
     };
 }

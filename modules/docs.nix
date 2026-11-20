@@ -63,20 +63,30 @@ in
     };
 
     "test submodule options resolve with defaults and source links" = {
-      expr = lib.removeAttrs (lib.findFirst (option: option.name == "publishers.github-release.<name>.token.secret") null optionsReference) [ "description" "declarations" ];
+      expr = lib.removeAttrs (lib.findFirst (option: option.name == "publishers.github-release.<name>.token") null optionsReference) [ "description" "declarations" ];
       expected = {
-        name = "publishers.github-release.<name>.token.secret";
-        loc = [ "publishers" "github-release" "<name>" "token" "secret" ];
-        anchor = "publishers.github-release.name.token.secret";
+        name = "publishers.github-release.<name>.token";
+        loc = [ "publishers" "github-release" "<name>" "token" ];
+        anchor = "publishers.github-release.name.token";
         readOnly = false;
-        type = "non-empty string";
+        type = "attribute-tagged union with choices: secret, value";
         default = {
           kind = "nix";
-          text = ''"GITHUB_TOKEN"'';
+          text = ''
+            {
+              secret = {
+                env = "GITHUB_TOKEN";
+              };
+            }'';
         };
         example = {
           kind = "nix";
-          text = ''"PRESSWERK_GITHUB_TOKEN"'';
+          text = ''
+            {
+              secret = {
+                env = "PRESSWERK_GITHUB_TOKEN";
+              };
+            }'';
         };
       };
     };

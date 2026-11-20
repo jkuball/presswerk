@@ -62,7 +62,7 @@ fn ordinary_repository() -> GitRepo {
       publishers."github-release".default = {
         apiUrl = "https://api.github.com";
         repository = "owner/project";
-        token.secret = "GITHUB_TOKEN";
+        token.secret.env = "GITHUB_TOKEN";
       };
     };
   };
@@ -97,7 +97,7 @@ const RELEASE_FLAKE: &str = r#"{
       publishers."github-release".default = {
         apiUrl = "https://api.github.com";
         repository = "owner/project";
-        token.secret = "GITHUB_TOKEN";
+        token.secret.env = "GITHUB_TOKEN";
       };
     };
   };
@@ -258,6 +258,38 @@ fn plan_reads_head_and_prepare_creates_the_first_release_commit() {
 }
 
 #[test]
+fn publish_without_a_declared_secret_fails_before_writing_anything() {
+    let repository = release_repository();
+    let prepared = presswerk_in(repository.path(), &["prepare"]);
+    assert!(
+        prepared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared.stderr)
+    );
+    let remote = tempfile::tempdir().unwrap();
+    let remote_path = remote.path().to_string_lossy().into_owned();
+    repository.git(["init", "--bare", "--quiet", &remote_path]);
+    repository.git(["remote", "add", "origin", &remote_path]);
+
+    let output = presswerk_in_with(
+        repository.path(),
+        &["publish"],
+        &[("GITHUB_TOKEN", Path::new(""))],
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            "secret environment variable \"GITHUB_TOKEN\" for publishers.github-release.default.token is not set"
+        ),
+        "{stderr}"
+    );
+    assert_eq!(repository.git(["tag", "--list"]), "");
+    assert_eq!(repository.git(["ls-remote", "--tags", &remote_path]), "");
+}
+
+#[test]
 fn publish_without_a_git_identity_fails_before_writing_anything() {
     let repository = release_repository();
     let prepared = presswerk_in(repository.path(), &["prepare"]);
@@ -284,6 +316,8 @@ fn publish_without_a_git_identity_fails_before_writing_anything() {
             ("XDG_CONFIG_HOME", home.path()),
             ("GIT_CONFIG_GLOBAL", &nowhere),
             ("GIT_CONFIG_NOSYSTEM", Path::new("1")),
+            // Every declared secret is checked first; this test is about the identity.
+            ("GITHUB_TOKEN", Path::new("presswerk-test-token")),
         ],
     );
 
@@ -553,7 +587,7 @@ fn a_release_tagged_on_only_one_side_is_not_pending() {
         r#"publishers."github-release".default = {
         apiUrl = "https://api.github.com";
         repository = "owner/project";
-        token.secret = "GITHUB_TOKEN";
+        token.secret.env = "GITHUB_TOKEN";
       };"#,
         r#"publishers."github-release" = { };"#,
     );

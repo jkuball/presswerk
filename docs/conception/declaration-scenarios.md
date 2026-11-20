@@ -59,7 +59,7 @@ outside and evaluates `presswerk.default`.
 
       publishers.github-release.default = {
         repository = "jkuball/presswerk";
-        token.secret = "GITHUB_TOKEN";
+        token.secret.env = "GITHUB_TOKEN";
         assets = {
           "presswerk-x86_64-linux" = "${self.packages.x86_64-linux.presswerk-static}/bin/presswerk";
           "presswerk-aarch64-darwin" = "${self.packages.aarch64-darwin.presswerk}/bin/presswerk";

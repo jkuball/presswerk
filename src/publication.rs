@@ -664,6 +664,20 @@ pub fn publish_to_remote(
         .map_err(|error| PublicationError::new(error.to_string()))?;
     crate::publishers::check_claims(&publishers, &declaration.version)
         .map_err(PublicationError::new)?;
+    // Every declared secret is resolved up front, so a missing one stops before anything is
+    // written, even if this run would not have needed it.
+    let session = Session::for_declaration(&declaration);
+    let missing = session.secrets.missing();
+    if !missing.is_empty() {
+        return Err(PublicationError::new(format!(
+            "{}; publish needs every declared secret before it writes anything",
+            missing
+                .iter()
+                .map(|(path, source)| format!("secret {source} for publishers.{path} is not set"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )));
+    }
 
     let tag = declaration
         .tag
@@ -727,7 +741,7 @@ pub fn publish_to_remote(
 
     let session = Session {
         trusted_predecessor,
-        ..Session::for_declaration(&declaration)
+        ..session
     };
     progress(PublishEvent::Started {
         tag: &release.tag,

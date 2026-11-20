@@ -9,7 +9,7 @@ use crate::publishers::oci::{
     Blob, BlobData, Descriptor, MANIFEST_MEDIA_TYPE, Manifest, ORIGIN_ANNOTATION, RegistryClient,
     VERSION_ANNOTATION, sha256_digest, sha256_digest_reader,
 };
-use crate::publishers::shared::secrets::{Token, Username};
+use crate::publishers::shared::secrets::Credential;
 use crate::publishers::{
     Claim, Completeness, Context, Description, Labels, Publisher, PublisherType, shared,
 };
@@ -60,8 +60,8 @@ pub struct OciHelmDeclaration {
     /// Whether anyone may pull the chart; the previous-release check then reads anonymously.
     #[serde(default)]
     pub public: bool,
-    pub username: Username,
-    pub password: Token,
+    pub username: Credential,
+    pub password: Credential,
 }
 
 impl OciHelmDeclaration {

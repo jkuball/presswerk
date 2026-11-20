@@ -5,7 +5,7 @@ use crate::declaration::{DeclarationError, validate_template};
 use crate::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, PublisherState, Release,
 };
-use crate::publishers::shared::secrets::Token;
+use crate::publishers::shared::secrets::Credential;
 use crate::publishers::{
     Completeness, Context, Description, Labels, Publisher, PublisherType, shared,
 };
@@ -30,7 +30,7 @@ pub const ASSET: ArtifactKind = ArtifactKind::new("asset", "uploaded");
 pub struct GithubReleaseDeclaration {
     pub api_url: String,
     pub repository: String,
-    pub token: Token,
+    pub token: Credential,
     #[serde(default = "default_github_release_body")]
     pub body: String,
     /// Files attached to the release, by asset name. Each is a path in the Nix store.
@@ -95,13 +95,7 @@ impl GithubReleaseDeclaration {
     }
 
     fn client(&self, ctx: &Context) -> Result<GithubClient, PublicationError> {
-        let secret = &self.token.secret;
-        let token = ctx.session.secrets.env(secret).ok_or_else(|| {
-            PublicationError::new(format!(
-                "GitHub credential environment variable {secret:?} is not set or empty"
-            ))
-        })?;
-        GithubClient::new(&self.api_url, token)
+        GithubClient::new(&self.api_url, ctx.session.secrets.get(&self.token)?)
     }
 }
 

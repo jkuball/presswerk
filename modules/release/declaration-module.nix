@@ -593,6 +593,24 @@
             types.addCheck types.str (path: builtins.hasContext path && lib.hasPrefix "${builtins.storeDir}/" path)
             // { description = "file in a flake output"; }
           );
+          # A credential, in the shape every publisher type shares: the value itself, or where
+          # to read it at run time. More sources may follow.
+          credential = { what, valueExample ? null }: types.attrTag {
+            value = mkOption ({
+              type = types.nonEmptyStr;
+              description = "The ${what} itself, written into the release declaration; only for what is no secret.";
+            } // lib.optionalAttrs (valueExample != null) { example = valueExample; });
+            secret = mkOption {
+              type = types.attrTag {
+                env = mkOption {
+                  type = types.nonEmptyStr;
+                  example = "PRESSWERK_TOKEN";
+                  description = "Name of the environment variable that holds the ${what}.";
+                };
+              };
+              description = "Where to read the ${what} at run time. `publish` reads every declared secret before it writes anything and stops if one is missing.";
+            };
+          };
           # The version that claims and templates are rendered with; its parts differ.
           sampleVersion = "1.2.3";
         };

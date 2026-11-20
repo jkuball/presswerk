@@ -18,7 +18,7 @@ use presswerk::publishers::github_release::{
 };
 use presswerk::publishers::oci::helm::OciHelmDeclaration;
 use presswerk::publishers::oci::image::{Compression, OciImageDeclaration};
-use presswerk::publishers::shared::secrets::{Token, Username};
+use presswerk::publishers::shared::secrets::Credential;
 use presswerk::publishers::{Completeness, Context, Description};
 use presswerk::release_commit::TrustedPredecessor;
 use semver::Version;
@@ -83,7 +83,7 @@ fn declaration(version: &str, repository: &str) -> ReleaseDeclaration {
               "default": {{
                 "apiUrl": "https://api.github.com",
                 "repository": "{repository}",
-                "token": {{ "secret": "GITHUB_TOKEN" }}
+                "token": {{ "secret": {{ "env": "GITHUB_TOKEN" }} }}
               }}
             }}
           }}
@@ -1591,10 +1591,8 @@ fn oci_image_predecessor(tags: &[&str], aliases: &[&str]) -> ReleaseDeclaration 
             aliases: aliases.iter().map(|alias| (*alias).into()).collect(),
             public: true,
             compression: Compression::default(),
-            username: Username::Secret("REGISTRY_USERNAME".into()),
-            password: Token {
-                secret: "REGISTRY_TOKEN".into(),
-            },
+            username: Credential::env("REGISTRY_USERNAME"),
+            password: Credential::env("REGISTRY_TOKEN"),
         },
     );
     declaration
@@ -1752,10 +1750,8 @@ fn an_oci_helm_predecessor_needs_its_version_tag_and_store_path() {
             repository: "ghcr.io/owner/charts/project".into(),
             chart: "/nix/store/abc-project-0.1.0.tgz".into(),
             public: true,
-            username: Username::Secret("REGISTRY_USERNAME".into()),
-            password: Token {
-                secret: "REGISTRY_TOKEN".into(),
-            },
+            username: Credential::env("REGISTRY_USERNAME"),
+            password: Credential::env("REGISTRY_TOKEN"),
         },
     );
     let tag = fake_tag(RemoteState::Matching);

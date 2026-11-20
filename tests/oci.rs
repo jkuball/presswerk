@@ -10,7 +10,7 @@ use presswerk::publishers::oci::{
     BlobData, Credentials, GZIP_LAYER_MEDIA_TYPE, INDEX_MEDIA_TYPE, RegistryClient, TAG,
     ZSTD_LAYER_MEDIA_TYPE,
 };
-use presswerk::publishers::shared::secrets::{Token, Username};
+use presswerk::publishers::shared::secrets::{Credential, Secrets};
 use semver::Version;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -1571,9 +1571,11 @@ fn credentials_are_checked_and_never_printed() {
     assert!(!error.contains("wrong-password"));
     assert!(!format!("{publisher:?}").contains("wrong-password"));
 
-    let missing = presswerk::publishers::oci::Credentials::from_environment(
-        &Username::Secret("PRESSWERK_TEST_UNSET_USERNAME".into()),
-        "PRESSWERK_TEST_UNSET_PASSWORD",
+    let unset = Secrets::default();
+    let missing = Credentials::resolve(
+        &Credential::env("PRESSWERK_TEST_UNSET_USERNAME"),
+        &Credential::env("PRESSWERK_TEST_UNSET_PASSWORD"),
+        &unset,
     )
     .unwrap_err()
     .to_string();
@@ -1583,9 +1585,10 @@ fn credentials_are_checked_and_never_printed() {
     );
 
     // A literal username needs no variable; only the password is read.
-    let missing = presswerk::publishers::oci::Credentials::from_environment(
-        &Username::Value("oauth2accesstoken".into()),
-        "PRESSWERK_TEST_UNSET_PASSWORD",
+    let missing = Credentials::resolve(
+        &Credential::Value("oauth2accesstoken".into()),
+        &Credential::env("PRESSWERK_TEST_UNSET_PASSWORD"),
+        &unset,
     )
     .unwrap_err()
     .to_string();
@@ -1841,10 +1844,8 @@ fn only_unset_credentials_of_a_private_repository_are_missing() {
         aliases: vec!["latest".into()],
         public: false,
         compression: Compression::default(),
-        username: Username::Secret("REGISTRY_USERNAME".into()),
-        password: Token {
-            secret: "REGISTRY_TOKEN".into(),
-        },
+        username: Credential::env("REGISTRY_USERNAME"),
+        password: Credential::env("REGISTRY_TOKEN"),
     };
     let set = |names: &'static [&'static str]| {
         move |name: &str| {
@@ -1863,7 +1864,7 @@ fn only_unset_credentials_of_a_private_repository_are_missing() {
         missing_credentials(&publisher, set(&["REGISTRY_USERNAME", "REGISTRY_TOKEN"])),
         ["REGISTRY_TOKEN"]
     );
-    publisher.username = Username::Value("oauth2accesstoken".into());
+    publisher.username = Credential::Value("oauth2accesstoken".into());
     assert_eq!(
         missing_credentials(&publisher, set(&[])),
         ["REGISTRY_TOKEN"]

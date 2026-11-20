@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+Credentials share one shape across all publishers: the value itself, `{ value = "…"; }`, or a
+secret read at run time, `{ secret.env = "NAME"; }`. Rename `token.secret = "NAME";`,
+`username.secret = "NAME";`, and `password.secret = "NAME";` to `token.secret.env`,
+`username.secret.env`, and `password.secret.env`; `username.value` stays as it is. Release
+declarations written with the old shape, such as the previous release's, are still read.
+
+```nix
+publishers.oci-image.default = {
+  username.secret.env = "GITHUB_ACTOR";
+  password.secret.env = "GITHUB_TOKEN";
+};
+```
+
+`publish` now reads every declared secret before it writes anything and stops if one is missing,
+even if this run would not have needed it; `plan` and `prepare` warn about missing ones. Two
+publishers that would push the same tag or create the same GitHub Release now fail when the module
+is evaluated.
+
 ## [0.20.1] - 2026-11-19
 
 ### 🐛 Fix a bug

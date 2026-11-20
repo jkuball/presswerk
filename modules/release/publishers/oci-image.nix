@@ -93,8 +93,8 @@
               tags = [ "{version}" ];
               aliases = [ "latest" "{major}" ];
               public = true;
-              username.secret = "GITHUB_ACTOR";
-              password.secret = "GITHUB_TOKEN";
+              username.secret.env = "GITHUB_ACTOR";
+              password.secret.env = "GITHUB_TOKEN";
             };
           }
         '';
@@ -125,7 +125,7 @@
               assertion = lib.allUnique (renderTags image);
               message = "publishers.oci-image.${name}.tags and aliases must not render to the same tag";
             }
-          ] ++ oci.registryAssertions "oci-image.${name}" image)
+          ])
           config.publishers.oci-image);
       };
     };

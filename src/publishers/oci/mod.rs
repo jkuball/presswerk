@@ -5,10 +5,9 @@ pub mod image;
 
 use crate::publication::{ArtifactKind, PublicationError};
 use crate::publishers::Labels;
-use crate::publishers::shared::secrets::{Secrets, Token, Username};
+use crate::publishers::shared::secrets::{Credential, SecretSource, Secrets};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::env;
 use std::fmt;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
@@ -40,19 +39,17 @@ const LABELS: Labels = Labels {
 pub(crate) struct Registry<'a> {
     pub repository: &'a str,
     pub public: bool,
-    pub username: &'a Username,
-    pub password: &'a Token,
+    pub username: &'a Credential,
+    pub password: &'a Credential,
 }
 
 impl Registry<'_> {
     fn validate(&self) -> Result<(), String> {
         RepositoryReference::parse(self.repository)?;
-        if let Username::Secret(name) | Username::Value(name) = self.username
-            && name.is_empty()
-        {
-            return Err("the registry username must not be empty".into());
-        }
-        self.password.validate().map_err(|error| error.to_string())
+        self.username
+            .validate()
+            .and_then(|()| self.password.validate())
+            .map_err(|error| error.to_string())
     }
 
     /// The claim on one tag of the repository.
@@ -89,15 +86,14 @@ impl Registry<'_> {
         if self.public {
             return Vec::new();
         }
-        let username = match self.username {
-            Username::Secret(name) => Some(name.as_str()),
-            Username::Value(_) => None,
-        };
-        username
+        [self.username, self.password]
             .into_iter()
-            .chain([self.password.secret.as_str()])
+            .filter_map(|credential| match credential {
+                Credential::Secret(SecretSource::Env(name)) => Some(name),
+                Credential::Value(_) => None,
+            })
             .filter(|name| lookup(name).is_none_or(|value| value.is_empty()))
-            .map(str::to_owned)
+            .cloned()
             .collect()
     }
 }
@@ -330,48 +326,15 @@ impl fmt::Debug for Credentials {
 }
 
 impl Credentials {
-    /// The credentials, with the secrets read from `secrets`.
+    /// The credentials, with their secrets taken from `secrets`.
     pub fn resolve(
-        username: &Username,
-        password: &Token,
+        username: &Credential,
+        password: &Credential,
         secrets: &Secrets,
     ) -> Result<Self, PublicationError> {
-        let read = |name: &str| {
-            secrets.env(name).ok_or_else(|| {
-                PublicationError::new(format!(
-                    "OCI credential environment variable {name:?} is not set or empty"
-                ))
-            })
-        };
         Ok(Self {
-            username: match username {
-                Username::Secret(name) => read(name)?,
-                Username::Value(username) => username.clone(),
-            },
-            password: read(&password.secret)?,
-        })
-    }
-
-    pub fn from_environment(username: &Username, password: &str) -> Result<Self, PublicationError> {
-        let read = |name: &str| {
-            let value = env::var(name).map_err(|_| {
-                PublicationError::new(format!(
-                    "OCI credential environment variable {name:?} is not set"
-                ))
-            })?;
-            if value.is_empty() {
-                return Err(PublicationError::new(format!(
-                    "OCI credential environment variable {name:?} is empty"
-                )));
-            }
-            Ok(value)
-        };
-        Ok(Self {
-            username: match username {
-                Username::Secret(name) => read(name)?,
-                Username::Value(username) => username.clone(),
-            },
-            password: read(password)?,
+            username: secrets.get(username)?,
+            password: secrets.get(password)?,
         })
     }
 }
