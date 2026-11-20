@@ -229,6 +229,13 @@ pub fn completeness_with(
 }
 
 impl Publisher for OciImage {
+    fn credentials(&self) -> Vec<(&'static str, &Credential)> {
+        vec![
+            ("username", &self.declaration.username),
+            ("password", &self.declaration.password),
+        ]
+    }
+
     fn describe(&self, version: &Version, _tag: &str) -> Result<Description, String> {
         let declaration = &self.declaration;
         describe(
@@ -1661,9 +1668,12 @@ mod tests {
     #[test]
     fn an_image_executable_inherits_no_secret() {
         let _secrets = crate::publishers::shared::secrets::Secrets::resolve_with(
-            &serde_json::json!({ "oci-image": { "default": {
-                "password": { "env": "PRESSWERK_TEST_IMAGE_EXECUTABLE_SECRET" }
-            } } }),
+            vec![(
+                "oci-image.default.password".into(),
+                crate::publishers::shared::secrets::SecretSource::Env(
+                    "PRESSWERK_TEST_IMAGE_EXECUTABLE_SECRET".into(),
+                ),
+            )],
             // A multiline value, such as JSON registry credentials.
             |_| Some("{\n  \"password\": \"presswerk-multiline-sentinel\"\n}".into()),
         );
@@ -1677,9 +1687,12 @@ mod tests {
     fn image_executable_diagnostics_never_show_a_secret() {
         // Resolving a secret is what makes its value one that output never shows.
         let _secrets = crate::publishers::shared::secrets::Secrets::resolve_with(
-            &serde_json::json!({ "oci-image": { "default": {
-                "password": { "env": "PRESSWERK_TEST_DIAGNOSTICS" }
-            } } }),
+            vec![(
+                "oci-image.default.password".into(),
+                crate::publishers::shared::secrets::SecretSource::Env(
+                    "PRESSWERK_TEST_DIAGNOSTICS".into(),
+                ),
+            )],
             |_| Some("presswerk-diagnostics-sentinel".into()),
         );
         let mut sink = Vec::new();

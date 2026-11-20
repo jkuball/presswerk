@@ -91,8 +91,7 @@ fn build_head_plan(
     let evaluated = evaluate_release_declaration(repository_path, "HEAD")?;
     // Read the secrets first, so that nothing printed from here on can show one.
     let secrets = crate::publishers::shared::secrets::Secrets::resolve(
-        &serde_json::to_value(&evaluated.declaration.publishers)
-            .expect("publisher declarations serialize to JSON"),
+        evaluated.declaration.publishers.secrets(),
     );
     let date = time::OffsetDateTime::now_utc().date().to_string();
     let mut plan = build_release_plan(

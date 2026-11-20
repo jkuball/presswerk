@@ -171,6 +171,13 @@ fn describe(repository: &str, version: &Version) -> Result<Description, String> 
 }
 
 impl Publisher for OciHelm {
+    fn credentials(&self) -> Vec<(&'static str, &Credential)> {
+        vec![
+            ("username", &self.declaration.username),
+            ("password", &self.declaration.password),
+        ]
+    }
+
     fn describe(&self, version: &Version, _tag: &str) -> Result<Description, String> {
         describe(&self.declaration.repository, version)
     }

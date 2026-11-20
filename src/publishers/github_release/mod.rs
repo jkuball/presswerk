@@ -180,6 +180,10 @@ impl PublisherType for GithubRelease {
 }
 
 impl Publisher for GithubRelease {
+    fn credentials(&self) -> Vec<(&'static str, &Credential)> {
+        vec![("token", &self.declaration.token)]
+    }
+
     fn describe(&self, _version: &Version, tag: &str) -> Result<Description, String> {
         Ok(Description {
             target: self.declaration.repository.clone(),

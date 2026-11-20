@@ -2,14 +2,13 @@
 //!
 //! A declaration gives each credential in one shape, whatever its publisher: exactly one of the
 //! value itself, `{ "value": "…" }`, for what is no secret, or a secret source to read it from at
-//! run time, such as `{ "env": "NAME" }`. The core finds every secret of a declaration, resolves them
-//! all before a publisher runs, and redacts their values from everything it prints.
+//! run time, such as `{ "env": "NAME" }`. Each publisher type names its credentials; the core resolves every secret among
+//! them before a publisher runs, and redacts their values from everything it prints.
 
 use crate::declaration::DeclarationError;
 use crate::publication::PublicationError;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::Value;
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
@@ -94,41 +93,6 @@ impl fmt::Display for SecretSource {
     }
 }
 
-/// Every secret a declaration names, with where it is declared, such as
-/// `github-release.default.token`. It reads the JSON generically, so it finds the secrets of
-/// every publisher type in the same shape.
-pub fn collect(publishers: &Value) -> Vec<(String, SecretSource)> {
-    fn walk(value: &Value, path: &str, found: &mut Vec<(String, SecretSource)>) {
-        match value {
-            Value::Object(object) => {
-                if object.len() == 1
-                    && let Ok(source) = SecretSource::deserialize(value.clone())
-                {
-                    found.push((path.to_owned(), source));
-                    return;
-                }
-                for (key, value) in object {
-                    let path = if path.is_empty() {
-                        key.clone()
-                    } else {
-                        format!("{path}.{key}")
-                    };
-                    walk(value, &path, found);
-                }
-            }
-            Value::Array(values) => {
-                for (index, value) in values.iter().enumerate() {
-                    walk(value, &format!("{path}.{index}"), found);
-                }
-            }
-            _ => {}
-        }
-    }
-    let mut found = Vec::new();
-    walk(publishers, "", &mut found);
-    found
-}
-
 /// The resolved secrets of one declaration.
 #[derive(Clone, Default)]
 pub struct Secrets {
@@ -147,17 +111,19 @@ impl fmt::Debug for Secrets {
 }
 
 impl Secrets {
-    /// Reads every secret named in `publishers` from its source. An unset or empty variable is
-    /// missing.
+    /// Reads every declared secret, by where it is declared, from its source. An unset or empty
+    /// variable is missing.
     #[must_use]
-    pub fn resolve(publishers: &Value) -> Self {
-        Self::resolve_with(publishers, |name| env::var(name).ok())
+    pub fn resolve(declared: Vec<(String, SecretSource)>) -> Self {
+        Self::resolve_with(declared, |name| env::var(name).ok())
     }
 
     /// Like [`Secrets::resolve`], with `lookup` reading environment variables.
     #[must_use]
-    pub fn resolve_with(publishers: &Value, lookup: impl Fn(&str) -> Option<String>) -> Self {
-        let declared = collect(publishers);
+    pub fn resolve_with(
+        declared: Vec<(String, SecretSource)>,
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Self {
         let mut values = BTreeMap::new();
         for (_, source) in &declared {
             let SecretSource::Env(name) = source;
@@ -280,17 +246,18 @@ mod tests {
     }
 
     #[test]
-    fn collects_every_secret_of_every_publisher_and_reports_the_missing_ones() {
-        let publishers = json!({
-            "github-release": { "default": { "token": { "env": "GITHUB_TOKEN" } } },
-            "oci-image": {
-                "default": {
-                    "username": { "value": "oauth2accesstoken" },
-                    "password": { "env": "REGISTRY_TOKEN" }
-                }
-            }
-        });
-        let secrets = Secrets::resolve_with(&publishers, |name| {
+    fn resolves_every_declared_secret_and_reports_the_missing_ones() {
+        let declared = vec![
+            (
+                "github-release.default.token".to_owned(),
+                SecretSource::Env("GITHUB_TOKEN".into()),
+            ),
+            (
+                "oci-image.default.password".to_owned(),
+                SecretSource::Env("REGISTRY_TOKEN".into()),
+            ),
+        ];
+        let secrets = Secrets::resolve_with(declared, |name| {
             (name == "GITHUB_TOKEN").then(|| "presswerk-test-github-token".to_owned())
         });
 

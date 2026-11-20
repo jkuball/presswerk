@@ -167,11 +167,12 @@ a materially different real publisher can inform the public extension design lat
 
 Every publisher type sits behind one interface in `src/publishers/`. A type has a name, the key
 under `publishers.<name>`, and reads one instance from its JSON without touching the environment,
-the network, or the store. An instance describes what a release writes for `plan`, tells whether
+the network, or the store. An instance names its credentials, describes what a release writes for
+`plan`, tells whether
 a previous release is complete on the remote, compares the remote with the local artifacts, and
 publishes. The core decodes declarations generically and
 resolves each type through one registry, so an unknown type fails before anything is written; it
-also resolves every secret, reports progress and warnings, and redacts output for all types alike.
+also resolves every secret among the named credentials, reports progress and warnings, and redacts output for all types alike.
 Every value that crosses this boundary is serializable, so a type can later be implemented as an
 executable with JSON in and out. On the Nix side, each type is one module in
 `modules/release/publishers/` that declares its options, its declaration, and its claims: the

@@ -13,6 +13,7 @@ use crate::declaration::DeclarationError;
 use crate::publication::{
     ArtifactStep, ArtifactSteps, PublicationError, PublisherNode, PublisherState, Release,
 };
+use crate::publishers::shared::secrets::{Credential, SecretSource};
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -36,6 +37,12 @@ pub trait Publisher: Send + Sync {
     /// The local files the release needs, as store paths with a label, such as `asset tool`.
     /// `publish` fetches them before anything is written.
     fn artifacts(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
+    /// The credentials of the declaration, by option name, such as `token`. The core resolves
+    /// every secret among them before the publisher runs and redacts their values from output.
+    fn credentials(&self) -> Vec<(&'static str, &Credential)> {
         Vec::new()
     }
 
@@ -220,10 +227,7 @@ impl Session {
     #[must_use]
     pub fn for_declaration(declaration: &crate::declaration::ReleaseDeclaration) -> Self {
         Self {
-            secrets: shared::secrets::Secrets::resolve(
-                &serde_json::to_value(&declaration.publishers)
-                    .expect("publisher declarations serialize to JSON"),
-            ),
+            secrets: shared::secrets::Secrets::resolve(declaration.publishers.secrets()),
             changelog: declaration.changelog.path.clone(),
             trusted_predecessor: None,
         }
@@ -332,6 +336,31 @@ impl Publishers {
 
     /// The instances in [`TYPES`] order, then by name, each decoded through its type. An unknown
     /// type fails, so nothing is written for a declaration this CLI cannot fully read.
+    /// Every secret the publishers declare, by where it is declared, such as
+    /// `github-release.default.token`. Each type names its own credentials, so no other option
+    /// is mistaken for one. Publishers this CLI cannot read declare none; validation reports them.
+    #[must_use]
+    pub fn secrets(&self) -> Vec<(String, SecretSource)> {
+        let Ok(nodes) = self.nodes() else {
+            return Vec::new();
+        };
+        nodes
+            .iter()
+            .flat_map(|node| {
+                node.publisher
+                    .credentials()
+                    .into_iter()
+                    .filter_map(|(option, credential)| match credential {
+                        Credential::Secret(source) => {
+                            Some((format!("{}.{option}", node.name), source.clone()))
+                        }
+                        Credential::Value(_) => None,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     pub fn nodes(&self) -> Result<Vec<PublisherNode>, DeclarationError> {
         for kind in self.0.keys() {
             if Registration::find(kind).is_none() {
@@ -503,5 +532,47 @@ mod tests {
             "{error}"
         );
         assert!(error.contains("both render 0.1.0"), "{error}");
+    }
+
+    #[test]
+    fn only_credential_options_declare_secrets() {
+        let declaration = ReleaseDeclaration::from_json(&declaration(json!({
+            "github-release": {
+                "default": {
+                    "apiUrl": "https://api.github.com",
+                    "repository": "owner/project",
+                    "token": { "env": "GITHUB_TOKEN" },
+                    // An asset named `env` has the shape of a secret source, but is none.
+                    "assets": {
+                        "env": "/nix/store/00000000000000000000000000000000-tool"
+                    }
+                }
+            },
+            "oci-image": {
+                "image": {
+                    "repository": "ghcr.io/owner/project",
+                    "platforms": {
+                        "linux/amd64": "/nix/store/00000000000000000000000000000000-image.tar.gz"
+                    },
+                    "tags": ["v{version}"],
+                    "username": { "value": "oauth2accesstoken" },
+                    "password": { "env": "REGISTRY_TOKEN" }
+                }
+            }
+        })))
+        .unwrap();
+        assert_eq!(
+            declaration.publishers.secrets(),
+            [
+                (
+                    "oci-image.image.password".to_owned(),
+                    SecretSource::Env("REGISTRY_TOKEN".into())
+                ),
+                (
+                    "github-release.default.token".to_owned(),
+                    SecretSource::Env("GITHUB_TOKEN".into())
+                ),
+            ]
+        );
     }
 }
