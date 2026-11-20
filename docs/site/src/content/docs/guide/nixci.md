@@ -154,9 +154,10 @@ packages = eachSystem (system:
 ```
 
 Replace `YOUR-OWNER/YOUR-REPO`, `YOUR-CLIENT-ID`, `YOUR-APP`, and `BOT-USER-ID`. The Presswerk
-package comes from the flake's `presswerk` input, so the CLI matches the declaration. The script
-deepens a shallow checkout and points `origin` at GitHub, so it does not depend on how NixCI checks
-out the repository.
+package comes from the flake's `presswerk` input, so the CLI matches the declaration. The `in-repo`
+checkout is shallow unless the [configuration](https://nix-ci.com/documentation/configuration) sets
+`shallow-clone = false`, so the script deepens it if needed. It also points `origin` at GitHub
+instead of relying on the remote of the checkout.
 
 ## The NixCI configuration
 
@@ -219,10 +220,11 @@ git remote set-url --push origin git@github.com:YOUR-OWNER/YOUR-REPO.git
 
 and add `pkgs.openssh` to `runtimeInputs`. Pin GitHub's SSH host keys in a `known_hosts` file.
 
-Whether NixCI starts a suite for a push made with a deploy key has not been confirmed. Without it,
-the release commit is never published automatically.
+NixCI writes the key to a file and sets `PRESSWERK_DEPLOY_KEY` to its path. GitHub sends push
+events for pushes made with a deploy key, but whether NixCI starts a suite for them has not been
+confirmed. Without it, the release commit is never published automatically.
 
 ## Concurrency
 
-Whether NixCI runs deploys of one repository one at a time is not confirmed. The push without force
+NixCI documents no way to run the deploys of one repository one at a time. The push without force
 keeps a stale deploy from releasing, but two deploys of release commits could publish at once.
