@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::io::Read;
 use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 use url::Url;
 
 /// One file the simple API lists for a project.
@@ -27,6 +28,16 @@ pub struct IndexFile {
 pub trait Index: Send + Sync {
     /// Every file the simple API lists for `project`, none if it does not know the project.
     fn files(&self, project: &str) -> Result<Vec<IndexFile>, PublicationError>;
+
+    /// Like [`Index::files`], but gives up at `deadline`, such as while waiting for an upload to
+    /// be listed.
+    fn files_before(
+        &self,
+        project: &str,
+        _deadline: Instant,
+    ) -> Result<Vec<IndexFile>, PublicationError> {
+        self.files(project)
+    }
 
     /// Uploads one distribution through the legacy upload API.
     fn upload(&self, distribution: &Distribution) -> Result<(), PublicationError>;
@@ -43,7 +54,8 @@ impl fmt::Debug for Login {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Login")
-            .field("username", &self.username)
+            // The username may come from a secret source as well.
+            .field("username", &"[redacted]")
             .field("password", &"[redacted]")
             .finish()
     }
@@ -59,6 +71,11 @@ pub struct HttpIndex {
     /// index never receives it for a read.
     login: Option<Login>,
 }
+
+/// How long one read of the simple API may take, and how long an upload may stall.
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const STALL_TIMEOUT: Duration = Duration::from_secs(120);
 
 const SIMPLE_ACCEPT: &str = "application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html;q=0.2, text/html;q=0.01";
 
@@ -77,7 +94,13 @@ impl HttpIndex {
             index_url.set_path(&format!("{}/", index_url.path()));
         }
         Ok(Self {
-            agent: ureq::AgentBuilder::new().build(),
+            // A stalled connection never blocks the release: every request has a connect, read,
+            // and write timeout, and reads of the simple API an overall one.
+            agent: ureq::AgentBuilder::new()
+                .timeout_connect(CONNECT_TIMEOUT)
+                .timeout_read(STALL_TIMEOUT)
+                .timeout_write(STALL_TIMEOUT)
+                .build(),
             repository_url: parse(repository_url)?,
             index_url,
             login,
@@ -90,10 +113,11 @@ impl HttpIndex {
             .map_err(|error| PublicationError::new(format!("invalid project URL: {error}")))
     }
 
-    fn get(&self, url: &Url, login: Option<&Login>) -> ureq::Request {
+    fn get(&self, url: &Url, login: Option<&Login>, timeout: Duration) -> ureq::Request {
         let request = self
             .agent
             .get(url.as_str())
+            .timeout(timeout)
             .set("Accept", SIMPLE_ACCEPT)
             // A CDN may still serve the page from before an upload.
             .set("Cache-Control", "no-cache")
@@ -107,10 +131,23 @@ impl HttpIndex {
 
 impl Index for HttpIndex {
     fn files(&self, project: &str) -> Result<Vec<IndexFile>, PublicationError> {
+        self.files_before(project, Instant::now() + 2 * READ_TIMEOUT)
+    }
+
+    fn files_before(
+        &self,
+        project: &str,
+        deadline: Instant,
+    ) -> Result<Vec<IndexFile>, PublicationError> {
         let url = self.project_url(project)?;
-        let mut result = self.get(&url, None).call();
+        let timeout = || {
+            deadline
+                .saturating_duration_since(Instant::now())
+                .clamp(Duration::from_secs(1), READ_TIMEOUT)
+        };
+        let mut result = self.get(&url, None, timeout()).call();
         if let (Err(ureq::Error::Status(401 | 403, _)), Some(login)) = (&result, &self.login) {
-            result = self.get(&url, Some(login)).call();
+            result = self.get(&url, Some(login), timeout()).call();
         }
         let response = match result {
             Ok(response) => response,
@@ -158,9 +195,10 @@ impl Index for HttpIndex {
         {
             Ok(_) => return Ok(()),
             Err(ureq::Error::Status(status, response)) => {
-                // PyPI explains a rejection in the status text, others in the body.
-                let reason = response.status_text().to_owned();
-                let body = response.into_string().unwrap_or_default();
+                // PyPI explains a rejection in the status text, others in the body. Either may
+                // echo the credentials, so they are removed before anything is shortened.
+                let reason = scrub(response.status_text(), login);
+                let body = scrub(&response.into_string().unwrap_or_default(), login);
                 let detail = body.lines().map(str::trim).find(|line| !line.is_empty());
                 match detail {
                     Some(detail) if detail != reason => {
@@ -169,7 +207,7 @@ impl Index for HttpIndex {
                     _ => format!("HTTP {status} {reason}"),
                 }
             }
-            Err(ureq::Error::Transport(error)) => error.to_string(),
+            Err(ureq::Error::Transport(error)) => scrub(&error.to_string(), login),
         };
         Err(PublicationError::new(format!(
             "could not upload {} to {}: {failure}",
@@ -186,6 +224,20 @@ fn truncate(text: &str) -> String {
     }
 }
 
+/// `text` without the credentials of `login`, raw or as the basic authentication header encodes
+/// them.
+fn scrub(text: &str, login: &Login) -> String {
+    let encoded = shared::base64(format!("{}:{}", login.username, login.password));
+    let mut secrets = [encoded.as_str(), &login.password, &login.username];
+    secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
+    secrets
+        .iter()
+        .filter(|secret| !secret.is_empty())
+        .fold(text.to_owned(), |text, secret| {
+            text.replace(secret, "[redacted]")
+        })
+}
+
 fn basic(login: &Login) -> String {
     format!(
         "Basic {}",
@@ -194,57 +246,82 @@ fn basic(login: &Login) -> String {
 }
 
 /// The files of a simple API project page, as JSON ([PEP 691]) or HTML ([PEP 503]) by its
-/// content type.
+/// content type. A page that cannot be read completely is an error, never fewer files.
 ///
 /// [PEP 691]: https://peps.python.org/pep-0691/
 /// [PEP 503]: https://peps.python.org/pep-0503/
 pub fn parse_simple(content_type: &str, body: &str) -> Result<Vec<IndexFile>, String> {
-    if content_type.contains("json") {
-        #[derive(Deserialize)]
-        struct Page {
-            files: Vec<File>,
-        }
-        #[derive(Deserialize)]
-        struct File {
-            filename: String,
-            #[serde(default)]
-            hashes: BTreeMap<String, String>,
-        }
-        let page: Page = serde_json::from_str(body).map_err(|error| error.to_string())?;
-        return Ok(page
-            .files
-            .into_iter()
-            .map(|file| IndexFile {
-                filename: file.filename,
-                sha256: file
-                    .hashes
-                    .get("sha256")
-                    .map(|digest| digest.to_ascii_lowercase()),
-            })
-            .collect());
+    let media_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match media_type.as_str() {
+        "application/vnd.pypi.simple.v1+json" | "application/json" => parse_json(body),
+        "application/vnd.pypi.simple.v1+html" | "text/html" => parse_html(body),
+        other => Err(format!("unexpected content type {other:?}")),
     }
-    static ANCHOR: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?is)<a\s[^>]*?href\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>(.*?)</a\s*>"#)
-            .expect("valid anchor pattern")
-    });
-    Ok(ANCHOR
-        .captures_iter(body)
-        .map(|anchor| {
-            let href = anchor
-                .get(1)
-                .or_else(|| anchor.get(2))
-                .map_or("", |m| m.as_str());
-            let sha256 = href.split_once('#').and_then(|(_, fragment)| {
-                fragment
-                    .strip_prefix("sha256=")
-                    .map(str::to_ascii_lowercase)
-            });
-            IndexFile {
-                filename: unescape(anchor[3].trim()),
-                sha256,
-            }
+}
+
+fn parse_json(body: &str) -> Result<Vec<IndexFile>, String> {
+    #[derive(Deserialize)]
+    struct Page {
+        files: Vec<File>,
+    }
+    #[derive(Deserialize)]
+    struct File {
+        filename: String,
+        #[serde(default)]
+        hashes: BTreeMap<String, String>,
+    }
+    let page: Page = serde_json::from_str(body).map_err(|error| error.to_string())?;
+    Ok(page
+        .files
+        .into_iter()
+        .map(|file| IndexFile {
+            filename: file.filename,
+            sha256: file
+                .hashes
+                .get("sha256")
+                .map(|digest| digest.to_ascii_lowercase()),
         })
         .collect())
+}
+
+fn parse_html(body: &str) -> Result<Vec<IndexFile>, String> {
+    static OPENING: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)<a\b").expect("valid anchor pattern"));
+    static ANCHOR: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?is)<a\b([^>]*)>(.*?)</a\s*>").expect("valid anchor pattern")
+    });
+    static HREF: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?is)(?:^|\s)href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+))"#)
+            .expect("valid href pattern")
+    });
+    let mut files = Vec::new();
+    for anchor in ANCHOR.captures_iter(body) {
+        let attributes = &anchor[1];
+        let href = HREF
+            .captures(attributes)
+            .and_then(|href| href.get(1).or_else(|| href.get(2)).or_else(|| href.get(3)))
+            .ok_or_else(|| format!("a link has no readable href: {}", anchor[0].trim()))?;
+        let href = unescape(href.as_str());
+        let sha256 = href.split_once('#').and_then(|(_, fragment)| {
+            fragment
+                .strip_prefix("sha256=")
+                .map(str::to_ascii_lowercase)
+        });
+        files.push(IndexFile {
+            filename: unescape(anchor[2].trim()),
+            sha256,
+        });
+    }
+    // Every link must have been read; one that was not could be a file of the release.
+    if OPENING.find_iter(body).count() != files.len() {
+        return Err("a link could not be read".into());
+    }
+    Ok(files)
 }
 
 /// The few HTML entities a filename can contain.
@@ -261,8 +338,12 @@ fn unescape(text: &str) -> String {
 /// type: the distribution's core metadata, what the filename says, its digest, and the file.
 #[must_use]
 pub fn upload_form(distribution: &Distribution, content: &[u8]) -> (String, Vec<u8>) {
-    // A file never contains a boundary derived from its own digest.
-    let boundary = format!("presswerk-{}", distribution.sha256);
+    // A file never contains a boundary derived from its own digest. RFC 2046 allows at most 70
+    // characters.
+    let boundary = format!(
+        "presswerk-{}",
+        &distribution.sha256[..distribution.sha256.len().min(32)]
+    );
     let mut body = Vec::new();
     let mut field = |name: &str, value: &str| {
         body.extend_from_slice(
@@ -339,6 +420,7 @@ mod tests {
 <A HREF='../../files/my_package-1.2.3.tar.gz#md5=00'>
   my_package-1.2.3.tar.gz
 </A><br/>
+<a href=/files/my_package-1.2.3-py3-none-win32.whl#sha256=EF56>my_package-1.2.3-py3-none-win32.whl</a>
 </body></html>"#;
         assert_eq!(
             parse_simple("text/html; charset=utf-8", body).unwrap(),
@@ -351,8 +433,27 @@ mod tests {
                     filename: "my_package-1.2.3.tar.gz".into(),
                     sha256: None,
                 },
+                IndexFile {
+                    filename: "my_package-1.2.3-py3-none-win32.whl".into(),
+                    sha256: Some("ef56".into()),
+                },
             ]
         );
+    }
+
+    #[test]
+    fn a_listing_that_cannot_be_read_completely_is_an_error() {
+        assert_eq!(
+            parse_simple("text/plain", "my_package-1.2.3.tar.gz").unwrap_err(),
+            "unexpected content type \"text/plain\""
+        );
+        for body in [
+            "<a name=top>my_package-1.2.3.tar.gz</a>",
+            "<a href=\"/files/a.tar.gz\">a.tar.gz</a><a href=\"/files/b.tar.gz\">b.tar.gz",
+        ] {
+            assert!(parse_simple("text/html", body).is_err(), "{body}");
+        }
+        assert!(parse_simple("application/vnd.pypi.simple.v1+json", "{}").is_err());
     }
 
     #[test]
@@ -505,6 +606,11 @@ mod tests {
         let (address, requests) = serve(vec![
             (200, "text/plain", ""),
             (400, "text/html", "\n  File already exists.\n"),
+            (
+                401,
+                "text/plain",
+                "Invalid Authorization: Basic dXNlcjpwcmVzc3dlcmstdGVzdC1pbmRleC1wYXNzd29yZA== (user presswerk-test-index-password)",
+            ),
         ]);
         let index = HttpIndex::new(
             &format!("{address}/legacy/"),
@@ -518,6 +624,14 @@ mod tests {
             error,
             format!(
                 "could not upload a-1.0.0.tar.gz to {address}/legacy/: HTTP 400 Status: File already exists."
+            )
+        );
+        // An echo of the credentials, raw or encoded, never reaches the output.
+        let error = index.upload(&distribution).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            format!(
+                "could not upload a-1.0.0.tar.gz to {address}/legacy/: HTTP 401 Status: Invalid Authorization: Basic [redacted] ([redacted] [redacted])"
             )
         );
         assert_eq!(
@@ -535,5 +649,35 @@ mod tests {
             anonymous.upload(&distribution).unwrap_err().to_string(),
             "uploads need a username and password"
         );
+    }
+
+    #[test]
+    fn a_stalled_read_gives_up_at_the_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            thread::sleep(Duration::from_secs(30));
+        });
+        let index = HttpIndex::new(
+            &format!("{address}/legacy/"),
+            &format!("{address}/simple/"),
+            None,
+        )
+        .unwrap();
+        let started = Instant::now();
+        let error = index
+            .files_before("my-package", Instant::now())
+            .unwrap_err()
+            .to_string();
+        assert!(started.elapsed() < Duration::from_secs(10), "{error}");
+        assert!(error.starts_with("could not read "), "{error}");
+    }
+
+    #[test]
+    fn credentials_never_appear_in_debug_output() {
+        let debug = format!("{:?}", login().unwrap());
+        assert!(!debug.contains("user\""), "{debug}");
+        assert!(!debug.contains("presswerk-test-index-password"), "{debug}");
     }
 }
