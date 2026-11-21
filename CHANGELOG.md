@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+- ✨ An `npm` publisher publishes a tarball built by the flake to an npm registry, with dist-tag
+  aliases such as `latest` that only move forward.
+
 ## [0.22.0] - 2026-11-21
 
 - ✨ A previous release that Presswerk cannot read is now trusted with the `trustedPredecessor`
