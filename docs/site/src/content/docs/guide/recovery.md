@@ -166,20 +166,39 @@ Before Presswerk 1.0, the declaration schema may change between Presswerk versio
 reads the schema of its own version. Run the CLI from the same Presswerk input as your release
 module, for example with `nix run --inputs-from . presswerk`, so both always match.
 
-That leaves one step where they cannot match: the first release after updating Presswerk. `prepare`
-checks that the previous release is complete, but the new CLI cannot read the declaration it was
-made with. `--trust-predecessor` exists for this step. Once you have confirmed that the previous
-release is complete, for example by running `publish` for it with the old Presswerk version, pass
-the command that `prepare` prints:
+That leaves one step where they cannot match: the first release after updating Presswerk. `plan`
+and `prepare` check that the previous release is complete, but the new CLI cannot read the
+declaration it was made with. Once you have confirmed that the previous release is complete, for
+example by running `publish` for it with the old Presswerk version, trust it in the release module,
+with the tag and commit that the error names:
+
+```nix title="flake.nix"
+presswerk.default = presswerk.lib.mkRelease {
+  # …
+  trustedPredecessor = {
+    tag = "v0.3.0";
+    commit = "RELEASE_COMMIT_SHA";
+  };
+};
+```
+
+Commit it together with the Presswerk update. `plan` passes again, and the next `prepare` makes the
+release as usual, wherever it runs. Presswerk skips the previous declaration but still checks that
+the tag points to that commit; the tag may be lightweight. The release commit records the trust in a
+`Presswerk-Trusted-Predecessor` trailer, so `publish` accepts it as well.
+
+The option applies only to the direct predecessor. Once the next release is prepared, it names an
+older release and has no effect; `plan` and `prepare` then warn that it can be removed, which you
+can do whenever it suits you. See [`trustedPredecessor`](../../reference/options/#trustedPredecessor).
+
+Instead of the option, you can pass the trust for a single run, for example for an ad-hoc recovery:
 
 ```console
 $ presswerk prepare --trust-predecessor v0.3.0=RELEASE_COMMIT_SHA
 ```
 
-Presswerk then skips the previous declaration but still checks that the tag points to that commit;
-the tag may be lightweight.
-The release commit records the trust in a `Presswerk-Trusted-Predecessor` trailer, so `publish`
-accepts it as well.
+`plan` accepts the flag too. If both the flag and the option are given, they must name the same
+release.
 
-The same flag adopts a previous release that has no Presswerk declaration at all, because another
+The same option adopts a previous release that has no Presswerk declaration at all, because another
 tool made it. See [Adopt an existing project](../adoption/).

@@ -64,19 +64,28 @@ Conventional Commits, so adopting Presswerk does not change the next version by 
 ## 3. Trust the last release once
 
 The commit of the last release has no Presswerk declaration, so `plan` and `prepare` cannot check
-whether that release is complete. They stop and print the command to adopt it:
+whether that release is complete. They stop and print how to trust it:
 
 ```console
-$ nix run --inputs-from . presswerk -- prepare
+$ nix run --inputs-from . presswerk -- plan
 error: previous release v0.38.2 at 1a2b3c4… has no Presswerk declaration
-  If v0.38.2 was released completely by another tool, adopt it once:
+  If v0.38.2 was released completely by another tool, trust it in the release module:
+    trustedPredecessor = { tag = "v0.38.2"; commit = "1a2b3c4…"; };
+  or once with:
     presswerk prepare --trust-predecessor v0.38.2=1a2b3c4…
 ```
 
-Once you have confirmed that the release is complete, run that command:
+Once you have confirmed that the release is complete, add the option to the declaration and commit
+it, for example together with the declaration itself:
 
-```console
-$ nix run --inputs-from . presswerk -- prepare --trust-predecessor v0.38.2=1a2b3c4…
+```nix title="flake.nix"
+presswerk.default = presswerk.lib.mkRelease {
+  # …
+  trustedPredecessor = {
+    tag = "v0.38.2";
+    commit = "1a2b3c4…"; # the full commit SHA from the error
+  };
+};
 ```
 
 Presswerk checks that the tag exists on the remote, points to that commit, and is an ancestor of
@@ -86,14 +95,20 @@ old release: that it is complete, including the artifacts another tool published
 The release commit records the trust in a `Presswerk-Trusted-Predecessor` trailer, so `publish`
 verifies the same predecessor.
 
-Run it wherever you usually run `prepare`: locally, then push the release commit, or once in CI
-with the flag added to the `prepare` step for a single run. `prepare` creates no release commit if
-no commit since the last tag is release-worthy; pass the flag again on the first release.
+With the option committed, `plan` passes and `prepare` runs wherever you usually run it, in CI or
+locally. Until a commit since the last tag is release-worthy, `prepare` creates no release commit
+and the option keeps waiting for it.
+
+Instead of the option, you can pass the trust for a single run with the flag the error prints, such
+as `prepare --trust-predecessor v0.38.2=1a2b3c4…`, locally or added once to the `prepare` step in
+CI. `plan` accepts the flag too. Without the option, `plan` keeps failing until the first release
+exists.
 
 ## 4. Release as usual
 
-From the next release on, the predecessor is an ordinary Presswerk release and `prepare` needs no
-flag. Continue with the flow of your [release mode](../release-modes/).
+From the next release on, the predecessor is an ordinary Presswerk release. The option then names an
+older release and has no effect: `plan` and `prepare` warn that it can be removed, and you remove it
+whenever it suits you. Continue with the flow of your [release mode](../release-modes/).
 
 ## Changelog
 

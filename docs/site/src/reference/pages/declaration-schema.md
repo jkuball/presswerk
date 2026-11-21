@@ -24,7 +24,7 @@ declaration it cannot decode instead of guessing; see
 introduces `schemaVersion = 1`, and from then on newer CLIs also read older declarations.
 :::
 
-Every field is required, and unknown fields are rejected.
+Every field is required unless noted otherwise, and unknown fields are rejected.
 
 - `schemaVersion`: the integer `0`.
 - `version`: the effective release version, such as `"1.4.0"` or `"2.0.0-rc.1"`.
@@ -69,3 +69,6 @@ Every field is required, and unknown fields are rejected.
   may use `{major}`, `{minor}`, and `{patch}`; every tag contains `{version}`, no alias does, and
   `aliases` may be missing in older declarations. `compression` has either `gzip` or `zstd`, each
   with its `level`; it may be missing in older declarations and then means gzip at level 6.
+- `trustedPredecessor`: optional, and present only when declared. The previous release the CLI
+  trusts without reading its declaration, with its `tag` and the full hexadecimal `commit` SHA
+  that tag points to.
