@@ -9,6 +9,7 @@ pub mod cargo;
 pub mod github_release;
 pub mod npm;
 pub mod oci;
+pub mod python;
 pub mod shared;
 
 use crate::declaration::DeclarationError;
@@ -29,6 +30,7 @@ pub const TYPES: &[Registration] = &[
     Registration::of::<npm::Npm>(),
     Registration::of::<github_release::GithubRelease>(),
     Registration::of::<cargo::Cargo>(),
+    Registration::of::<python::Python>(),
 ];
 
 /// One declared publisher of a release, such as one GitHub Release or one OCI repository.
