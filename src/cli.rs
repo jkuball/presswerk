@@ -12,10 +12,14 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     /// Show the release that would be prepared without writing anything.
-    Plan,
+    Plan {
+        /// Trust one exact previous release whose declaration this CLI cannot read: one released by another tool, or with an unsupported schema version. Like the `trustedPredecessor` option; if both are given, they must name the same release.
+        #[arg(long, value_name = "TAG=SHA")]
+        trust_predecessor: Option<String>,
+    },
     /// Create a release commit from the committed HEAD tree.
     Prepare {
-        /// Trust one exact previous release whose declaration this CLI cannot read: one released by another tool, or with an unsupported schema version.
+        /// Trust one exact previous release whose declaration this CLI cannot read: one released by another tool, or with an unsupported schema version. Like the `trustedPredecessor` option; if both are given, they must name the same release.
         #[arg(long, value_name = "TAG=SHA")]
         trust_predecessor: Option<String>,
     },

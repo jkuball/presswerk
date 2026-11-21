@@ -161,12 +161,15 @@ fn publish_help_documents_the_optional_revision_and_options() {
 }
 
 #[test]
-fn prepare_help_documents_the_trusted_predecessor_boundary() {
-    let output = presswerk(&["prepare", "--help"]);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+fn plan_and_prepare_help_document_the_trusted_predecessor_boundary() {
+    for command in ["plan", "prepare"] {
+        let output = presswerk(&[command, "--help"]);
+        let stdout = String::from_utf8_lossy(&output.stdout);
 
-    assert!(output.status.success());
-    assert!(stdout.contains("--trust-predecessor <TAG=SHA>"));
+        assert!(output.status.success());
+        assert!(stdout.contains("--trust-predecessor <TAG=SHA>"), "{stdout}");
+        assert!(stdout.contains("trustedPredecessor"), "{stdout}");
+    }
 }
 
 #[test]
@@ -461,6 +464,282 @@ fn prepare_adopts_a_release_of_another_tool_once_it_is_trusted() {
     );
 }
 
+/// Declares `trustedPredecessor` in the adopted repository's release module, in a new commit.
+fn declare_trusted_predecessor(repository: &GitRepo, tag: &str, commit: &str) {
+    let flake = RELEASE_FLAKE.replace(
+        r#"changelog.path = "CHANGELOG.md";"#,
+        &format!(
+            "changelog.path = \"CHANGELOG.md\";\n      trustedPredecessor = {{ tag = \"{tag}\"; commit = \"{commit}\"; }};"
+        ),
+    );
+    assert_ne!(flake, RELEASE_FLAKE);
+    repository.write("flake.nix", flake);
+    repository.commit("🔧 Trust the previous release");
+}
+
+#[test]
+fn plan_and_prepare_adopt_a_release_trusted_in_the_release_module() {
+    let (repository, predecessor, _remote) = adopted_repository(false);
+    declare_trusted_predecessor(&repository, "v0.38.2", &predecessor);
+
+    let plan = presswerk_in(repository.path(), &["plan"]);
+    let stdout = String::from_utf8_lossy(&plan.stdout);
+    assert!(
+        plan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plan.stderr)
+    );
+    assert!(stdout.contains("next version       0.39.0\n"), "{stdout}");
+    assert!(
+        stdout.ends_with("\nNothing written. Run `presswerk prepare` to commit 0.39.0.\n"),
+        "{stdout}"
+    );
+
+    let prepared = presswerk_in(repository.path(), &["prepare"]);
+    let stderr = String::from_utf8_lossy(&prepared.stderr);
+    assert!(prepared.status.success(), "{stderr}");
+    assert!(!stderr.contains("trustedPredecessor"), "{stderr}");
+    let release = repository.head();
+    assert!(
+        repository
+            .git(["log", "-1", "--format=%B"])
+            .ends_with(&format!(
+                "Presswerk-Trusted-Predecessor: v0.38.2 {predecessor}"
+            ))
+    );
+
+    // Above the release it was meant for, the entry is stale: harmless, with a warning.
+    let plan = presswerk_in(repository.path(), &["plan"]);
+    let stdout = String::from_utf8_lossy(&plan.stdout);
+    let stderr = String::from_utf8_lossy(&plan.stderr);
+    assert!(plan.status.success(), "{stderr}");
+    assert!(
+        stdout.contains(&format!(
+            "previous release   v0.39.0 ({release}, pending: not published yet)\n"
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "warning: trustedPredecessor v0.38.2={predecessor} names an older release than the previous release v0.39.0; it has no effect and can be removed\n"
+        )),
+        "{stderr}"
+    );
+    let prepared = presswerk_in(repository.path(), &["prepare"]);
+    let stderr = String::from_utf8_lossy(&prepared.stderr);
+    assert!(prepared.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("it has no effect and can be removed"),
+        "{stderr}"
+    );
+    assert_eq!(repository.head(), release);
+}
+
+#[test]
+fn plan_and_prepare_accept_the_same_trust_from_flag_and_module() {
+    let (repository, predecessor, _remote) = adopted_repository(false);
+    declare_trusted_predecessor(&repository, "v0.38.2", &predecessor);
+    let trust = format!("v0.38.2={predecessor}");
+
+    for command in ["plan", "prepare"] {
+        let output = presswerk_in(repository.path(), &[command, "--trust-predecessor", &trust]);
+        assert!(
+            output.status.success(),
+            "{command}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert!(
+        repository
+            .git(["log", "-1", "--format=%B"])
+            .ends_with(&format!(
+                "Presswerk-Trusted-Predecessor: v0.38.2 {predecessor}"
+            ))
+    );
+}
+
+#[test]
+fn plan_and_prepare_refuse_different_trust_from_flag_and_module() {
+    let (repository, predecessor, _remote) = adopted_repository(false);
+    declare_trusted_predecessor(&repository, "v0.38.2", &predecessor);
+    let head = repository.head();
+    let trust = format!("v0.38.2={head}");
+
+    for command in ["plan", "prepare"] {
+        let output = presswerk_in(repository.path(), &[command, "--trust-predecessor", &trust]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{command}: {stderr}");
+        assert!(
+            stderr.contains(&format!(
+                "--trust-predecessor v0.38.2={head} differs from trustedPredecessor v0.38.2={predecessor} in the release declaration"
+            )),
+            "{command}: {stderr}"
+        );
+    }
+    assert_eq!(repository.head(), head);
+}
+
+#[test]
+fn plan_and_prepare_refuse_a_trusted_predecessor_whose_tag_moved() {
+    let (repository, predecessor, _remote) = adopted_repository(false);
+    let declared = repository.git(["rev-parse", "HEAD"]);
+    declare_trusted_predecessor(&repository, "v0.38.2", &declared);
+    let head = repository.head();
+
+    for command in ["plan", "prepare"] {
+        let output = presswerk_in(repository.path(), &[command]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{command}: {stderr}");
+        assert!(
+            stderr.contains(&format!(
+                "trusted predecessor v0.38.2={declared} does not match expected predecessor v0.38.2={predecessor}"
+            )),
+            "{command}: {stderr}"
+        );
+    }
+    assert_eq!(repository.head(), head);
+}
+
+#[test]
+fn plan_and_prepare_refuse_a_trusted_predecessor_outside_the_history() {
+    let (repository, _predecessor, _remote) = adopted_repository(false);
+    let unrelated = "d1d91d0afbc0840d2f9b4c60321acbc8e1b7ce6b";
+    declare_trusted_predecessor(&repository, "v0.38.1", unrelated);
+    let head = repository.head();
+
+    for command in ["plan", "prepare"] {
+        let output = presswerk_in(repository.path(), &[command]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{command}: {stderr}");
+        assert!(
+            stderr.contains(&format!(
+                "trustedPredecessor v0.38.1={unrelated} in the release declaration names neither the previous release v0.38.2 nor an older one"
+            )),
+            "{command}: {stderr}"
+        );
+    }
+    assert_eq!(repository.head(), head);
+}
+
+#[test]
+fn plan_and_prepare_refuse_a_trusted_predecessor_at_or_after_the_previous_release() {
+    let (repository, predecessor, _remote) = adopted_repository(false);
+    let after = repository.head();
+    for (tag, commit) in [
+        ("v0.38.1", predecessor.as_str()),
+        ("v0.39.0", after.as_str()),
+    ] {
+        declare_trusted_predecessor(&repository, tag, commit);
+        for command in ["plan", "prepare"] {
+            let output = presswerk_in(repository.path(), &[command]);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{command}: {stderr}");
+            assert!(
+                stderr.contains(&format!(
+                    "trustedPredecessor {tag}={commit} in the release declaration names neither the previous release v0.38.2 nor an older one"
+                )),
+                "{command}: {stderr}"
+            );
+        }
+    }
+}
+
+#[test]
+fn trust_instructions_quote_a_tag_for_nix_and_the_shell() {
+    let repository = GitRepo::new();
+    let flake = RELEASE_FLAKE.replace(
+        r#"tag.format = "v{version}";"#,
+        r#"tag.format = "v{version}-\"$HOME'";"#,
+    );
+    assert_ne!(flake, RELEASE_FLAKE);
+    let tag = "v0.38.2-\"$HOME'";
+    write_cargo_version(&repository, "0.38.2");
+    repository.write("CHANGELOG.md", "# Changelog\n");
+    let predecessor = repository.commit("chore(release): 0.38.2");
+    repository.annotated_tag(tag);
+    repository.write("flake.nix", &flake);
+    repository.write("flake.lock", LOCK_FILE);
+    repository.write("feature", "implemented\n");
+    repository.commit("✨ Release with Presswerk");
+    let remote = tempfile::tempdir().unwrap();
+    repository.git(["init", "--quiet", "--bare", remote.path().to_str().unwrap()]);
+    repository.git(["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    repository.git(["push", "--quiet", "origin", "HEAD:refs/heads/main", tag]);
+
+    let option = format!(
+        r#"trustedPredecessor = {{ tag = "v0.38.2-\"$HOME'"; commit = "{predecessor}"; }};"#
+    );
+    let flag = format!(r#"--trust-predecessor 'v0.38.2-"$HOME'\''={predecessor}'"#);
+    let refused = presswerk_in(repository.path(), &["plan"]);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success());
+    assert!(stderr.contains(&format!("    {option}\n")), "{stderr}");
+    assert!(
+        stderr.contains(&format!("presswerk prepare {flag}")),
+        "{stderr}"
+    );
+
+    // The flag, unquoted by the shell, crosses it, and the hint quotes it again.
+    let plan = presswerk_in(
+        repository.path(),
+        &[
+            "plan",
+            "--trust-predecessor",
+            &format!("{tag}={predecessor}"),
+        ],
+    );
+    let stdout = String::from_utf8_lossy(&plan.stdout);
+    assert!(
+        plan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plan.stderr)
+    );
+    assert!(
+        stdout.contains(&format!("Run `presswerk prepare {flag}` to commit")),
+        "{stdout}"
+    );
+
+    // The printed option is valid Nix that names the same release.
+    repository.write(
+        "flake.nix",
+        flake.replace(
+            r#"changelog.path = "CHANGELOG.md";"#,
+            &format!("changelog.path = \"CHANGELOG.md\";\n      {option}"),
+        ),
+    );
+    repository.commit("🔧 Trust the previous release");
+    let plan = presswerk_in(repository.path(), &["plan"]);
+    assert!(
+        plan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plan.stderr)
+    );
+}
+
+#[test]
+fn plan_crosses_an_untrusted_predecessor_with_the_flag() {
+    let (repository, predecessor, _remote) = adopted_repository(false);
+
+    let refused = presswerk_in(repository.path(), &["plan"]);
+    assert!(!refused.status.success());
+
+    let trust = format!("v0.38.2={predecessor}");
+    let plan = presswerk_in(repository.path(), &["plan", "--trust-predecessor", &trust]);
+    let stdout = String::from_utf8_lossy(&plan.stdout);
+    assert!(
+        plan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plan.stderr)
+    );
+    assert!(stdout.contains("next version       0.39.0\n"), "{stdout}");
+    assert!(
+        stdout.ends_with(&format!(
+            "\nNothing written. Run `presswerk prepare --trust-predecessor {trust}` to commit 0.39.0.\n"
+        )),
+        "{stdout}"
+    );
+}
+
 #[test]
 fn a_predecessor_with_the_old_secret_shape_needs_trust() {
     predecessor_this_cli_cannot_read_needs_trust(
@@ -705,7 +984,7 @@ fn plan_builds_on_a_pending_release_that_prepare_refuses_to_build_on() {
     assert!(!trusted.status.success(), "{stderr}");
     assert!(
         stderr.contains(&format!(
-            "--trust-predecessor is unnecessary: pending release v0.1.0 at {} is not published yet",
+            "trusted predecessor is unnecessary: pending release v0.1.0 at {} is not published yet",
             &pending[..7]
         )),
         "{stderr}"

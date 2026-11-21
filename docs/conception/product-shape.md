@@ -221,8 +221,9 @@ release-toolchain input. Unsupported-schema errors identify a mismatched pin; th
 does not project or decode older declarations. The Presswerk repository releases with its own
 source tree, so a schema change in Presswerk itself needs the crossing below for its first release.
 A deliberate pre-1.0 schema crossing uses the explicit trusted-predecessor
-procedure: the old toolchain revalidates its release, `prepare` records the exact trusted tag and
-SHA in the release commit, and `publish` revalidates that immutable assertion. It is accepted only
+procedure: the old toolchain revalidates its release, the release module declares the exact
+trusted tag and SHA as `trustedPredecessor` (or `prepare --trust-predecessor` names them for one
+run), `prepare` records them in the release commit, and `publish` revalidates that immutable assertion. It is accepted only
 for an otherwise exact unsupported predecessor and never replaces normal predecessor validation.
 
 After 1.0, schema evolution is expected to preserve backward compatibility. The trusted

@@ -316,7 +316,8 @@ adopted as described below. See [scenario 13](scenarios.md#13-first-automatic-re
 
 Fresh repositories require no special adoption flow. An already released repository adopts its
 last release as the baseline: the commit of that release has no Presswerk declaration, so
-`prepare` stops and names the command `prepare --trust-predecessor TAG=SHA`. With it, the tag is
+`plan` and `prepare` stop and name the `trustedPredecessor` option of the release module, with the
+`prepare --trust-predecessor TAG=SHA` flag as an alternative for one run. With either, the tag is
 rendered from the current declaration's `tag.format` and must exist on the remote, point to the
 given commit, and be an ancestor; the currently committed version must match it. The old release's
 publishers are not checked, because another tool published them. The trust is recorded in the

@@ -75,8 +75,10 @@ fn reference_omits_help_but_keeps_version() {
         .filter_map(|option| option.long.as_deref())
         .collect();
     assert_eq!(longs, ["version"]);
-    assert!(
-        subcommand(&reference, "presswerk plan").options.is_empty(),
-        "plan has no options besides help"
-    );
+    let plan: Vec<_> = subcommand(&reference, "presswerk plan")
+        .options
+        .iter()
+        .filter_map(|option| option.long.as_deref())
+        .collect();
+    assert_eq!(plan, ["trust-predecessor"], "plan has no help option");
 }

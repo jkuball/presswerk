@@ -44,6 +44,8 @@ pub struct ReleasePlan {
     pub publisher_descriptions: Vec<(String, Description)>,
     release_files: Vec<ReleaseFile>,
     trusted_predecessor: Option<TrustedPredecessor>,
+    /// Trust given only by `--trust-predecessor`, which `prepare` needs again.
+    trust_argument: Option<TrustedPredecessor>,
     /// What the publishers found on their remotes for the next release before anything is
     /// written, such as an alias another tool pushed.
     pub warnings: Vec<Warning>,
@@ -60,15 +62,23 @@ impl ReleasePlan {
 }
 
 /// Plan the release of `HEAD` for `plan`. A pending release below `HEAD` is the base of the plan.
+/// `trusted_predecessor` comes from `--trust-predecessor`.
 pub fn build_head_release_plan(
     repository_path: impl AsRef<Path>,
     analyzer: &dyn Analyzer,
+    trusted_predecessor: Option<TrustedPredecessor>,
 ) -> Result<ReleasePlan> {
-    build_head_plan(repository_path.as_ref(), analyzer, None, false)
+    build_head_plan(
+        repository_path.as_ref(),
+        analyzer,
+        trusted_predecessor,
+        false,
+    )
 }
 
 /// Plan the release of `HEAD` for `prepare`. A pending release below `HEAD` is refused before the
 /// next release is computed, so no error about that hypothetical release hides the refusal.
+/// `trusted_predecessor` comes from `--trust-predecessor`.
 pub fn build_head_preparation_plan(
     repository_path: impl AsRef<Path>,
     analyzer: &dyn Analyzer,
@@ -93,6 +103,10 @@ fn build_head_plan(
     let secrets = crate::publishers::shared::secrets::Secrets::resolve(
         evaluated.declaration.publishers.secrets(),
     );
+    let declares_trust = evaluated.declaration.trusted_predecessor.is_some();
+    let (trusted_predecessor, other_entry) =
+        resolve_trusted_predecessor(&evaluated, trusted_predecessor)?;
+    let mut trust_warning = None;
     let date = time::OffsetDateTime::now_utc().date().to_string();
     let mut plan = build_release_plan(
         repository_path,
@@ -107,7 +121,17 @@ fn build_head_plan(
                 declaration,
                 "origin",
                 trusted_predecessor.as_ref(),
-            )?;
+            );
+            if let Some(entry) = &other_entry {
+                let previous_tag = declaration.tag.render(previous_version)?;
+                trust_warning = Some(older_entry_warning(
+                    repository_path,
+                    entry,
+                    &previous_tag,
+                    &verified,
+                )?);
+            }
+            let verified = verified?;
             if refuse_pending_base
                 && let Some(pending) = verified.as_ref().filter(|previous| previous.pending)
                 && pending.commit != candidate
@@ -117,10 +141,87 @@ fn build_head_plan(
             Ok(verified)
         },
     )?;
+    plan.trust_argument = trusted_predecessor.clone().filter(|_| !declares_trust);
     plan.trusted_predecessor = trusted_predecessor;
     let session = plan_session(&plan, secrets);
     preview_publishers(&mut plan, &session)?;
+    plan.warnings.splice(0..0, trust_warning);
     Ok(plan)
+}
+
+/// The trust in the previous release from `--trust-predecessor` and the `trustedPredecessor`
+/// option, which must name the same release if both are given; and, apart from it, an option entry
+/// whose tag is not the previous release's.
+///
+/// The option applies only to the direct predecessor. One that names another tag must name an
+/// older release, such as the one the previous release commit trusted, and then has no effect.
+fn resolve_trusted_predecessor(
+    evaluated: &EvaluatedReleaseDeclaration,
+    flag: Option<TrustedPredecessor>,
+) -> Result<(Option<TrustedPredecessor>, Option<TrustedPredecessor>)> {
+    let declaration = &evaluated.declaration;
+    let Some(declared) = declaration
+        .trusted_predecessor
+        .as_ref()
+        .map(TrustedPredecessor::from_declaration)
+        .transpose()
+        .context("invalid trustedPredecessor in the release declaration")?
+    else {
+        return Ok((flag, None));
+    };
+    if let Some(flag) = flag {
+        if flag != declared {
+            bail!(
+                "--trust-predecessor {flag} differs from trustedPredecessor {declared} in the release declaration; give one of them, or the same release in both"
+            );
+        }
+        return Ok((Some(flag), None));
+    }
+    let previous_tag = declaration.tag.render(&declaration.version)?;
+    if declared.tag == previous_tag {
+        return Ok((Some(declared), None));
+    }
+    Ok((None, Some(declared)))
+}
+
+/// The warning for an option entry that names an older release than the predecessor Presswerk
+/// found, published, pending, or unreadable; an error if it names no such release.
+fn older_entry_warning(
+    repository_path: &Path,
+    entry: &TrustedPredecessor,
+    previous_tag: &str,
+    verified: &Result<Option<VerifiedPredecessor>, crate::publication::PublicationError>,
+) -> Result<Warning> {
+    let predecessor = match verified {
+        Ok(verified) => verified.as_ref().map(|previous| previous.commit),
+        Err(error) => match error.as_unreadable_predecessor() {
+            Some(unreadable) => Some(unreadable.commit),
+            // The predecessor could not be established; that error is the one to report.
+            None => return Err(error.clone().into()),
+        },
+    };
+    let repository = Repository::open(repository_path).context("could not open Git repository")?;
+    let older = match predecessor {
+        Some(predecessor) => {
+            entry.commit != predecessor
+                && repository.find_commit(entry.commit).is_ok()
+                && repository
+                    .graph_descendant_of(predecessor, entry.commit)
+                    .context("could not check the trusted predecessor's ancestry")?
+        }
+        None => false,
+    };
+    if !older {
+        bail!(
+            "trustedPredecessor {entry} in the release declaration names neither the previous release {previous_tag} nor an older one"
+        );
+    }
+    Ok(Warning {
+        level: WarningLevel::Warning,
+        message: format!(
+            "trustedPredecessor {entry} names an older release than the previous release {previous_tag}; it has no effect and can be removed"
+        ),
+    })
 }
 
 fn plan_session(
@@ -349,6 +450,7 @@ pub fn build_release_plan(
         publisher_descriptions,
         release_files,
         trusted_predecessor: None,
+        trust_argument: None,
         warnings: Vec::new(),
     })
 }
@@ -518,9 +620,14 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
     // `prepare` refuses to build on a pending release, so it is not suggested then.
     match &plan.next_version {
         Some(version) if plan.pending_release().is_none() => {
+            let trust = plan
+                .trust_argument
+                .as_ref()
+                .map(|trust| format!(" {}", trust.flag()))
+                .unwrap_or_default();
             let _ = writeln!(
                 output,
-                "\nNothing written. Run `presswerk prepare` to commit {version}."
+                "\nNothing written. Run `presswerk prepare{trust}` to commit {version}."
             );
         }
         _ => output.push_str("\nNothing written.\n"),
