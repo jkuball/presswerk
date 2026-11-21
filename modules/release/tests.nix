@@ -98,6 +98,15 @@ let
     password.env = "REGISTRY_TOKEN";
   };
 
+  pythonPublisher = {
+    name = "My_Package";
+    distributions = image;
+    repositoryUrl = "https://upload.pypi.org/legacy/";
+    indexUrl = "https://pypi.org/simple";
+    username.value = "__token__";
+    password.env = "PYPI_TOKEN";
+  };
+
   image = derivation {
     name = "image.tar.gz";
     system = "x86_64-linux";
@@ -164,6 +173,7 @@ in
         };
         publishers.oci-image = { };
         publishers.oci-helm = { };
+        publishers.python = { };
       };
     };
 
@@ -572,6 +582,75 @@ in
       expected = [ true true true false false false false false ];
     };
 
+    "test Python publishers normalize to store paths and claim the normalized name" = {
+      expr =
+        (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.python.default = pythonPublisher;
+        }).publishers.python.default;
+      expected = {
+        after = [ ];
+        name = "My_Package";
+        distributions = image.outPath;
+        repositoryUrl = "https://upload.pypi.org/legacy/";
+        indexUrl = "https://pypi.org/simple";
+        username.value = "__token__";
+        password.env = "PYPI_TOKEN";
+        claims = [{
+          destination = "https://pypi.org/simple/";
+          key = "my-package=={version}";
+        }];
+      };
+    };
+
+    "test Python publishers reject invalid declarations" = {
+      expr = map
+        (python: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.python.default = pythonPublisher // python;
+        }).publishers.python)
+        [
+          { }
+          { username.env = "PYPI_USERNAME"; }
+          { name = "-my-package"; }
+          { name = "my package"; }
+          { distributions = "/nix/store/00000000000000000000000000000000-dist"; }
+          { repositoryUrl = "https://user:secret@upload.pypi.org/legacy/"; }
+          { indexUrl = "ftp://pypi.org/simple/"; }
+          { indexUrl = "https://pypi.org/simple/?token=secret"; }
+          { password.value = "secret"; }
+        ];
+      expected = [ true true false false false false false false false ];
+    };
+
+    "test Python publishers of one name on one index collide" = {
+      expr = map
+        (other: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.python.default = pythonPublisher;
+          publishers.python.other = pythonPublisher // other;
+        }).publishers)
+        [
+          { name = "other"; }
+          { indexUrl = "https://test.pypi.org/simple/"; }
+          { name = "my.package"; }
+          { indexUrl = "https://pypi.org/simple/"; }
+          { indexUrl = "HTTPS://PyPI.org:443/simple"; }
+          { indexUrl = "https://pypi.org:8443/simple/"; }
+          { indexUrl = "http://[::1]:8080/simple"; }
+          { indexUrl = "https://pypi.org/proxy/../simple/"; }
+          { indexUrl = "https://pypi.org/x/%2E%2E/simple/"; }
+          { indexUrl = "https://pypi.org:0443/simple/"; }
+        ];
+      expected = [ true true false false false true true false false false ];
+    };
+
     "test OCI Helm and OCI image publishers do not share a release tag" = {
       expr = map
         (publishers: succeeds (mkRelease (lib.recursiveUpdate
@@ -916,6 +995,7 @@ in
         github-release = { };
         oci-image = { };
         oci-helm = { };
+        python = { };
       };
     };
 

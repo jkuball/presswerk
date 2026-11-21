@@ -199,12 +199,13 @@ in
           reference/publishers/github-release
           reference/publishers/oci-helm
           reference/publishers/oci-image
+          reference/publishers/python
           reference/version-files
         "
         for page in $pages; do
           test -s "$site/$page.md" || { echo "missing Markdown page $page.md" >&2; exit 1; }
         done
-        for page in options changelog declaration-schema cli publishers publishers/github-release publishers/oci-helm publishers/oci-image analyzers analyzers/gitmoji analyzers/conventional-commits; do
+        for page in options changelog declaration-schema cli publishers publishers/github-release publishers/oci-helm publishers/oci-image publishers/python analyzers analyzers/gitmoji analyzers/conventional-commits; do
           test -s "$site/reference/$page/index.html" || { echo "missing reference page $page" >&2; exit 1; }
         done
         # Keep the published OCI image routes working after the page rename.
@@ -226,6 +227,7 @@ in
         grep -q 'href="/reference/options/?filter=versionFiles.cargo" class="pw-code-link"' "$site/index.html"
         grep -q 'href="/reference/options/?filter=publishers.oci-image.%3Cname%3E.platforms" class="pw-code-link"' "$site/reference/publishers/oci-image/index.html"
         grep -q 'href="/reference/options/?filter=publishers.oci-helm.%3Cname%3E.chart" class="pw-code-link"' "$site/reference/publishers/oci-helm/index.html"
+        grep -q 'href="/reference/options/?filter=publishers.python.%3Cname%3E.distributions" class="pw-code-link"' "$site/reference/publishers/python/index.html"
         grep -q 'id="publishers.github-release.name.token.env"' "$site/reference/options/index.html"
         ! grep -q 'id="publishers.oci"' "$site/reference/options/index.html"
         grep -q '^# Reproducible releases for Nix flakes$' "$site/index.md"
