@@ -2,29 +2,15 @@
 
 ## [Unreleased]
 
-Credentials share one shape across all publishers: exactly one of the value itself,
-`{ value = "…"; }`, or a secret source read at run time, `{ env = "NAME"; }`. Rename
-`token.secret = "NAME";`, `username.secret = "NAME";`, and `password.secret = "NAME";` to
-`token.env`, `username.env`, and `password.env`; `username.value` stays as it is. Tokens and
-passwords are always secrets.
-
-This CLI cannot read a release declaration written with the old shape. Once you have confirmed that
-the previous release is complete, the first release after updating needs
-`presswerk prepare --trust-predecessor <tag>=<commit>`, as described in
-[Recovery](https://presswerk.dev/guide/recovery/#the-previous-release-uses-an-unsupported-declaration);
-`prepare` prints the exact command.
-
-```nix
-publishers.oci-image.default = {
-  username.env = "GITHUB_ACTOR";
-  password.env = "GITHUB_TOKEN";
-};
-```
-
-`publish` now reads every declared secret before it writes anything and stops if one is missing,
-even if this run would not have needed it; `plan` and `prepare` warn about missing ones. Two
-publishers that would push the same tag or create the same GitHub Release now fail when the module
-is evaluated.
+- Credentials are declared as `{ env = "NAME"; }` instead of `{ secret = "NAME"; }`; usernames may
+  still be `{ value = "…"; }`. This affects every project with a GitHub Release publisher, since
+  `token.secret = "GITHUB_TOKEN"` was the default, and every OCI publisher.
+  ([Credentials](https://presswerk.dev/reference/publishers/#credentials))
+- The first release after updating needs `presswerk prepare --trust-predecessor <tag>=<commit>`,
+  which `prepare` prints; until then `plan` reports the previous release as unreadable.
+  ([Recovery](https://presswerk.dev/guide/recovery/#the-previous-release-uses-an-unsupported-declaration))
+- `publish` stops before writing anything if a declared secret is missing.
+- Two publishers that would write the same tag or GitHub Release fail at module evaluation.
 
 ## [0.20.1] - 2026-11-19
 
