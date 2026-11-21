@@ -313,19 +313,20 @@ impl<R: CargoRegistry> CargoPublisher<R> {
         }
     }
 
-    fn checked_state(&self, ctx: &Context) -> Result<PublisherState, PublicationError> {
+    /// The remote state, and whether the listed version is yanked.
+    fn inspect(&self) -> Result<(PublisherState, bool), PublicationError> {
         let entry = lookup(&self.registry, &self.local.name, &self.local.version)?;
-        if entry.as_ref().is_some_and(|entry| entry.yanked) {
-            ctx.warn(
-                WarningLevel::Note,
-                format!(
-                    "{} is yanked on {}; Presswerk leaves it so",
-                    self.reference(),
-                    self.index
-                ),
-            );
-        }
-        Ok(self.compare(entry.as_ref()))
+        let yanked = entry.as_ref().is_some_and(|entry| entry.yanked);
+        Ok((self.compare(entry.as_ref()), yanked))
+    }
+
+    /// The step of a version the index already lists: a yanked one stays yanked.
+    fn already_uploaded(&self, yanked: bool) -> ArtifactSteps {
+        self.step(if yanked {
+            AssetStep::Kept("yanked on the index".into())
+        } else {
+            AssetStep::AlreadyUploaded
+        })
     }
 
     /// Waits until the index lists the version this run uploaded, so publishers after this one
@@ -351,17 +352,19 @@ impl<R: CargoRegistry> CargoPublisher<R> {
     }
 
     fn upload(&self, ctx: &Context) -> Result<ArtifactSteps, PublicationError> {
-        match self.checked_state(ctx)? {
-            PublisherState::Missing => {}
-            PublisherState::Conflicting(message) => return Err(PublicationError::new(message)),
-            _ => return Ok(self.step(AssetStep::AlreadyUploaded)),
+        match self.inspect()? {
+            (PublisherState::Missing, _) => {}
+            (PublisherState::Conflicting(message), _) => {
+                return Err(PublicationError::new(message));
+            }
+            (_, yanked) => return Ok(self.already_uploaded(yanked)),
         }
         let warnings = match self.registry.upload(self.local.publish_body()) {
             Ok(warnings) => warnings,
             // A run at the same time may have uploaded it: inspect again instead of failing.
             Err(error) => {
-                return match self.checked_state(ctx)? {
-                    PublisherState::Published => Ok(self.step(AssetStep::AlreadyUploaded)),
+                return match self.inspect()? {
+                    (PublisherState::Published, yanked) => Ok(self.already_uploaded(yanked)),
                     _ => Err(error),
                 };
             }
@@ -395,8 +398,12 @@ impl<R: CargoRegistry> Publisher for CargoPublisher<R> {
         ))
     }
 
-    fn state(&self, _release: &Release, ctx: &Context) -> Result<PublisherState, PublicationError> {
-        self.checked_state(ctx)
+    fn state(
+        &self,
+        _release: &Release,
+        _ctx: &Context,
+    ) -> Result<PublisherState, PublicationError> {
+        Ok(self.inspect()?.0)
     }
 
     fn publish(
@@ -414,7 +421,7 @@ impl<R: CargoRegistry> Publisher for CargoPublisher<R> {
         _release: &Release,
         _ctx: &Context,
     ) -> Result<ArtifactSteps, PublicationError> {
-        Ok(self.step(AssetStep::AlreadyUploaded))
+        Ok(self.already_uploaded(self.inspect()?.1))
     }
 
     fn labels(&self) -> Labels {
@@ -620,10 +627,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let (path, bytes) = write_crate(directory.path(), "demo", "1.2.3");
         let registry = FakeRegistry::with("demo", entry(&cksum(&bytes), true));
-        let warnings = Mutex::new(Vec::new());
-        let warn = |warning: Warning| warnings.lock().unwrap().push(warning.to_string());
-        let ctx = Context::detached().with_warnings(&warn);
+        let ctx = Context::detached();
         let publisher = publisher(&registry, &path);
+        let kept = AssetStep::Kept("yanked on the index".into());
 
         assert_eq!(
             publisher.state(&release("1.2.3"), &ctx).unwrap(),
@@ -631,14 +637,13 @@ mod tests {
         );
         assert_eq!(
             publisher.publish(&release("1.2.3"), &ctx).unwrap()[0].step,
-            AssetStep::AlreadyUploaded
+            kept
+        );
+        assert_eq!(
+            publisher.complete_steps(&release("1.2.3"), &ctx).unwrap()[0].step,
+            kept
         );
         assert!(registry.0.lock().unwrap().uploads.is_empty());
-        assert!(
-            warnings.lock().unwrap()[0].contains("demo@1.2.3 is yanked"),
-            "{:?}",
-            warnings.lock().unwrap()
-        );
     }
 
     struct FakeTagPublisher {
