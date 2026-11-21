@@ -28,7 +28,7 @@ exact release commit once its checks passed. [Release modes](../release-modes/) 
 | Setup | Status |
 | --- | --- |
 | [GitHub Actions](../github-actions/) | Presswerk releases itself this way, automatically or on demand. |
-| [NixCI](../nixci/) | Written from its documentation, not yet tested. |
+| [NixCI](../nixci/) | Runs releases in production with a GitHub App. The deploy key variant is untested. |
 
 Other systems follow the same pattern. The [Recovery](../recovery/) guide works with Git and the
 Presswerk CLI alone, so it applies to every setup.
