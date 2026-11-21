@@ -65,6 +65,8 @@ evaluation. An image and a Helm chart in one repository both claim the tag of th
 }
 ```
 
+Module evaluation then fails with:
+
 ```text
 publishers.oci-helm.chart and publishers.oci-image.api both claim {version} in oci://ghcr.io/foo/api
 ```
