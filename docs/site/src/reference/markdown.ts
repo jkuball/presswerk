@@ -6,6 +6,7 @@ import ociHelmPage from './pages/oci-helm.md?raw';
 import analyzersPage from './pages/analyzers.md?raw';
 import conventionalCommitsPage from './pages/conventional-commits.md?raw';
 import gitmojiPage from './pages/gitmoji.md?raw';
+import npmPage from './pages/npm.md?raw';
 import ociImagePage from './pages/oci-image.md?raw';
 import publishersPage from './pages/publishers.md?raw';
 import type { CliArgument, CliCommand, Literal, ReferenceData, ReleaseOption } from './data';
@@ -175,6 +176,15 @@ export const referencePages: ReferencePage[] = [
     markdown: ({ options }, base, target) =>
       fill(githubReleasePage, base, {
         options: optionList(options, 'publishers.github-release.', 3, target),
+      }),
+  },
+  {
+    slug: 'reference/publishers/npm',
+    title: 'npm publisher',
+    description: 'The npm publisher: package tarballs, dist-tags and aliases, behavior, registries, credentials, and options.',
+    markdown: ({ options }, base, target) =>
+      fill(npmPage, base, {
+        options: optionList(options, 'publishers.npm.', 3, target),
       }),
   },
   {

@@ -19,9 +19,10 @@ publisher's page.
 
 ## Built-in publishers
 
-Presswerk has three built-in publishers:
+Presswerk has four built-in publishers:
 
 - [GitHub Release](/reference/publishers/github-release/)
+- [npm](/reference/publishers/npm/) for package tarballs
 - [OCI: Helm Chart](/reference/publishers/oci-helm/) for packaged charts in OCI registries
 - [OCI: Image](/reference/publishers/oci-image/) for container images
 
