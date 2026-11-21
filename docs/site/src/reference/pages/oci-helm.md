@@ -58,7 +58,8 @@ version files are planned.
 
 The chart is pushed under exactly one tag, the release version. Following Helm's convention, `+`
 in SemVer build metadata becomes `_` in the registry tag, so `1.2.0+build.5` becomes
-`1.2.0_build.5`.
+`1.2.0_build.5`. Image and chart tags share the repository's tags, so an OCI image publisher in
+the same repository must not push that tag.
 
 ## OCI artifact
 

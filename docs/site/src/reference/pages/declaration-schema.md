@@ -55,7 +55,7 @@ Every field is required, and unknown fields are rejected.
   is exactly one of `{ "value": "…" }` or a secret source, `{ "env": "NAME" }`; a `token` or
   `password` is always a secret. Every publisher also has `claims`, the remote objects it writes, each with a
   `destination`, the remote, such as `oci://ghcr.io/owner/project`, and a `key`, the object within
-  it, as a version template such as the tag `{version}` or `latest`. Only the key is a template. The CLI renders the keys with the version it releases and refuses two
+  it, as a version template such as the tag `{version}` or `latest`. The CLI renders the keys with the version it releases and refuses two
   publishers that claim the same object. `claims` may be missing in older declarations and then
   means none. Each GitHub Release publisher has an `apiUrl`, a `repository` in `owner/name` form,
   a `token` credential, a MiniJinja `body` template, and `assets`, which maps asset names to
