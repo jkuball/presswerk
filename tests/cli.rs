@@ -62,7 +62,7 @@ fn ordinary_repository() -> GitRepo {
       publishers."github-release".default = {
         apiUrl = "https://api.github.com";
         repository = "owner/project";
-        token.secret = "GITHUB_TOKEN";
+        token.env = "GITHUB_TOKEN";
       };
     };
   };
@@ -97,7 +97,7 @@ const RELEASE_FLAKE: &str = r#"{
       publishers."github-release".default = {
         apiUrl = "https://api.github.com";
         repository = "owner/project";
-        token.secret = "GITHUB_TOKEN";
+        token.env = "GITHUB_TOKEN";
       };
     };
   };
@@ -258,6 +258,90 @@ fn plan_reads_head_and_prepare_creates_the_first_release_commit() {
 }
 
 #[test]
+fn publish_without_a_declared_secret_fails_before_writing_anything() {
+    let repository = release_repository();
+    let prepared = presswerk_in(repository.path(), &["prepare"]);
+    assert!(
+        prepared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared.stderr)
+    );
+    let remote = tempfile::tempdir().unwrap();
+    let remote_path = remote.path().to_string_lossy().into_owned();
+    repository.git(["init", "--bare", "--quiet", &remote_path]);
+    repository.git(["remote", "add", "origin", &remote_path]);
+
+    let output = presswerk_in_with(
+        repository.path(),
+        &["publish"],
+        &[("GITHUB_TOKEN", Path::new(""))],
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            "secret environment variable \"GITHUB_TOKEN\" for publishers.github-release.default.token is not set"
+        ),
+        "{stderr}"
+    );
+    assert_eq!(repository.git(["tag", "--list"]), "");
+    assert_eq!(repository.git(["ls-remote", "--tags", &remote_path]), "");
+}
+
+/// A secret value that must never appear in what the CLI prints.
+const SENTINEL: &str = "presswerk-sentinel-4711";
+
+#[test]
+fn plan_never_prints_a_secret_value() {
+    let repository = release_repository();
+    repository.write("other", "implemented\n");
+    repository.commit(&format!("✨ Add {SENTINEL}"));
+
+    let output = presswerk_in_with(
+        repository.path(),
+        &["plan"],
+        &[("GITHUB_TOKEN", Path::new(SENTINEL))],
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(stdout.contains("✨ Add [redacted]"), "{stdout}");
+    assert!(!stdout.contains(SENTINEL) && !stderr.contains(SENTINEL));
+}
+
+#[test]
+fn publish_errors_never_print_a_secret_value() {
+    let repository = release_repository();
+    let prepared = presswerk_in(repository.path(), &["prepare"]);
+    assert!(
+        prepared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared.stderr)
+    );
+    // The remote is unreachable, and Git names it in the error.
+    repository.git([
+        "remote",
+        "add",
+        "origin",
+        &format!("/nonexistent/{SENTINEL}"),
+    ]);
+
+    let output = presswerk_in_with(
+        repository.path(),
+        &["publish"],
+        &[("GITHUB_TOKEN", Path::new(SENTINEL))],
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("/nonexistent/[redacted]"), "{stderr}");
+    assert!(!stdout.contains(SENTINEL) && !stderr.contains(SENTINEL));
+}
+
+#[test]
 fn publish_without_a_git_identity_fails_before_writing_anything() {
     let repository = release_repository();
     let prepared = presswerk_in(repository.path(), &["prepare"]);
@@ -284,6 +368,8 @@ fn publish_without_a_git_identity_fails_before_writing_anything() {
             ("XDG_CONFIG_HOME", home.path()),
             ("GIT_CONFIG_GLOBAL", &nowhere),
             ("GIT_CONFIG_NOSYSTEM", Path::new("1")),
+            // Every declared secret is checked first; this test is about the identity.
+            ("GITHUB_TOKEN", Path::new("presswerk-test-token")),
         ],
     );
 
@@ -372,6 +458,87 @@ fn prepare_adopts_a_release_of_another_tool_once_it_is_trusted() {
         repository
             .git(["show", &format!("{release}:Cargo.toml")])
             .contains("version = \"0.39.0\"")
+    );
+}
+
+#[test]
+fn a_predecessor_with_the_old_secret_shape_needs_trust() {
+    predecessor_this_cli_cannot_read_needs_trust(
+        &RELEASE_FLAKE.replace("token.env = ", "token.secret = "),
+        "unknown variant `secret`, expected `value` or `env`",
+    );
+}
+
+#[test]
+fn a_predecessor_with_the_nested_secret_shape_needs_trust() {
+    predecessor_this_cli_cannot_read_needs_trust(
+        &RELEASE_FLAKE.replace("token.env = ", "token.secret.env = "),
+        "unknown variant `secret`, expected `value` or `env`",
+    );
+}
+
+#[test]
+fn a_predecessor_with_an_unknown_publisher_type_needs_trust() {
+    predecessor_this_cli_cannot_read_needs_trust(
+        &RELEASE_FLAKE.replace(
+            "publishers.\"github-release\".default = {",
+            "publishers.npm.default = { };\n      publishers.\"github-release\".default = {",
+        ),
+        "unknown publisher type \"npm\"",
+    );
+}
+
+/// A previous release whose declaration this CLI cannot read stops `prepare` with the reason and
+/// the trust command, and the command crosses it.
+fn predecessor_this_cli_cannot_read_needs_trust(predecessor_flake: &str, reason: &str) {
+    let repository = GitRepo::new();
+    write_cargo_version(&repository, "0.1.0");
+    repository.write("flake.nix", predecessor_flake);
+    repository.write("flake.lock", LOCK_FILE);
+    repository.write(
+        "CHANGELOG.md",
+        "# Changelog\n\n## [0.1.0] - 2026-11-10\n\n- Old\n",
+    );
+    let predecessor = repository.commit("🔖 Release v0.1.0");
+    repository.annotated_tag("v0.1.0");
+    repository.write("flake.nix", RELEASE_FLAKE);
+    repository.write("feature", "implemented\n");
+    repository.commit("✨ Add a feature");
+    let remote = tempfile::tempdir().unwrap();
+    repository.git(["init", "--quiet", "--bare", remote.path().to_str().unwrap()]);
+    repository.git(["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    repository.git([
+        "push",
+        "--quiet",
+        "origin",
+        "HEAD:refs/heads/main",
+        "v0.1.0",
+    ]);
+
+    let refused = presswerk_in(repository.path(), &["prepare"]);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success());
+    assert!(
+        stderr.contains("uses a declaration with schemaVersion 0 that this CLI cannot read"),
+        "{stderr}"
+    );
+    assert!(stderr.contains(reason), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "presswerk prepare --trust-predecessor v0.1.0={predecessor}"
+        )),
+        "{stderr}"
+    );
+
+    let trust = format!("v0.1.0={predecessor}");
+    let prepared = presswerk_in(
+        repository.path(),
+        &["prepare", "--trust-predecessor", &trust],
+    );
+    assert!(
+        prepared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&prepared.stderr)
     );
 }
 
@@ -553,7 +720,7 @@ fn a_release_tagged_on_only_one_side_is_not_pending() {
         r#"publishers."github-release".default = {
         apiUrl = "https://api.github.com";
         repository = "owner/project";
-        token.secret = "GITHUB_TOKEN";
+        token.env = "GITHUB_TOKEN";
       };"#,
         r#"publishers."github-release" = { };"#,
     );

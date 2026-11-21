@@ -7,16 +7,40 @@ use presswerk::preparation::{
     prepare_release, render_plan,
 };
 use presswerk::publication::{
-    ArtifactKind, AssetStep, PublishEvent, PublishOutcome, PublisherStep, TagStep, publish,
+    AssetStep, PublishEvent, PublishOutcome, PublisherStep, TagStep, publish,
 };
+use presswerk::publishers::shared::secrets::redact;
 use presswerk::release_commit::TrustedPredecessor;
+
+// Everything the CLI prints goes through these, so no secret value it read ever reaches the
+// output, whichever part of the output it would have ended up in.
+macro_rules! out {
+    ($($argument:tt)*) => {
+        print!("{}", redact(&format!($($argument)*)))
+    };
+}
+
+macro_rules! outln {
+    () => {
+        println!()
+    };
+    ($($argument:tt)*) => {
+        println!("{}", redact(&format!($($argument)*)))
+    };
+}
+
+macro_rules! errln {
+    ($($argument:tt)*) => {
+        eprintln!("{}", redact(&format!($($argument)*)))
+    };
+}
 
 fn main() -> std::process::ExitCode {
     match run() {
         Ok(true) => std::process::ExitCode::SUCCESS,
         Ok(false) => std::process::ExitCode::FAILURE,
         Err(error) => {
-            eprintln!("error: {error:#}");
+            errln!("error: {error:#}");
             std::process::ExitCode::FAILURE
         }
     }
@@ -26,7 +50,7 @@ fn run() -> Result<bool> {
     let cli = Cli::parse();
     let Some(command) = cli.command else {
         Cli::command().print_help()?;
-        println!();
+        outln!();
         return Ok(true);
     };
 
@@ -36,13 +60,13 @@ fn run() -> Result<bool> {
             let dirty = is_worktree_dirty(".")?;
             let plan = build_head_release_plan(".", &GitCliffAnalyzer)?;
             if dirty {
-                eprintln!(
+                errln!(
                     "warning: working tree is dirty; showing the plan for HEAD ({}) without local changes",
                     short_commit(&plan.commit.to_string())
                 );
             }
-            print_alias_notes(&plan);
-            print!("{}", render_plan(&plan));
+            print_warnings(&plan);
+            out!("{}", render_plan(&plan));
         }
         Command::Prepare { trust_predecessor } => {
             let dirty = is_worktree_dirty(".")?;
@@ -52,17 +76,17 @@ fn run() -> Result<bool> {
                 .transpose()?;
             let plan = build_head_preparation_plan(".", &GitCliffAnalyzer, trusted_predecessor)?;
             if dirty {
-                eprintln!(
+                errln!(
                     "warning: working tree is dirty; preparing HEAD ({}) without local changes",
                     short_commit(&plan.commit.to_string())
                 );
             }
-            print_alias_notes(&plan);
+            print_warnings(&plan);
             match prepare_release(&plan)? {
                 Some(commit) => {
                     let version = plan.next_version.as_ref().expect("release version exists");
                     let tag = plan.next_tag.as_ref().expect("release tag exists");
-                    println!(
+                    outln!(
                         "Preparing {tag} on {}",
                         short_commit(&plan.commit.to_string())
                     );
@@ -89,15 +113,15 @@ fn run() -> Result<bool> {
                             .clone()
                             .expect("release subject exists"),
                     ]);
-                    print!("{}", render_steps(&rows));
+                    out!("{}", render_steps(&rows));
                 }
                 None => match plan.pending_release() {
-                    Some(pending) => println!(
+                    Some(pending) => outln!(
                         "Nothing to prepare: pending release {} at {} is not published yet.",
                         pending.tag,
                         short_commit(&pending.commit.to_string())
                     ),
-                    None => println!("Nothing to prepare."),
+                    None => outln!("Nothing to prepare."),
                 },
             }
         }
@@ -106,7 +130,7 @@ fn run() -> Result<bool> {
             fail_fast,
             jobs,
         } => match publish(".", &revision, jobs, fail_fast, &mut print_publish_event)? {
-            PublishOutcome::NothingToDo { commit } => println!(
+            PublishOutcome::NothingToDo { commit } => outln!(
                 "Nothing to publish: {} is not a release commit.",
                 short_commit(&commit)
             ),
@@ -114,7 +138,7 @@ fn run() -> Result<bool> {
                 let commit = short_commit(&report.commit);
                 let warnings = report.warnings();
                 if !warnings.is_empty() {
-                    eprintln!(
+                    errln!(
                         "warning: {} could not be updated; {} is complete, publish it again to repair",
                         warnings
                             .iter()
@@ -127,7 +151,7 @@ fn run() -> Result<bool> {
                 if !report.complete() {
                     let failed = report.failed();
                     let skipped = report.skipped();
-                    println!(
+                    outln!(
                         "Published {} from {commit} partially; {failed} {}, {skipped} skipped.",
                         report.tag,
                         if failed == 1 {
@@ -138,12 +162,12 @@ fn run() -> Result<bool> {
                     );
                     successful = false;
                 } else if report.changed_nothing() {
-                    println!(
+                    outln!(
                         "{} from {commit} was already released; nothing changed.",
                         report.tag
                     );
                 } else {
-                    println!("Released {} from {commit}.", report.tag);
+                    outln!("Released {} from {commit}.", report.tag);
                 }
             }
         },
@@ -151,30 +175,12 @@ fn run() -> Result<bool> {
     Ok(successful)
 }
 
-/// Tells before anything is written which aliases another tool pushed: `publish` keeps them, or
-/// takes them over from the trusted predecessor.
-fn print_alias_notes(plan: &ReleasePlan) {
-    for (publisher, variables) in &plan.anonymous_alias_reads {
-        let verb = if variables.len() == 1 { "is" } else { "are" };
-        eprintln!(
-            "warning: {publisher} is not marked public and {} {verb} not set; checking its aliases anonymously, which will probably fail",
-            variables.join("/")
-        );
-    }
-    for alias in &plan.foreign_aliases {
-        match &alias.predecessor_tag {
-            Some(tag) => eprintln!(
-                "note: alias {} points to the trusted predecessor's tag {tag}; publish will take it over",
-                alias.reference
-            ),
-            None => eprintln!(
-                "warning: alias {} points to {} without a version annotation, so another tool pushed it; publish will keep it",
-                alias.reference, alias.digest
-            ),
-        }
-    }
-    for (publisher, reason) in &plan.unchecked_aliases {
-        eprintln!("warning: could not check the aliases of {publisher}: {reason}");
+/// Tells before anything is written what the publishers found on their remotes, such as the
+/// aliases another tool pushed: `publish` keeps them, or takes them over from the trusted
+/// predecessor.
+fn print_warnings(plan: &ReleasePlan) {
+    for warning in &plan.warnings {
+        errln!("{warning}");
     }
 }
 
@@ -183,7 +189,7 @@ fn print_alias_notes(plan: &ReleasePlan) {
 fn print_publish_event(event: PublishEvent<'_>) {
     let (kind, status, target) = match event {
         PublishEvent::Started { tag, commit } => {
-            println!("Publishing {tag} from {}", short_commit(commit));
+            outln!("Publishing {tag} from {}", short_commit(commit));
             return;
         }
         PublishEvent::Tag { tag, step } => {
@@ -191,53 +197,48 @@ fn print_publish_event(event: PublishEvent<'_>) {
                 TagStep::Pushed => "pushed",
                 TagStep::AlreadyPushed => "already pushed",
             };
-            ("tag", status, tag.to_owned())
+            ("tag".to_owned(), status.to_owned(), tag.to_owned())
         }
-        PublishEvent::Publisher { name, step } => {
-            let registry = name.starts_with("oci-image.") || name.starts_with("oci-helm.");
+        PublishEvent::Publisher { name, labels, step } => {
             let status = match step {
-                PublisherStep::Published => "published",
-                PublisherStep::DraftCompleted => "draft completed",
-                PublisherStep::ArtifactsCompleted if registry => "tags completed",
-                PublisherStep::ArtifactsCompleted => "assets completed",
-                PublisherStep::AlreadyPublished => "already published",
+                PublisherStep::Published => "published".to_owned(),
+                PublisherStep::DraftCompleted => "draft completed".to_owned(),
+                PublisherStep::ArtifactsCompleted => format!("{} completed", labels.artifacts),
+                PublisherStep::AlreadyPublished => "already published".to_owned(),
             };
-            let kind = if registry { "registry" } else { "release" };
-            (kind, status, name.to_owned())
+            (labels.publisher.to_owned(), status, name.to_owned())
         }
-        PublishEvent::PublisherFailed { name, reason } => {
-            ("publisher", "failed", format!("{name} ({reason})"))
-        }
+        PublishEvent::PublisherFailed { name, reason } => (
+            "publisher".to_owned(),
+            "failed".to_owned(),
+            format!("{name} ({reason})"),
+        ),
         PublishEvent::PublisherSkipped { name, reason } => (
-            "publisher",
-            "skipped",
+            "publisher".to_owned(),
+            "skipped".to_owned(),
             format!(
                 "{name} ({})",
                 reason.strip_prefix("skipped: ").unwrap_or(reason)
             ),
         ),
         PublishEvent::Artifact(artifact) => {
-            let (kind, done, already) = match artifact.kind {
-                ArtifactKind::Asset => ("asset", "uploaded", "already uploaded"),
-                ArtifactKind::Image => ("image", "pushed", "already pushed"),
-                ArtifactKind::Tag => ("tag", "pushed", "already pushed"),
-                ArtifactKind::Alias => ("alias", "set", "already set"),
-            };
+            let kind = artifact.kind.label.to_string();
+            let verb = &artifact.kind.verb;
             let name = &artifact.name;
             match &artifact.step {
-                AssetStep::Uploaded => (kind, done, name.clone()),
-                AssetStep::AlreadyUploaded => (kind, already, name.clone()),
-                AssetStep::TakenOver => (kind, "taken over", name.clone()),
-                AssetStep::Kept(reason) => (kind, "kept", format!("{name} ({reason})")),
+                AssetStep::Uploaded => (kind, verb.to_string(), name.clone()),
+                AssetStep::AlreadyUploaded => (kind, format!("already {verb}"), name.clone()),
+                AssetStep::TakenOver => (kind, "taken over".to_owned(), name.clone()),
+                AssetStep::Kept(reason) => (kind, "kept".to_owned(), format!("{name} ({reason})")),
                 AssetStep::Warning(reason) => (
                     kind,
-                    "not moved",
+                    "not moved".to_owned(),
                     format!("{name} ({reason}; rerun to repair)"),
                 ),
             }
         }
     };
-    println!("  {kind:<9}  {status:<17}  {target}");
+    outln!("  {kind:<9}  {status:<17}  {target}");
 }
 
 /// Renders one indented line per step with aligned kind and target columns.

@@ -51,18 +51,21 @@ Every field is required, and unknown fields are rejected.
 - `publishers`: keyed by publisher type, `github-release`, `oci-helm`, or `oci-image`, and then by
   name. All may be empty. Every publisher has `after`, a list of publisher addresses in
   `<type>.<name>` form that must complete first. It may be missing in older declarations and then
-  means an empty list. The module-only `before` option never enters the declaration. Each GitHub
-  Release publisher has an `apiUrl`, a `repository` in
-  `owner/name` form, a `token.secret` naming the environment variable that holds the token, a
-  MiniJinja `body` template, and `assets`, which maps asset names to absolute store paths of files
-  and may be missing in older declarations. `body` may be missing in older declarations and then
-  means `{{ notes }}`. `oci-helm` and `oci-image` may be missing in older declarations. Both
-  registry publishers have a `repository`, a `username` with either `secret` or `value`, a
-  `password.secret`, and `public`, which may be missing and then means `false`. An OCI Helm
-  publisher has the absolute store path of its packaged `chart`. An OCI image publisher has
-  `platforms`, which maps platforms such as `linux/amd64` to absolute store paths of image archives
-  or executables that write an uncompressed one to stdout. Its `tags` and `aliases` are lists of
-  templates that may use `{major}`, `{minor}`, and `{patch}`; every tag contains `{version}`, no
-  alias does, and `aliases` may be missing in older declarations. `compression` has either `gzip`
-  or `zstd`, each with its `level`; it may be missing in older declarations and then means gzip at
-  level 6.
+  means an empty list. The module-only `before` option never enters the declaration. A credential
+  is exactly one of `{ "value": "…" }` or a secret source, `{ "env": "NAME" }`; a `token` or
+  `password` is always a secret. Every publisher also has `claims`, the remote objects it writes, each with a
+  `destination`, the remote, such as `oci://ghcr.io/owner/project`, and a `key`, the object within
+  it, as a version template such as the tag `{version}` or `latest`. The CLI renders the keys with the version it releases and refuses two
+  publishers that claim the same object. `claims` may be missing in older declarations and then
+  means none. Each GitHub Release publisher has an `apiUrl`, a `repository` in `owner/name` form,
+  a `token` credential, a MiniJinja `body` template, and `assets`, which maps asset names to
+  absolute store paths of files and may be missing in older declarations. `body` may be missing in
+  older declarations and then means `{{ notes }}`. `oci-helm` and `oci-image` may be missing in
+  older declarations. Both registry publishers have a `repository`, a `username` and a `password`
+  credential, and `public`, which may be missing and then means `false`. An OCI Helm publisher has
+  the absolute store path of its packaged `chart`. An OCI image publisher has `platforms`, which
+  maps platforms such as `linux/amd64` to absolute store paths of image archives or executables
+  that write an uncompressed one to stdout. Its `tags` and `aliases` are lists of templates that
+  may use `{major}`, `{minor}`, and `{patch}`; every tag contains `{version}`, no alias does, and
+  `aliases` may be missing in older declarations. `compression` has either `gzip` or `zstd`, each
+  with its `level`; it may be missing in older declarations and then means gzip at level 6.

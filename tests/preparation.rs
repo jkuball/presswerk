@@ -5,16 +5,22 @@ use git2::Oid;
 use presswerk::analysis::GitCliffAnalyzer;
 use presswerk::declaration::{
     Analyzer, BadgeOptions, BadgeVersionFile, CargoLockVersionFile, CargoWorkspaceVersionFile,
-    Changelog, Compression, ConventionalAnalyzer, GithubReleasePublisher, GitmojiAnalyzer,
-    JsonVersionFile, OciHelmPublisher, OciImagePublisher, Publishers, ReleaseDeclaration, Tag,
-    Token, TomlVersionFile, Username, VersionFile,
+    Changelog, ConventionalAnalyzer, GitmojiAnalyzer, JsonVersionFile, Publishers,
+    ReleaseDeclaration, Tag, TomlVersionFile, VersionFile,
 };
 use presswerk::evaluation::EvaluatedReleaseDeclaration;
 use presswerk::preparation::{build_release_plan, is_worktree_dirty, prepare_release, render_plan};
 use presswerk::publication::{
-    GithubReleaseState, PublicationError, Release, RemoteState, TagPublisher, VerifiedPredecessor,
+    PublicationError, Release, RemoteState, TagPublisher, VerifiedPredecessor,
     verify_predecessor_with,
 };
+use presswerk::publishers::Completeness;
+use presswerk::publishers::github_release::{
+    DEFAULT_GITHUB_RELEASE_BODY, GithubReleaseDeclaration,
+};
+use presswerk::publishers::oci::helm::OciHelmDeclaration;
+use presswerk::publishers::oci::image::{Compression, OciImageDeclaration};
+use presswerk::publishers::shared::secrets::Credential;
 use semver::Version;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -44,24 +50,24 @@ fn declaration(version: &str) -> ReleaseDeclaration {
             heading: presswerk::changelog::DEFAULT_HEADING.into(),
             unreleased_heading: presswerk::changelog::DEFAULT_UNRELEASED_HEADING.into(),
         },
-        publishers: Publishers {
-            github_release: BTreeMap::from([(
-                "default".into(),
-                GithubReleasePublisher {
-                    after: Vec::new(),
-                    api_url: "https://api.github.com".into(),
-                    repository: "owner/project".into(),
-                    token: Token {
-                        secret: "GITHUB_TOKEN".into(),
-                    },
-                    body: presswerk::declaration::DEFAULT_GITHUB_RELEASE_BODY.into(),
-                    assets: BTreeMap::new(),
-                },
-            )]),
-            oci_image: BTreeMap::new(),
-            oci_helm: BTreeMap::new(),
-        },
+        publishers: github_release("owner/project", BTreeMap::new()),
     }
+}
+
+fn github_release(repository: &str, assets: BTreeMap<String, String>) -> Publishers {
+    let mut publishers = Publishers::new();
+    publishers.insert(
+        "github-release",
+        "default",
+        GithubReleaseDeclaration {
+            api_url: "https://api.github.com".into(),
+            repository: repository.into(),
+            token: Credential::env("GITHUB_TOKEN"),
+            body: DEFAULT_GITHUB_RELEASE_BODY.into(),
+            assets,
+        },
+    );
+    publishers
 }
 
 fn write_version(repository: &GitRepo, version: &str) {
@@ -419,20 +425,9 @@ fn uses_the_exact_predecessor_declaration_for_release_state_checks() {
     let candidate = repository.commit("✨ Add a feature");
     let previous = predecessor(&repository, "0.1.0");
     let mut current = evaluated(&repository, "0.1.0");
-    current
-        .declaration
-        .publishers
-        .github_release
-        .get_mut("default")
-        .unwrap()
-        .repository = "new/project".into();
+    current.declaration.publishers = github_release("new/project", BTreeMap::new());
     let mut previous_declaration = declaration("0.1.0");
-    previous_declaration
-        .publishers
-        .github_release
-        .get_mut("default")
-        .unwrap()
-        .repository = "old/project".into();
+    previous_declaration.publishers = github_release("old/project", BTreeMap::new());
     let evaluated_commits = RefCell::new(Vec::new());
     let checked_repositories = RefCell::new(Vec::new());
     let tag = FakeTagPublisher(RemoteState::Matching);
@@ -454,13 +449,15 @@ fn uses_the_exact_predecessor_declaration_for_release_state_checks() {
                     evaluated_commits.borrow_mut().push(commit);
                     Ok(previous_declaration.clone())
                 },
-                |publisher, _, _| {
-                    checked_repositories
-                        .borrow_mut()
-                        .push(publisher.repository.clone());
-                    Ok(GithubReleaseState::Published { prerelease: false })
+                |node, release, _| {
+                    checked_repositories.borrow_mut().push(
+                        node.publisher
+                            .describe(&release.version, &release.tag)
+                            .unwrap()
+                            .target,
+                    );
+                    Ok(Completeness::Complete)
                 },
-                |_, _| unreachable!("no OCI image publishers are declared"),
             )
             .map_err(Into::into)
         },
@@ -509,8 +506,7 @@ fn refuses_deleted_moved_and_lightweight_remote_predecessor_tags() {
                     &tag,
                     None,
                     |_| Ok(previous_declaration.clone()),
-                    |_, _, _| Ok(GithubReleaseState::Published { prerelease: false }),
-                    |_, _| unreachable!("no OCI image publishers are declared"),
+                    |_, _, _| Ok(Completeness::Complete),
                 )
                 .map_err(Into::into)
             },
@@ -725,7 +721,10 @@ fn the_plan_of_a_release_without_publishers_says_so() {
     write_version(&repository, "0.0.0");
     repository.commit("✨ Add the first feature");
     let mut evaluated = evaluated(&repository, "0.0.0");
-    evaluated.declaration.publishers.github_release.clear();
+    evaluated
+        .declaration
+        .publishers
+        .remove_type("github-release");
 
     let plan = build_release_plan(
         repository.path(),
@@ -745,17 +744,13 @@ fn the_plan_lists_each_publisher_with_its_release_and_assets() {
     write_version(&repository, "0.0.0");
     repository.commit("✨ Add the first feature");
     let mut evaluated = evaluated(&repository, "0.0.0");
-    evaluated
-        .declaration
-        .publishers
-        .github_release
-        .get_mut("default")
-        .unwrap()
-        .assets
-        .insert(
+    evaluated.declaration.publishers = github_release(
+        "owner/project",
+        BTreeMap::from([(
             "example-x86_64-linux".into(),
             "/nix/store/abc-example-0.1.0/bin/example".into(),
-        );
+        )]),
+    );
 
     let plan = build_release_plan(
         repository.path(),
@@ -774,9 +769,8 @@ fn the_plan_lists_each_publisher_with_its_release_and_assets() {
     )));
 }
 
-fn oci_image_publisher(tags: &[&str], aliases: &[&str]) -> OciImagePublisher {
-    OciImagePublisher {
-        after: Vec::new(),
+fn oci_image_publisher(tags: &[&str], aliases: &[&str]) -> OciImageDeclaration {
+    OciImageDeclaration {
         repository: "ghcr.io/owner/project".into(),
         platforms: BTreeMap::from([
             ("linux/amd64".into(), "/nix/store/abc-image.tar.gz".into()),
@@ -786,11 +780,37 @@ fn oci_image_publisher(tags: &[&str], aliases: &[&str]) -> OciImagePublisher {
         aliases: aliases.iter().map(|alias| (*alias).into()).collect(),
         public: false,
         compression: Compression::default(),
-        username: Username::Secret("REGISTRY_USERNAME".into()),
-        password: Token {
-            secret: "REGISTRY_TOKEN".into(),
-        },
+        username: Credential::env("REGISTRY_USERNAME"),
+        password: Credential::env("REGISTRY_TOKEN"),
     }
+}
+
+#[test]
+fn the_plan_rejects_a_tag_that_only_the_next_version_makes_invalid() {
+    let repository = GitRepo::new();
+    write_version(&repository, "0.9.0");
+    repository.commit("✨ Add the first feature");
+    let mut evaluated = evaluated(&repository, "0.9.0");
+    // 128 characters with the sample version 1.2.3 and with 0.9.0, 129 with the next, 0.10.0.
+    let template = format!("{}{{version}}", "a".repeat(123));
+    evaluated.declaration.publishers.insert(
+        "oci-image",
+        "default",
+        oci_image_publisher(&[&template], &[]),
+    );
+
+    let error = build_release_plan(
+        repository.path(),
+        evaluated,
+        &GitCliffAnalyzer,
+        "2026-11-05",
+        |_, _, _| Ok(None),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.starts_with("oci-image.default: OCI tag"), "{error}");
+    assert!(error.contains("at most 128 characters"), "{error}");
 }
 
 #[test]
@@ -799,8 +819,9 @@ fn the_plan_lists_oci_images_and_rendered_tags_before_the_release() {
     write_version(&repository, "0.0.0");
     repository.commit("✨ Add the first feature");
     let mut evaluated = evaluated(&repository, "0.0.0");
-    evaluated.declaration.publishers.oci_image.insert(
-        "default".into(),
+    evaluated.declaration.publishers.insert(
+        "oci-image",
+        "default",
         oci_image_publisher(&["{version}"], &["latest", "{major}.{minor}"]),
     );
 
@@ -832,17 +853,15 @@ fn the_plan_lists_an_oci_helm_chart_under_its_release_tag() {
     write_version(&repository, "0.0.0");
     repository.commit("✨ Add the first feature");
     let mut evaluated = evaluated(&repository, "0.0.0");
-    evaluated.declaration.publishers.oci_helm.insert(
-        "default".into(),
-        OciHelmPublisher {
-            after: Vec::new(),
+    evaluated.declaration.publishers.insert(
+        "oci-helm",
+        "default",
+        OciHelmDeclaration {
             repository: "ghcr.io/owner/charts/project".into(),
             chart: "/nix/store/abc-project-0.1.0.tgz".into(),
             public: true,
-            username: Username::Secret("REGISTRY_USERNAME".into()),
-            password: Token {
-                secret: "REGISTRY_TOKEN".into(),
-            },
+            username: Credential::env("REGISTRY_USERNAME"),
+            password: Credential::env("REGISTRY_TOKEN"),
         },
     );
 
@@ -868,23 +887,38 @@ fn the_plan_rejects_an_oci_helm_tag_shared_with_an_oci_image_publisher() {
     write_version(&repository, "0.0.0");
     repository.commit("✨ Add the first feature");
     let mut evaluated = evaluated(&repository, "0.0.0");
-    evaluated
-        .declaration
-        .publishers
-        .oci_image
-        .insert("image".into(), oci_image_publisher(&["0.1.0"], &[]));
-    evaluated.declaration.publishers.oci_helm.insert(
-        "chart".into(),
-        OciHelmPublisher {
-            after: Vec::new(),
-            repository: "ghcr.io/owner/project".into(),
-            chart: "/nix/store/abc-project-0.1.0.tgz".into(),
-            public: true,
-            username: Username::Secret("REGISTRY_USERNAME".into()),
-            password: Token {
-                secret: "REGISTRY_TOKEN".into(),
-            },
-        },
+    // Only the next version collides: the alias names it, and the chart's tag is the version.
+    // Each type's Nix module derives the claims into the declaration, as tag templates.
+    let claimed = |declaration: serde_json::Value, keys: &[&str]| {
+        let mut declaration = declaration;
+        declaration["claims"] = keys
+            .iter()
+            .map(|key| serde_json::json!({ "destination": "oci://ghcr.io/owner/project", "key": key }))
+            .collect();
+        declaration
+    };
+    evaluated.declaration.publishers.insert(
+        "oci-image",
+        "image",
+        claimed(
+            serde_json::to_value(oci_image_publisher(&["v{version}"], &["0.1.0"])).unwrap(),
+            &["v{version}", "0.1.0"],
+        ),
+    );
+    evaluated.declaration.publishers.insert(
+        "oci-helm",
+        "chart",
+        claimed(
+            serde_json::to_value(OciHelmDeclaration {
+                repository: "ghcr.io/owner/project".into(),
+                chart: "/nix/store/abc-project-0.1.0.tgz".into(),
+                public: true,
+                username: Credential::env("REGISTRY_USERNAME"),
+                password: Credential::env("REGISTRY_TOKEN"),
+            })
+            .unwrap(),
+            &["{version}"],
+        ),
     );
 
     let error = build_release_plan(
@@ -898,10 +932,10 @@ fn the_plan_rejects_an_oci_helm_tag_shared_with_an_oci_image_publisher() {
     .to_string();
 
     assert!(
-        error.contains("oci-image.image and oci-helm.chart"),
+        error.contains("publishers.oci-image.image and publishers.oci-helm.chart"),
         "{error}"
     );
-    assert!(error.contains("both render 0.1.0"), "{error}");
+    assert!(error.contains("both claim 0.1.0"), "{error}");
 }
 
 #[test]

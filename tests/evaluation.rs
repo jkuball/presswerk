@@ -40,7 +40,7 @@ fn valid_flake(version: &str) -> String {
       publishers."github-release".default = {
         apiUrl = "https://api.github.com";
         repository = "jkuball/presswerk";
-        token.secret = "GITHUB_TOKEN";
+        token.env = "GITHUB_TOKEN";
       };
     };
   };

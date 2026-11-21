@@ -8,8 +8,8 @@ your choice:
     repository = "ghcr.io/owner/charts/project";
     chart = self.packages.x86_64-linux.chart;
     public = true;
-    username.secret = "GITHUB_ACTOR";
-    password.secret = "GITHUB_TOKEN";
+    username.env = "GITHUB_ACTOR";
+    password.env = "GITHUB_TOKEN";
   };
 }
 ```
@@ -58,7 +58,8 @@ version files are planned.
 
 The chart is pushed under exactly one tag, the release version. Following Helm's convention, `+`
 in SemVer build metadata becomes `_` in the registry tag, so `1.2.0+build.5` becomes
-`1.2.0_build.5`.
+`1.2.0_build.5`. Image and chart tags share the repository's tags, so an OCI image publisher in
+the same repository must not push that tag.
 
 ## OCI artifact
 
@@ -90,9 +91,9 @@ missing or different chart stops them, so the interrupted release is published a
 
 OCI Helm publishers use the same registry authentication as
 [OCI: Image](/reference/publishers/oci-image/#credentials).
-`username.secret` and `password.secret` name environment variables read at run time. A public
-username may instead use `username.value`, such as `oauth2accesstoken` for Google Artifact
-Registry. Credentials never enter the declaration or Nix store and are never printed.
+`username.env` and `password.env` name environment variables read at run time. A
+public username may instead use `username.value`, such as `oauth2accesstoken` for Google Artifact
+Registry. Secrets never enter the declaration or Nix store and are never printed.
 
 `publish` always needs the credentials. By default, `plan` and `prepare` need them when they check a
 previous release. With `public = true;`, that check reads anonymously with pull access only and

@@ -63,20 +63,26 @@ in
     };
 
     "test submodule options resolve with defaults and source links" = {
-      expr = lib.removeAttrs (lib.findFirst (option: option.name == "publishers.github-release.<name>.token.secret") null optionsReference) [ "description" "declarations" ];
+      expr = lib.removeAttrs (lib.findFirst (option: option.name == "publishers.github-release.<name>.token") null optionsReference) [ "description" "declarations" ];
       expected = {
-        name = "publishers.github-release.<name>.token.secret";
-        loc = [ "publishers" "github-release" "<name>" "token" "secret" ];
-        anchor = "publishers.github-release.name.token.secret";
+        name = "publishers.github-release.<name>.token";
+        loc = [ "publishers" "github-release" "<name>" "token" ];
+        anchor = "publishers.github-release.name.token";
         readOnly = false;
-        type = "non-empty string";
+        type = "attribute-tagged union with choices: env";
         default = {
           kind = "nix";
-          text = ''"GITHUB_TOKEN"'';
+          text = ''
+            {
+              env = "GITHUB_TOKEN";
+            }'';
         };
         example = {
           kind = "nix";
-          text = ''"PRESSWERK_GITHUB_TOKEN"'';
+          text = ''
+            {
+              env = "PRESSWERK_GITHUB_TOKEN";
+            }'';
         };
       };
     };
@@ -220,7 +226,7 @@ in
         grep -q 'href="/reference/options/?filter=versionFiles.cargo" class="pw-code-link"' "$site/index.html"
         grep -q 'href="/reference/options/?filter=publishers.oci-image.%3Cname%3E.platforms" class="pw-code-link"' "$site/reference/publishers/oci-image/index.html"
         grep -q 'href="/reference/options/?filter=publishers.oci-helm.%3Cname%3E.chart" class="pw-code-link"' "$site/reference/publishers/oci-helm/index.html"
-        grep -q 'id="publishers.github-release.name.token.secret"' "$site/reference/options/index.html"
+        grep -q 'id="publishers.github-release.name.token.env"' "$site/reference/options/index.html"
         ! grep -q 'id="publishers.oci"' "$site/reference/options/index.html"
         grep -q '^# Reproducible releases for Nix flakes$' "$site/index.md"
         grep -q '^# Walkthrough: release automatically from GitHub Actions$' "$site/guide/walkthrough.md"

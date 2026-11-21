@@ -165,6 +165,22 @@ version-file generators, with implementations kept in the main crate. It does no
 trait crates or stabilize an external plugin SDK. The publisher boundary supports a test double;
 a materially different real publisher can inform the public extension design later.
 
+Every publisher type sits behind one interface in `src/publishers/`. A type has a name, the key
+under `publishers.<name>`, and reads one instance from its JSON without touching the environment,
+the network, or the store. An instance names its credentials, describes what a release writes for
+`plan`, tells whether
+a previous release is complete on the remote, compares the remote with the local artifacts, and
+publishes. The core decodes declarations generically and
+resolves each type through one registry, so an unknown type fails before anything is written; it
+also resolves every secret among the named credentials, reports progress and warnings, and redacts output for all types alike.
+Every value that crosses this boundary is serializable, so a type can later be implemented as an
+executable with JSON in and out. On the Nix side, each type is one module in
+`modules/release/publishers/` that declares its options, its declaration, and its claims: the
+remote objects each instance writes, as version templates. Nix checks them with a sample version,
+and the core renders the same templates with the released version and checks them again. A new
+built-in type adds its Rust module, its Nix module, its documentation page, and one line in the
+registry.
+
 Consumers must be able to add their own publishers without upstreaming them, since some
 destinations will be internal to an organization.
 

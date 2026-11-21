@@ -66,6 +66,12 @@ logic lives in the CLI: writing and reading version files, cutting and reading c
 sections, analyzing commits, and publishing. The declaration stays plain data wherever
 possible.
 
+Rule of thumb: what can be checked without a version and without the remote is checked by Nix;
+what needs the version, secrets, or the remote is checked by Rust. Two publishers that push the
+same tag, for example, fail while the module is evaluated, rendered with a sample version; the CLI
+checks the same claims again with the version it releases, since some only collide for that
+version.
+
 ### Agent skill
 
 The CLI ships an agent skill as a `skill` subcommand that prints a `SKILL.md` to stdout:

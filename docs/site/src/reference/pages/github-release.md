@@ -104,9 +104,10 @@ again.
 
 ## Token
 
-`token.secret` names the environment variable that holds the GitHub API token, `GITHUB_TOKEN`
-by default. The token never enters the declaration or the Nix store; Presswerk reads it at run
-time and stops if the variable is unset or empty.
+`token.env` names the environment variable that holds the GitHub API token, `GITHUB_TOKEN`
+by default, as in `token = { env = "PRESSWERK_GITHUB_TOKEN"; };`. The token never enters
+the declaration or the Nix store; Presswerk reads it at run time and stops if the variable is unset
+or empty.
 
 `presswerk publish` needs the token whenever it publishes or retries a release commit. On an
 ordinary commit it reports that there is nothing to publish without reading the token. Once a

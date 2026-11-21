@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+- 💥 Credentials are declared as `{ env = "NAME"; }` instead of `{ secret = "NAME"; }`; usernames
+  may still be `{ value = "…"; }`. This affects every publisher with credentials, including the
+  GitHub Release token, which defaulted to `token.secret = "GITHUB_TOKEN"`. If the previous release
+  used the old syntax, `plan` reports it as unreadable; once you have verified that it is complete,
+  run `presswerk prepare --trust-predecessor <tag>=<commit>`, which `prepare` prints.
+- 💥 `publish` now stops before writing anything if a declared secret is missing.
+- ✨ Two publishers that claim the same tag or GitHub Release now stop the release before anything
+  is published.
+
 ## [0.20.1] - 2026-11-19
 
 ### 🐛 Fix a bug

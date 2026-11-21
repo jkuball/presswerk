@@ -31,7 +31,7 @@ Declaring publishers for other targets in the flake itself is planned.
 
 Publishers form a dependency graph. Name a publisher as `<type>.<name>` in [`after`](/reference/options/#publishers.github-release.name.after) when it must complete first:
 
-```nix
+```nix presswerk-module
 {
   publishers.oci-image.api = {
     # …
@@ -45,6 +45,56 @@ Publishers form a dependency graph. Name a publisher as `<type>.<name>` in [`aft
 
 [`before`](/reference/options/#publishers.github-release.name.before) expresses the same edge from
 the other side. Unknown publisher names and cycles fail module evaluation.
+
+## Claims
+
+Two publishers must never write the same remote object. Every publisher claims what it writes, a
+destination such as an OCI repository plus a key such as a tag, and a duplicate claim fails module
+evaluation. An image and a Helm chart in one repository both claim the tag of the version:
+
+```nix presswerk-module
+{
+  publishers.oci-image.api = {
+    repository = "ghcr.io/foo/api";
+    # …
+  };
+  publishers.oci-helm.chart = {
+    repository = "ghcr.io/foo/api";
+    # …
+  };
+}
+```
+
+Module evaluation then fails with:
+
+```text
+publishers.oci-helm.chart and publishers.oci-image.api both claim {version} in oci://ghcr.io/foo/api
+```
+
+Pushing the chart to another repository, such as `ghcr.io/foo/charts/api`, resolves it.
+
+## Credentials
+
+Every credential of every publisher has the same shape: exactly one of a secret source read at run
+time, such as `{ env = "NAME"; }` for the environment variable `NAME`, or, for what is no secret,
+such as a registry username, the value itself, `{ value = "…"; }`. Tokens and passwords are always
+secrets.
+
+```nix presswerk-module
+{
+  publishers.oci-image.api = {
+    # …
+    username.value = "oauth2accesstoken";
+    password.env = "REGISTRY_TOKEN";
+  };
+}
+```
+
+Secrets never enter the declaration or the Nix store. `publish` reads every secret the declaration
+names before it writes anything and stops if one is unset or empty, even if this run would not need
+it, so a release never stops halfway for a missing secret. `plan` and `prepare` only warn about
+missing secrets, unless they need one to check the previous release. Presswerk replaces every
+secret value it read with `[redacted]` in what it prints.
 
 ## Publishing
 

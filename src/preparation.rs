@@ -3,8 +3,8 @@ use crate::analysis::{
 };
 use crate::declaration::{Publishers, ReleaseDeclaration, Tag};
 use crate::evaluation::{EvaluatedReleaseDeclaration, evaluate_release_declaration};
-use crate::oci::ForeignAlias;
-use crate::publication::{VerifiedPredecessor, short_oid, verify_head_predecessor};
+use crate::publication::{Release, VerifiedPredecessor, short_oid, verify_head_predecessor};
+use crate::publishers::{Context as PublisherContext, Description, Session, Warning, WarningLevel};
 use crate::release_commit::{
     ReleaseFile, TrustedPredecessor, create_release_commit, release_subject,
 };
@@ -15,6 +15,7 @@ use semver::Version;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionFileChange {
@@ -39,16 +40,13 @@ pub struct ReleasePlan {
     pub notes: String,
     pub changelog_path: String,
     pub publishers: Publishers,
+    /// What each publisher writes for the next version, by address.
+    pub publisher_descriptions: Vec<(String, Description)>,
     release_files: Vec<ReleaseFile>,
     trusted_predecessor: Option<TrustedPredecessor>,
-    /// The aliases another tool pushed, which the next release keeps or takes over, as read from
-    /// the registries by `plan` and `prepare`.
-    pub foreign_aliases: Vec<ForeignAlias>,
-    /// The publishers that are not public but whose aliases were read anonymously, since these
-    /// credential variables are unset.
-    pub anonymous_alias_reads: Vec<(String, Vec<String>)>,
-    /// Why the aliases of a publisher could not be read, by publisher.
-    pub unchecked_aliases: Vec<(String, String)>,
+    /// What the publishers found on their remotes for the next release before anything is
+    /// written, such as an alias another tool pushed.
+    pub warnings: Vec<Warning>,
 }
 
 impl ReleasePlan {
@@ -91,6 +89,10 @@ fn build_head_plan(
     refuse_pending_base: bool,
 ) -> Result<ReleasePlan> {
     let evaluated = evaluate_release_declaration(repository_path, "HEAD")?;
+    // Read the secrets first, so that nothing printed from here on can show one.
+    let secrets = crate::publishers::shared::secrets::Secrets::resolve(
+        evaluated.declaration.publishers.secrets(),
+    );
     let date = time::OffsetDateTime::now_utc().date().to_string();
     let mut plan = build_release_plan(
         repository_path,
@@ -116,52 +118,67 @@ fn build_head_plan(
         },
     )?;
     plan.trusted_predecessor = trusted_predecessor;
-    check_foreign_aliases(&mut plan);
+    let session = plan_session(&plan, secrets);
+    preview_publishers(&mut plan, &session)?;
     Ok(plan)
 }
 
-/// Read the aliases of the next release before anything is written, so an alias another tool
-/// pushed does not stay behind unnoticed. Reading is best effort and never stops the plan.
-fn check_foreign_aliases(plan: &mut ReleasePlan) {
-    let Some(version) = &plan.next_version else {
-        return;
-    };
-    let predecessor = plan
-        .trusted_predecessor
-        .as_ref()
-        .and(plan.previous_release.as_ref())
-        .map(|previous| &previous.version);
-    for (name, publisher) in &plan.publishers.oci_image {
-        if publisher.aliases.is_empty() {
-            continue;
-        }
-        let variables = crate::oci::missing_credentials(publisher, |name| std::env::var(name).ok());
-        // Without credentials, an anonymous read may still succeed, such as for a repository
-        // that is public without being marked so.
-        let registry = if variables.is_empty() {
-            crate::oci::reading_client(publisher)
-        } else {
-            plan.anonymous_alias_reads
-                .push((format!("oci-image.{name}"), variables));
-            crate::oci::RegistryClient::new(&publisher.repository, None)
+fn plan_session(
+    plan: &ReleasePlan,
+    secrets: crate::publishers::shared::secrets::Secrets,
+) -> Session {
+    Session {
+        changelog: plan.changelog_path.clone(),
+        // A trusted predecessor released by another tool leaves aliases the release takes over.
+        trusted_predecessor: plan
+            .trusted_predecessor
+            .as_ref()
+            .and(plan.previous_release.as_ref())
+            .map(|previous| previous.version.clone()),
+        secrets,
+    }
+}
+
+/// Let every publisher read its remote for the next release before anything is written, so
+/// something another tool left there does not stay behind unnoticed. Reading is best effort and
+/// never stops the plan.
+fn preview_publishers(plan: &mut ReleasePlan, session: &Session) -> Result<()> {
+    // `publish` stops without them; `plan` and `prepare` only tell.
+    let warnings = Mutex::new(
+        session
+            .secrets
+            .missing()
+            .into_iter()
+            .map(|(path, source)| Warning {
+                level: WarningLevel::Warning,
+                message: format!(
+                    "secret {source} for publishers.{path} is not set; publish stops before writing anything without it"
+                ),
+            })
+            .collect::<Vec<_>>(),
+    );
+    if let (Some(version), Some(tag)) = (&plan.next_version, &plan.next_tag) {
+        let release = Release {
+            commit: plan.commit.to_string(),
+            version: version.clone(),
+            tag: tag.clone(),
+            notes: plan.notes.clone(),
         };
-        let found = registry.and_then(|registry| {
-            crate::oci::foreign_aliases(
-                &registry,
-                &publisher.repository,
-                &publisher.tags,
-                &publisher.aliases,
-                version,
-                predecessor,
-            )
-        });
-        match found {
-            Ok(found) => plan.foreign_aliases.extend(found),
-            Err(error) => plan
-                .unchecked_aliases
-                .push((format!("oci-image.{name}"), error.to_string())),
+        let warn = |warning: Warning| {
+            warnings
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(warning);
+        };
+        for node in plan.publishers.nodes()? {
+            let ctx = PublisherContext::new(session, &node.name).with_warnings(&warn);
+            node.publisher.preview(&release, &ctx);
         }
     }
+    plan.warnings = warnings
+        .into_inner()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    Ok(())
 }
 
 pub fn build_release_plan(
@@ -298,8 +315,19 @@ pub fn build_release_plan(
         .map(|version| declaration.tag.render(version))
         .transpose()?;
     // Catch tags that the next version cannot fill before the release commit uses it up.
-    if let Some(version) = &next_version {
-        declaration.validate_publisher_tags(version)?;
+    // Every publisher must be able to express the next version, such as a tag template that
+    // still renders a valid tag.
+    let mut publisher_descriptions = Vec::new();
+    if let (Some(version), Some(tag)) = (&next_version, &next_tag) {
+        for node in declaration.publishers.nodes()? {
+            let description = node
+                .publisher
+                .describe(version, tag)
+                .map_err(|error| anyhow::anyhow!("{}: {error}", node.name))?;
+            publisher_descriptions.push((node.name, description));
+        }
+        crate::publishers::check_claims(&declaration.publishers, version)
+            .map_err(anyhow::Error::msg)?;
     }
     let release_subject = next_tag
         .as_deref()
@@ -318,11 +346,10 @@ pub fn build_release_plan(
         notes,
         changelog_path: declaration.changelog.path,
         publishers: declaration.publishers,
+        publisher_descriptions,
         release_files,
         trusted_predecessor: None,
-        foreign_aliases: Vec::new(),
-        anonymous_alias_reads: Vec::new(),
-        unchecked_aliases: Vec::new(),
+        warnings: Vec::new(),
     })
 }
 
@@ -472,45 +499,15 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
         }
         None => output.push_str("next version       none (no release-worthy commits)\n"),
     }
-    if let (Some(tag), Some(version)) = (&plan.next_tag, &plan.next_version) {
+    if plan.next_tag.is_some() && plan.next_version.is_some() {
         output.push_str("\npublishers\n");
-        if plan.publishers.oci_image.is_empty()
-            && plan.publishers.oci_helm.is_empty()
-            && plan.publishers.github_release.is_empty()
-        {
+        if plan.publisher_descriptions.is_empty() {
             output.push_str("  none\n");
         }
-        for (name, publisher) in &plan.publishers.oci_image {
-            let _ = writeln!(output, "  oci-image.{name}  {}", publisher.repository);
-            // Store paths are left out: the release commit's images get their own paths.
-            for platform in publisher.platforms.keys() {
-                let _ = writeln!(output, "    image    {platform}");
-            }
-            for tag in crate::oci::render_tags(&publisher.tags, &publisher.aliases, version)
-                .unwrap_or_default()
-            {
-                let kind = match tag {
-                    crate::oci::OciTag::Version(_) => "tag",
-                    crate::oci::OciTag::Alias(_) => "alias",
-                };
-                let _ = writeln!(output, "    {kind:<8} {}", tag.name());
-            }
-        }
-        for (name, publisher) in &plan.publishers.oci_helm {
-            let _ = writeln!(output, "  oci-helm.{name}  {}", publisher.repository);
-            let _ = writeln!(
-                output,
-                "    tag      {}:{}",
-                publisher.repository,
-                crate::helm::tag(version)
-            );
-        }
-        for (name, publisher) in &plan.publishers.github_release {
-            let _ = writeln!(output, "  github-release.{name}  {}", publisher.repository);
-            let _ = writeln!(output, "    release  {tag}");
-            // Store paths are left out: the release commit's artifacts get their own paths.
-            for asset in publisher.assets.keys() {
-                let _ = writeln!(output, "    asset    {asset}");
+        for (address, description) in &plan.publisher_descriptions {
+            let _ = writeln!(output, "  {address}  {}", description.target);
+            for (kind, item) in &description.items {
+                let _ = writeln!(output, "    {kind:<8} {item}");
             }
         }
     }

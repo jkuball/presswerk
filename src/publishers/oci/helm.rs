@@ -1,20 +1,27 @@
 //! The OCI Helm publisher: pushes a packaged chart as one OCI manifest under its release version.
 
-use crate::oci::{
-    Blob, BlobData, Credentials, Descriptor, MANIFEST_MEDIA_TYPE, Manifest, ORIGIN_ANNOTATION,
-    RegistryClient, VERSION_ANNOTATION, sha256_digest, sha256_digest_reader,
-};
+use super::{LABELS, Registry, TAG};
+use crate::declaration::DeclarationError;
 use crate::publication::{
-    ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, Publisher,
-    PublisherState, Release,
+    ArtifactStep, ArtifactSteps, AssetStep, PublicationError, PublisherState, Release,
+};
+use crate::publishers::oci::{
+    Blob, BlobData, Descriptor, MANIFEST_MEDIA_TYPE, Manifest, ORIGIN_ANNOTATION, RegistryClient,
+    VERSION_ANNOTATION, sha256_digest, sha256_digest_reader,
+};
+use crate::publishers::shared::secrets::Credential;
+use crate::publishers::{
+    Completeness, Context, Description, Labels, Publisher, PublisherType, shared,
 };
 use flate2::read::GzDecoder;
 use semver::Version;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 
 pub const CONFIG_MEDIA_TYPE: &str = "application/vnd.cncf.helm.config.v1+json";
 pub const CHART_LAYER_MEDIA_TYPE: &str = "application/vnd.cncf.helm.chart.content.v1.tar+gzip";
@@ -39,6 +46,182 @@ pub fn validate_tag(version: &Version) -> Result<String, String> {
     (tag.len() <= 128).then_some(tag).ok_or_else(|| {
         format!("Helm chart version {version} renders an OCI tag longer than 128 characters")
     })
+}
+
+/// `publishers.oci-helm.<name>`: a packaged Helm chart pushed to an OCI registry under its
+/// release version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OciHelmDeclaration {
+    /// Full registry repository path, ending in the chart name.
+    pub repository: String,
+    /// Chart archive written by `helm package`, as a path in the Nix store.
+    pub chart: String,
+    /// Whether anyone may pull the chart; the previous-release check then reads anonymously.
+    #[serde(default)]
+    pub public: bool,
+    pub username: Credential,
+    pub password: Credential,
+}
+
+impl OciHelmDeclaration {
+    fn registry(&self) -> Registry<'_> {
+        Registry {
+            repository: &self.repository,
+            public: self.public,
+            username: &self.username,
+            password: &self.password,
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if !self.chart.starts_with('/') {
+            return Err(format!(
+                "chart must be an absolute store path, not {:?}",
+                self.chart
+            ));
+        }
+        self.registry().validate()
+    }
+}
+
+/// The `oci-helm` publisher type.
+pub struct OciHelm {
+    declaration: OciHelmDeclaration,
+    /// Built on first use, once the chart is fetched and the credentials are known.
+    runner: OnceLock<OciHelmPublisher>,
+}
+
+impl OciHelm {
+    #[must_use]
+    pub fn declaration(&self) -> &OciHelmDeclaration {
+        &self.declaration
+    }
+
+    fn runner(
+        &self,
+        release: &Release,
+        ctx: &Context,
+    ) -> Result<&OciHelmPublisher, PublicationError> {
+        if let Some(runner) = self.runner.get() {
+            return Ok(runner);
+        }
+        let declaration = &self.declaration;
+        let runner = OciHelmPublisher::new(
+            declaration
+                .registry()
+                .writing_client(&ctx.session.secrets)?,
+            &declaration.repository,
+            &declaration.chart,
+            &release.version,
+        )?;
+        Ok(self.runner.get_or_init(|| runner))
+    }
+}
+
+impl PublisherType for OciHelm {
+    const NAME: &'static str = "oci-helm";
+
+    fn from_declaration(declaration: &Value) -> Result<Self, DeclarationError> {
+        let declaration: OciHelmDeclaration = shared::decode(declaration)?;
+        declaration.validate().map_err(DeclarationError::Invalid)?;
+        Ok(Self {
+            declaration,
+            runner: OnceLock::new(),
+        })
+    }
+}
+
+/// Whether the release tag of `release` points to its chart from `chart`, as `manifest` reads
+/// the manifest a tag points to. A tag that cannot be read, such as when the registry denies
+/// access or is unreachable, makes the release `Unknown`.
+pub fn completeness_with(
+    repository: &str,
+    chart: &str,
+    release: &Release,
+    manifest: impl FnOnce(&str) -> Result<Option<Vec<u8>>, PublicationError>,
+) -> Result<Completeness, PublicationError> {
+    let version = &release.version;
+    let tag = tag(version);
+    let read = match manifest(&tag) {
+        Ok(read) => read,
+        Err(error) => return Ok(Completeness::Unknown(error.to_string())),
+    };
+    let found = match read {
+        None => "the tag is missing",
+        Some(manifest) if is_release_manifest(&manifest, version, chart) => {
+            return Ok(Completeness::Complete);
+        }
+        Some(_) => "the tag does not point to this release's Helm chart",
+    };
+    Ok(Completeness::Incomplete {
+        target: format!("OCI Helm release {repository}:{tag}"),
+        reason: format!("{found}, expected version {version} from {chart}"),
+    })
+}
+
+fn describe(repository: &str, version: &Version) -> Result<Description, String> {
+    Ok(Description {
+        target: repository.into(),
+        items: vec![(
+            "tag".into(),
+            format!("{repository}:{}", validate_tag(version)?),
+        )],
+    })
+}
+
+impl Publisher for OciHelm {
+    fn credentials(&self) -> Vec<(&'static str, &Credential)> {
+        vec![
+            ("username", &self.declaration.username),
+            ("password", &self.declaration.password),
+        ]
+    }
+
+    fn describe(&self, version: &Version, _tag: &str) -> Result<Description, String> {
+        describe(&self.declaration.repository, version)
+    }
+
+    fn artifacts(&self) -> Vec<(String, String)> {
+        vec![("chart".into(), self.declaration.chart.clone())]
+    }
+
+    fn completeness(
+        &self,
+        release: &Release,
+        ctx: &Context,
+    ) -> Result<Completeness, PublicationError> {
+        let declaration = &self.declaration;
+        let registry = declaration
+            .registry()
+            .reading_client(&ctx.session.secrets)?;
+        completeness_with(
+            &declaration.repository,
+            &declaration.chart,
+            release,
+            |tag| Ok(registry.manifest(tag)?.map(|(_, manifest)| manifest)),
+        )
+    }
+
+    fn state(&self, release: &Release, ctx: &Context) -> Result<PublisherState, PublicationError> {
+        self.runner(release, ctx)?.state(release, ctx)
+    }
+
+    fn publish(&self, release: &Release, ctx: &Context) -> Result<ArtifactSteps, PublicationError> {
+        self.runner(release, ctx)?.publish(release, ctx)
+    }
+
+    fn complete_steps(
+        &self,
+        release: &Release,
+        ctx: &Context,
+    ) -> Result<ArtifactSteps, PublicationError> {
+        self.runner(release, ctx)?.complete_steps(release, ctx)
+    }
+
+    fn labels(&self) -> Labels {
+        LABELS
+    }
 }
 
 #[derive(Debug)]
@@ -230,21 +413,6 @@ pub struct OciHelmPublisher {
 }
 
 impl OciHelmPublisher {
-    /// Build the publisher from its declaration; its chart must already be fetched.
-    pub fn from_declaration(
-        declaration: &crate::declaration::OciHelmPublisher,
-        release_version: &Version,
-    ) -> Result<Self, PublicationError> {
-        let credentials =
-            Credentials::from_environment(&declaration.username, &declaration.password.secret)?;
-        Self::new(
-            RegistryClient::new(&declaration.repository, Some(credentials))?,
-            &declaration.repository,
-            &declaration.chart,
-            release_version,
-        )
-    }
-
     pub fn new(
         registry: RegistryClient,
         repository: &str,
@@ -264,14 +432,14 @@ impl OciHelmPublisher {
 
     fn tag_step(&self, release: &Release, step: AssetStep) -> ArtifactSteps {
         vec![ArtifactStep {
-            kind: ArtifactKind::Tag,
+            kind: TAG,
             name: self.reference(release),
             step,
         }]
     }
 
     fn is_missing(&self, release: &Release) -> Result<bool, PublicationError> {
-        match self.state(release)? {
+        match self.checked_state(release)? {
             PublisherState::Missing => Ok(true),
             PublisherState::Published => Ok(false),
             PublisherState::Conflicting(message) => Err(PublicationError::new(message)),
@@ -280,8 +448,47 @@ impl OciHelmPublisher {
     }
 }
 
+/// An OCI Helm publisher with its own registry client, such as one for a test registry.
 impl Publisher for OciHelmPublisher {
-    fn state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
+    fn describe(&self, version: &Version, _tag: &str) -> Result<Description, String> {
+        describe(&self.repository, version)
+    }
+
+    fn completeness(
+        &self,
+        release: &Release,
+        _ctx: &Context,
+    ) -> Result<Completeness, PublicationError> {
+        completeness_with(&self.repository, &self.chart.origin, release, |tag| {
+            Ok(self.registry.manifest(tag)?.map(|(_, manifest)| manifest))
+        })
+    }
+
+    fn state(&self, release: &Release, _ctx: &Context) -> Result<PublisherState, PublicationError> {
+        self.checked_state(release)
+    }
+
+    fn publish(&self, release: &Release, ctx: &Context) -> Result<ArtifactSteps, PublicationError> {
+        let steps = self.push_chart(release)?;
+        steps.iter().for_each(|step| ctx.progress(step));
+        Ok(steps)
+    }
+
+    fn complete_steps(
+        &self,
+        release: &Release,
+        _ctx: &Context,
+    ) -> Result<ArtifactSteps, PublicationError> {
+        Ok(self.tag_step(release, AssetStep::AlreadyUploaded))
+    }
+
+    fn labels(&self) -> Labels {
+        LABELS
+    }
+}
+
+impl OciHelmPublisher {
+    fn checked_state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
         let tag = validate_tag(&release.version).map_err(PublicationError::new)?;
         Ok(match self.registry.manifest(&tag)? {
             None => PublisherState::Missing,
@@ -303,20 +510,6 @@ impl Publisher for OciHelmPublisher {
                 ))
             }
         })
-    }
-
-    fn publish_with_progress(
-        &self,
-        release: &Release,
-        progress: &mut dyn FnMut(&ArtifactStep),
-    ) -> Result<ArtifactSteps, PublicationError> {
-        let steps = self.push_chart(release)?;
-        steps.iter().for_each(progress);
-        Ok(steps)
-    }
-
-    fn complete_steps(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
-        Ok(self.tag_step(release, AssetStep::AlreadyUploaded))
     }
 }
 
@@ -368,6 +561,7 @@ impl OciHelmPublisher {
 mod tests {
     use super::*;
     use crate::publication::{PublisherNode, RemoteState, TagPublisher, publish_ordered};
+    use crate::publishers::Context;
     use flate2::Compression;
     use flate2::write::GzEncoder;
     use serde_json::json;
@@ -571,17 +765,20 @@ mod tests {
         let release = release("1.2.3");
         let publisher = registry.publisher(&chart, &release.version);
 
-        assert_eq!(publisher.state(&release).unwrap(), PublisherState::Missing);
         assert_eq!(
-            publisher.publish(&release).unwrap(),
+            publisher.state(&release, &Context::detached()).unwrap(),
+            PublisherState::Missing
+        );
+        assert_eq!(
+            publisher.publish(&release, &Context::detached()).unwrap(),
             [ArtifactStep {
-                kind: ArtifactKind::Tag,
+                kind: TAG,
                 name: format!("{}:1.2.3", registry.repository),
                 step: AssetStep::Uploaded,
             }]
         );
         assert_eq!(
-            publisher.state(&release).unwrap(),
+            publisher.state(&release, &Context::detached()).unwrap(),
             PublisherState::Published
         );
 
@@ -611,9 +808,9 @@ mod tests {
         assert_eq!(config["appVersion"], "1.2.3");
 
         assert_eq!(
-            publisher.publish(&release).unwrap(),
+            publisher.publish(&release, &Context::detached()).unwrap(),
             [ArtifactStep {
-                kind: ArtifactKind::Tag,
+                kind: TAG,
                 name: format!("{}:1.2.3", registry.repository),
                 step: AssetStep::AlreadyUploaded,
             }]
@@ -646,7 +843,7 @@ mod tests {
         let release = release("1.2.3");
         registry
             .publisher(&first, &release.version)
-            .publish(&release)
+            .publish(&release, &Context::detached())
             .unwrap();
         let writes_before = registry.state.lock().unwrap().writes.clone();
         let conflicting = registry.publisher(&other, &release.version);
@@ -685,7 +882,10 @@ mod tests {
         let release = release("1.2.3");
         let publisher = registry.publisher(&chart, &release.version);
 
-        let error = publisher.state(&release).unwrap_err().to_string();
+        let error = publisher
+            .state(&release, &Context::detached())
+            .unwrap_err()
+            .to_string();
 
         assert!(error.contains("HTTP 500"), "{error}");
         assert!(registry.state.lock().unwrap().writes.is_empty());
@@ -723,6 +923,37 @@ mod tests {
             wrong_root.contains("root directory \"other\""),
             "{wrong_root}"
         );
+    }
+
+    #[test]
+    fn an_unreadable_chart_tag_is_unknown_not_incomplete() {
+        let completeness = completeness_with(
+            "ghcr.io/owner/charts/project",
+            "/nix/store/abc-project.tgz",
+            &release("1.2.3"),
+            |_| Err(PublicationError::new("could not reach the registry")),
+        )
+        .unwrap();
+        assert_eq!(
+            completeness,
+            Completeness::Unknown("could not reach the registry".into())
+        );
+    }
+
+    #[test]
+    fn a_version_whose_tag_is_too_long_cannot_be_described() {
+        let helm = OciHelm::from_declaration(&json!({
+            "repository": "ghcr.io/owner/charts/project",
+            "chart": "/nix/store/abc-project.tgz",
+            "username": { "value": "user" },
+            "password": { "env": "REGISTRY_TOKEN" }
+        }))
+        .unwrap();
+        let version = Version::parse(&format!("1.2.3-{}", "a".repeat(123))).unwrap();
+
+        let error = helm.describe(&version, "v1").unwrap_err();
+        assert!(error.contains("longer than 128 characters"), "{error}");
+        assert!(helm.describe(&Version::new(1, 2, 3), "v1.2.3").is_ok());
     }
 
     #[test]

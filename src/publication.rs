@@ -1,20 +1,16 @@
 use crate::analysis::{Analysis, Analyzer, CommitRange, GitCliffAnalyzer};
 use crate::changelog::{ChangelogHeading, read_version_section};
 use crate::classification::{CommitClassification, classify_commit};
-use crate::declaration::{
-    DeclarationError, GithubReleasePublisher as GithubReleaseDeclaration,
-    OciHelmPublisher as OciHelmDeclaration, OciImagePublisher as OciImageDeclaration,
-    ReleaseDeclaration, UNSTABLE_SCHEMA_VERSION,
-};
+use crate::declaration::{DeclarationError, ReleaseDeclaration, UNSTABLE_SCHEMA_VERSION};
 use crate::evaluation::{EvaluationError, evaluate_release_declaration};
+pub use crate::publishers::Publisher;
+use crate::publishers::{Completeness, Context, Labels, Session};
 use crate::release_commit::TrustedPredecessor;
 use git2::{ErrorCode, ObjectType, Oid, Repository, Signature};
-use minijinja::{Environment, UndefinedBehavior, context};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::env;
 use std::error::Error;
 use std::fmt;
 use std::num::NonZeroUsize;
@@ -24,7 +20,6 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, mpsc};
 use std::thread;
-use url::Url;
 
 /// Why a predecessor's declaration cannot be read, so only `--trust-predecessor` can cross it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +69,25 @@ impl PublicationError {
         )
     }
 
+    /// A predecessor whose declaration has the unstable schema version but does not decode, with
+    /// the reason, such as the unknown publisher type it names.
+    pub fn incompatible_predecessor(
+        tag: impl Into<String>,
+        commit: Oid,
+        reason: &impl fmt::Display,
+    ) -> Self {
+        let tag = tag.into();
+        let message = format!(
+            "previous release tag {tag:?} at {commit} uses a declaration with schemaVersion {UNSTABLE_SCHEMA_VERSION} that this CLI cannot read ({reason}); verify that release with its original Presswerk toolchain, then run `presswerk prepare --trust-predecessor {tag}={commit}`"
+        );
+        Self::unreadable_predecessor(
+            message,
+            tag,
+            commit,
+            UnreadableDeclaration::UnsupportedSchema(UNSTABLE_SCHEMA_VERSION),
+        )
+    }
+
     pub fn undeclared_predecessor(tag: impl Into<String>, commit: Oid) -> Self {
         let tag = tag.into();
         let message = format!(
@@ -112,7 +126,7 @@ impl fmt::Display for PublicationError {
 
 impl Error for PublicationError {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Release {
     pub commit: String,
     pub version: Version,
@@ -133,7 +147,8 @@ enum RemoteTag {
     Lightweight(Oid),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum PublisherState {
     Missing,
     Draft,
@@ -147,7 +162,8 @@ pub enum PublisherState {
 }
 
 /// What happened to one artifact of a publisher, such as a GitHub Release asset or an OCI tag.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum AssetStep {
     Uploaded,
     AlreadyUploaded,
@@ -160,21 +176,27 @@ pub enum AssetStep {
     Warning(String),
 }
 
-/// The kind of artifact a publisher reports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArtifactKind {
-    /// A GitHub Release asset.
-    Asset,
-    /// An OCI image for one platform.
-    Image,
-    /// An OCI image or Helm chart tag that names the version.
-    Tag,
-    /// An OCI tag that follows the highest final version, such as `latest`.
-    Alias,
+/// The kind of artifact a publisher reports, a label its type chooses, such as `asset` or `tag`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactKind {
+    /// The kind, such as `asset`.
+    pub label: Cow<'static, str>,
+    /// What writing one means, such as `uploaded`.
+    pub verb: Cow<'static, str>,
+}
+
+impl ArtifactKind {
+    #[must_use]
+    pub const fn new(label: &'static str, verb: &'static str) -> Self {
+        Self {
+            label: Cow::Borrowed(label),
+            verb: Cow::Borrowed(verb),
+        }
+    }
 }
 
 /// One artifact of a publisher, with what happened to it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactStep {
     pub kind: ArtifactKind,
     pub name: String,
@@ -194,7 +216,11 @@ pub enum PublishEvent<'a> {
     /// One artifact of the publisher that runs now is complete.
     Artifact(&'a ArtifactStep),
     /// A publisher is complete, after all of its artifacts.
-    Publisher { name: &'a str, step: PublisherStep },
+    Publisher {
+        name: &'a str,
+        labels: Labels,
+        step: PublisherStep,
+    },
     /// A publisher failed after the tag was pushed.
     PublisherFailed { name: &'a str, reason: &'a str },
     /// A publisher did not run because a dependency failed or fail-fast stopped the graph.
@@ -213,25 +239,6 @@ pub trait TagPublisher {
     }
 }
 
-pub trait Publisher: Send + Sync {
-    fn state(&self, release: &Release) -> Result<PublisherState, PublicationError>;
-    /// Create every missing part and report each artifact, passing each one to `progress` as
-    /// soon as it is complete.
-    fn publish_with_progress(
-        &self,
-        release: &Release,
-        progress: &mut dyn FnMut(&ArtifactStep),
-    ) -> Result<ArtifactSteps, PublicationError>;
-    /// Create every missing part and report each artifact.
-    fn publish(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
-        self.publish_with_progress(release, &mut |_| {})
-    }
-    /// Report the artifacts of a publisher whose state is already published, without writing.
-    fn complete_steps(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
-        Ok(Vec::new())
-    }
-}
-
 /// One publisher in the declared dependency graph.
 pub struct PublisherNode {
     pub name: String,
@@ -247,711 +254,6 @@ impl PublisherNode {
             publisher,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GithubReleaseState {
-    Missing,
-    Draft { prerelease: bool },
-    Published { prerelease: bool },
-}
-
-pub trait GithubReleaseReader {
-    fn release_state(
-        &self,
-        repository: &str,
-        tag: &str,
-    ) -> Result<GithubReleaseState, PublicationError>;
-}
-
-#[derive(Clone)]
-pub struct GithubClient {
-    agent: ureq::Agent,
-    api_url: Url,
-    token: String,
-}
-
-impl fmt::Debug for GithubClient {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("GithubClient")
-            .field("api_url", &self.api_url)
-            .field("token", &"[redacted]")
-            .finish_non_exhaustive()
-    }
-}
-
-impl GithubClient {
-    pub fn from_environment(api_url: &str, secret: &str) -> Result<Self, PublicationError> {
-        let token = env::var(secret).map_err(|_| {
-            PublicationError::new(format!(
-                "GitHub credential environment variable {secret:?} is not set"
-            ))
-        })?;
-        if token.is_empty() {
-            return Err(PublicationError::new(format!(
-                "GitHub credential environment variable {secret:?} is empty"
-            )));
-        }
-        Self::new(api_url, token)
-    }
-
-    pub fn new(api_url: &str, token: impl Into<String>) -> Result<Self, PublicationError> {
-        let api_url = Url::parse(api_url).map_err(|error| {
-            PublicationError::new(format!("invalid GitHub API URL {api_url:?}: {error}"))
-        })?;
-        Ok(Self {
-            agent: ureq::AgentBuilder::new().build(),
-            api_url,
-            token: token.into(),
-        })
-    }
-
-    fn endpoint(&self, repository: &str, suffix: &[&str]) -> Result<Url, PublicationError> {
-        let (owner, name) = repository.split_once('/').ok_or_else(|| {
-            PublicationError::new(format!(
-                "GitHub repository {repository:?} must use owner/name form"
-            ))
-        })?;
-        if owner.is_empty() || name.is_empty() || name.contains('/') {
-            return Err(PublicationError::new(format!(
-                "GitHub repository {repository:?} must use owner/name form"
-            )));
-        }
-
-        let mut url = self.api_url.clone();
-        let mut segments = url.path_segments_mut().map_err(|()| {
-            PublicationError::new(format!(
-                "GitHub API URL {:?} cannot contain path segments",
-                self.api_url
-            ))
-        })?;
-        segments.pop_if_empty();
-        segments.push("repos").push(owner).push(name);
-        for segment in suffix {
-            segments.push(segment);
-        }
-        drop(segments);
-        Ok(url)
-    }
-
-    fn request(&self, method: &str, url: &Url) -> ureq::Request {
-        self.agent
-            .request(method, url.as_str())
-            .set("Accept", "application/vnd.github+json")
-            .set("Authorization", &format!("Bearer {}", self.token))
-            .set("X-GitHub-Api-Version", "2022-11-28")
-            .set("User-Agent", "presswerk")
-    }
-
-    /// The repository's web URL, e.g. `https://github.com/owner/project`.
-    fn repository_url(&self, repository: &str) -> Result<Url, PublicationError> {
-        #[derive(Deserialize)]
-        struct GithubRepository {
-            html_url: String,
-        }
-        let url = self.endpoint(repository, &[])?;
-        match self.request("GET", &url).call() {
-            Ok(response) => response
-                .into_json::<GithubRepository>()
-                .map_err(|error| error.to_string())
-                .and_then(|github| Url::parse(&github.html_url).map_err(|error| error.to_string()))
-                .map_err(|error| {
-                    PublicationError::new(format!(
-                        "could not decode GitHub repository {repository:?}: {error}"
-                    ))
-                }),
-            Err(ureq::Error::Status(status, _)) => Err(PublicationError::new(format!(
-                "GitHub repository {repository:?} is inaccessible (HTTP {status})"
-            ))),
-            Err(ureq::Error::Transport(error)) => Err(PublicationError::new(format!(
-                "could not inspect GitHub repository {repository:?}: {error}"
-            ))),
-        }
-    }
-
-    fn validate_repository(&self, repository: &str) -> Result<(), PublicationError> {
-        let url = self.endpoint(repository, &[])?;
-        match self.request("GET", &url).call() {
-            Ok(_) => Ok(()),
-            Err(ureq::Error::Status(status, _)) => Err(PublicationError::new(format!(
-                "GitHub repository {repository:?} is inaccessible (HTTP {status})"
-            ))),
-            Err(ureq::Error::Transport(error)) => Err(PublicationError::new(format!(
-                "could not inspect GitHub repository {repository:?}: {error}"
-            ))),
-        }
-    }
-
-    fn release(
-        &self,
-        repository: &str,
-        tag: &str,
-    ) -> Result<Option<GithubRelease>, PublicationError> {
-        self.validate_repository(repository)?;
-        let url = self.endpoint(repository, &["releases", "tags", tag])?;
-        match self.request("GET", &url).call() {
-            Ok(response) => response
-                .into_json::<GithubRelease>()
-                .map(Some)
-                .map_err(|error| {
-                    PublicationError::new(format!(
-                        "could not decode GitHub Release {tag:?} in {repository}: {error}"
-                    ))
-                }),
-            // GitHub finds only published releases by tag; a draft must be looked up in the listing.
-            Err(ureq::Error::Status(404, _)) => self.draft_release(repository, tag),
-            Err(ureq::Error::Status(status, _)) => Err(PublicationError::new(format!(
-                "could not inspect GitHub Release {tag:?} in {repository} (HTTP {status})"
-            ))),
-            Err(ureq::Error::Transport(error)) => Err(PublicationError::new(format!(
-                "could not inspect GitHub Release {tag:?} in {repository}: {error}"
-            ))),
-        }
-    }
-
-    fn draft_release(
-        &self,
-        repository: &str,
-        tag: &str,
-    ) -> Result<Option<GithubRelease>, PublicationError> {
-        const PER_PAGE: usize = 100;
-        let mut matches = Vec::new();
-        for page in 1.. {
-            let mut url = self.endpoint(repository, &["releases"])?;
-            url.query_pairs_mut()
-                .append_pair("per_page", &PER_PAGE.to_string())
-                .append_pair("page", &page.to_string());
-            let releases: Vec<ListedGithubRelease> = match self.request("GET", &url).call() {
-                Ok(response) => response.into_json().map_err(|error| {
-                    PublicationError::new(format!(
-                        "could not decode GitHub Releases of {repository}: {error}"
-                    ))
-                })?,
-                Err(ureq::Error::Status(status, _)) => {
-                    return Err(PublicationError::new(format!(
-                        "could not list GitHub Releases of {repository} (HTTP {status})"
-                    )));
-                }
-                Err(ureq::Error::Transport(error)) => {
-                    return Err(PublicationError::new(format!(
-                        "could not list GitHub Releases of {repository}: {error}"
-                    )));
-                }
-            };
-            let complete = releases.len() < PER_PAGE;
-            for listed in releases {
-                // An entry without a usable tag could be the release we look for: fail closed.
-                if listed.tag_name.is_empty() {
-                    return Err(PublicationError::new(format!(
-                        "GitHub listed a release without a tag name in {repository}"
-                    )));
-                }
-                if listed.tag_name == tag {
-                    matches.push(listed.release);
-                }
-            }
-            if complete {
-                break;
-            }
-        }
-        if matches.len() > 1 {
-            return Err(PublicationError::new(format!(
-                "found {} GitHub Releases for {tag:?} in {repository}, expected at most one",
-                matches.len()
-            )));
-        }
-        Ok(matches.pop())
-    }
-
-    fn create_draft(
-        &self,
-        repository: &str,
-        release: &Release,
-        body: &str,
-    ) -> Result<GithubRelease, PublicationError> {
-        let url = self.endpoint(repository, &["releases"])?;
-        let request = GithubReleaseRequest {
-            tag_name: &release.tag,
-            target_commitish: &release.commit,
-            name: &release.tag,
-            body,
-            draft: true,
-            prerelease: !release.version.pre.is_empty(),
-        };
-        match self.request("POST", &url).send_json(&request) {
-            Ok(response) => {
-                let created: GithubRelease = response.into_json().map_err(|error| {
-                    PublicationError::new(format!(
-                        "could not decode created GitHub Release {:?} in {repository}: {error}",
-                        release.tag
-                    ))
-                })?;
-                if !created.draft {
-                    return Err(PublicationError::new(format!(
-                        "GitHub created Release {:?} in {repository} without a draft",
-                        release.tag
-                    )));
-                }
-                Ok(created)
-            }
-            Err(ureq::Error::Status(status, _)) => {
-                if let Some(existing) = self.release(repository, &release.tag)? {
-                    return Ok(existing);
-                }
-                Err(PublicationError::new(format!(
-                    "could not create draft GitHub Release {:?} in {repository} (HTTP {status})",
-                    release.tag
-                )))
-            }
-            Err(ureq::Error::Transport(error)) => {
-                if let Some(existing) = self.release(repository, &release.tag)? {
-                    return Ok(existing);
-                }
-                Err(PublicationError::new(format!(
-                    "could not create draft GitHub Release {:?} in {repository}: {error}",
-                    release.tag
-                )))
-            }
-        }
-    }
-
-    fn publish_draft(
-        &self,
-        repository: &str,
-        release: &Release,
-        id: u64,
-    ) -> Result<GithubRelease, PublicationError> {
-        let id = id.to_string();
-        let url = self.endpoint(repository, &["releases", &id])?;
-        match self
-            .request("PATCH", &url)
-            .send_json(serde_json::json!({ "draft": false }))
-        {
-            Ok(response) => response.into_json().map_err(|error| {
-                PublicationError::new(format!(
-                    "could not decode published GitHub Release {:?} in {repository}: {error}",
-                    release.tag
-                ))
-            }),
-            Err(ureq::Error::Status(status, _)) => {
-                if let Some(existing) = self.release(repository, &release.tag)?
-                    && !existing.draft
-                {
-                    return Ok(existing);
-                }
-                Err(PublicationError::new(format!(
-                    "could not publish draft GitHub Release {:?} in {repository} (HTTP {status})",
-                    release.tag
-                )))
-            }
-            Err(ureq::Error::Transport(error)) => {
-                if let Some(existing) = self.release(repository, &release.tag)?
-                    && !existing.draft
-                {
-                    return Ok(existing);
-                }
-                Err(PublicationError::new(format!(
-                    "could not publish draft GitHub Release {:?} in {repository}: {error}",
-                    release.tag
-                )))
-            }
-        }
-    }
-}
-
-impl GithubClient {
-    fn upload_asset(
-        &self,
-        repository: &str,
-        release: &Release,
-        github_release: &GithubRelease,
-        asset: &LocalAsset,
-    ) -> Result<(), PublicationError> {
-        let template = github_release.upload_url.as_deref().ok_or_else(|| {
-            PublicationError::new(format!(
-                "GitHub Release {:?} in {repository} has no upload URL",
-                release.tag
-            ))
-        })?;
-        // The upload URL is a URI template such as `…/assets{?name,label}`.
-        let base = template.split('{').next().unwrap_or(template);
-        let mut url = Url::parse(base).map_err(|error| {
-            PublicationError::new(format!("invalid GitHub upload URL {template:?}: {error}"))
-        })?;
-        url.query_pairs_mut().append_pair("name", &asset.name);
-        let bytes = std::fs::read(&asset.path).map_err(|error| {
-            PublicationError::new(format!(
-                "could not read GitHub Release asset {} ({}): {error}",
-                asset.name,
-                asset.path.display()
-            ))
-        })?;
-        let failure = match self
-            .request("POST", &url)
-            .set("Content-Type", "application/octet-stream")
-            .send_bytes(&bytes)
-        {
-            Ok(_) => return Ok(()),
-            Err(ureq::Error::Status(status, _)) => format!("HTTP {status}"),
-            Err(ureq::Error::Transport(error)) => error.to_string(),
-        };
-        // A concurrent run may have uploaded the same asset; accept it only if it matches.
-        if let Some(current) = self.release(repository, &release.tag)?
-            && current.assets.iter().any(|remote| {
-                remote.name == asset.name && remote.digest.as_deref() == Some(&asset.digest)
-            })
-        {
-            return Ok(());
-        }
-        Err(PublicationError::new(format!(
-            "could not upload asset {} to GitHub Release {:?} in {repository}: {failure}",
-            asset.name, release.tag
-        )))
-    }
-}
-
-impl GithubReleaseReader for GithubClient {
-    fn release_state(
-        &self,
-        repository: &str,
-        tag: &str,
-    ) -> Result<GithubReleaseState, PublicationError> {
-        Ok(match self.release(repository, tag)? {
-            None => GithubReleaseState::Missing,
-            Some(release) if release.draft => GithubReleaseState::Draft {
-                prerelease: release.prerelease,
-            },
-            Some(release) => GithubReleaseState::Published {
-                prerelease: release.prerelease,
-            },
-        })
-    }
-}
-
-/// A file to attach to a GitHub Release, with the digest GitHub reports for an uploaded asset.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocalAsset {
-    pub name: String,
-    pub path: PathBuf,
-    pub digest: String,
-}
-
-impl LocalAsset {
-    /// Read a fetched artifact; GitHub Release assets must be regular files.
-    pub fn from_file(
-        name: impl Into<String>,
-        path: impl Into<PathBuf>,
-    ) -> Result<Self, PublicationError> {
-        let name = name.into();
-        let path = path.into();
-        let bytes = match std::fs::metadata(&path) {
-            Ok(metadata) if metadata.is_file() => std::fs::read(&path),
-            Ok(_) => {
-                return Err(PublicationError::new(format!(
-                    "GitHub Release asset {name} ({}) is not a regular file",
-                    path.display()
-                )));
-            }
-            Err(error) => Err(error),
-        }
-        .map_err(|error| {
-            PublicationError::new(format!(
-                "could not read GitHub Release asset {name} ({}): {error}",
-                path.display()
-            ))
-        })?;
-        let digest =
-            Sha256::digest(&bytes)
-                .iter()
-                .fold(String::from("sha256:"), |mut digest, byte| {
-                    use fmt::Write as _;
-                    let _ = write!(digest, "{byte:02x}");
-                    digest
-                });
-        Ok(Self { name, path, digest })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct GithubPublisher {
-    client: GithubClient,
-    repository: String,
-    body: String,
-    changelog: String,
-    assets: Vec<LocalAsset>,
-}
-
-/// GitHub rejects release bodies longer than this many characters.
-pub const GITHUB_RELEASE_BODY_LIMIT: usize = 125_000;
-
-impl GithubPublisher {
-    /// Build the publisher from its declaration; its assets must already be fetched.
-    pub fn from_declaration(
-        declaration: &GithubReleaseDeclaration,
-        changelog: &str,
-    ) -> Result<Self, PublicationError> {
-        let assets = declaration
-            .assets
-            .iter()
-            .map(|(name, path)| LocalAsset::from_file(name, path))
-            .collect::<Result<_, _>>()?;
-        Ok(Self {
-            client: GithubClient::from_environment(
-                &declaration.api_url,
-                &declaration.token.secret,
-            )?,
-            repository: declaration.repository.clone(),
-            body: declaration.body.clone(),
-            changelog: changelog.into(),
-            assets,
-        })
-    }
-
-    pub fn new(client: GithubClient, repository: impl Into<String>) -> Self {
-        Self {
-            client,
-            repository: repository.into(),
-            body: crate::declaration::DEFAULT_GITHUB_RELEASE_BODY.into(),
-            changelog: "CHANGELOG.md".into(),
-            assets: Vec::new(),
-        }
-    }
-
-    #[must_use]
-    pub fn with_changelog(mut self, changelog: impl Into<String>) -> Self {
-        self.changelog = changelog.into();
-        self
-    }
-
-    #[must_use]
-    pub fn with_body(mut self, body: impl Into<String>) -> Self {
-        self.body = body.into();
-        self
-    }
-
-    #[must_use]
-    pub fn with_assets(mut self, assets: Vec<LocalAsset>) -> Self {
-        self.assets = assets;
-        self
-    }
-
-    fn render_body(&self, release: &Release) -> Result<String, PublicationError> {
-        let mut environment = Environment::new();
-        environment.set_undefined_behavior(UndefinedBehavior::Strict);
-        environment
-            .render_str(
-                &self.body,
-                context!(
-                    notes => &release.notes,
-                    version => release.version.to_string(),
-                    tag => &release.tag
-                ),
-            )
-            .map_err(|error| {
-                PublicationError::new(format!(
-                    "failed to render GitHub Release body template: {error}"
-                ))
-            })
-    }
-
-    /// The rendered body, or a link to the changelog at the tag when GitHub would reject it.
-    fn body(&self, release: &Release) -> Result<String, PublicationError> {
-        let body = self.render_body(release)?;
-        if body.chars().count() <= GITHUB_RELEASE_BODY_LIMIT {
-            return Ok(body);
-        }
-        let mut changelog = self.client.repository_url(&self.repository)?;
-        changelog
-            .path_segments_mut()
-            .map_err(|()| {
-                PublicationError::new(format!(
-                    "GitHub repository URL of {} cannot contain path segments",
-                    self.repository
-                ))
-            })?
-            .pop_if_empty()
-            .push("blob")
-            .push(&release.tag)
-            .extend(self.changelog.split('/'));
-        Ok(format!(
-            "The release notes are too long for a GitHub Release; read them in [{}]({changelog}).",
-            self.changelog
-        ))
-    }
-
-    fn checked_state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
-        let body = self.body(release)?;
-        let Some(github_release) = self.client.release(&self.repository, &release.tag)? else {
-            return Ok(PublisherState::Missing);
-        };
-        if github_release.draft && github_release.body.as_deref() != Some(body.as_str()) {
-            return Ok(PublisherState::Conflicting(format!(
-                "draft GitHub Release {:?} in {} has a body that does not match the declared template",
-                release.tag, self.repository
-            )));
-        }
-        let expected_prerelease = !release.version.pre.is_empty();
-        if github_release.prerelease != expected_prerelease {
-            return Ok(PublisherState::Conflicting(format!(
-                "GitHub Release {:?} in {} has prerelease={}, expected {expected_prerelease}",
-                release.tag, self.repository, github_release.prerelease
-            )));
-        }
-        let mut missing = false;
-        for asset in &self.assets {
-            match self.remote_asset(release, &github_release, asset) {
-                Ok(true) => {}
-                Ok(false) => missing = true,
-                Err(conflict) => return Ok(PublisherState::Conflicting(conflict)),
-            }
-        }
-        Ok(match (github_release.draft, missing) {
-            (true, _) => PublisherState::Draft,
-            (false, true) => PublisherState::Incomplete,
-            (false, false) => PublisherState::Published,
-        })
-    }
-
-    /// Whether the release already has a matching asset; a different or unverifiable one conflicts.
-    fn remote_asset(
-        &self,
-        release: &Release,
-        github_release: &GithubRelease,
-        asset: &LocalAsset,
-    ) -> Result<bool, String> {
-        let Some(remote) = github_release
-            .assets
-            .iter()
-            .find(|remote| remote.name == asset.name)
-        else {
-            return Ok(false);
-        };
-        match remote.digest.as_deref() {
-            Some(digest) if digest == asset.digest => Ok(true),
-            Some(digest) => Err(format!(
-                "asset {} of GitHub Release {:?} in {} has digest {digest}, expected {}",
-                asset.name, release.tag, self.repository, asset.digest
-            )),
-            None => Err(format!(
-                "asset {} of GitHub Release {:?} in {} has no digest, so Presswerk cannot tell whether it matches",
-                asset.name, release.tag, self.repository
-            )),
-        }
-    }
-}
-
-impl Publisher for GithubPublisher {
-    fn state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
-        self.checked_state(release)
-    }
-
-    fn publish_with_progress(
-        &self,
-        release: &Release,
-        progress: &mut dyn FnMut(&ArtifactStep),
-    ) -> Result<ArtifactSteps, PublicationError> {
-        let body = self.body(release)?;
-        let github_release = match self.client.release(&self.repository, &release.tag)? {
-            None => self.client.create_draft(&self.repository, release, &body)?,
-            Some(existing) => existing,
-        };
-        if github_release.draft && github_release.body.as_deref() != Some(body.as_str()) {
-            return Err(PublicationError::new(format!(
-                "draft GitHub Release {:?} in {} has a body that does not match the declared template",
-                release.tag, self.repository
-            )));
-        }
-        let expected_prerelease = !release.version.pre.is_empty();
-        if github_release.prerelease != expected_prerelease {
-            return Err(PublicationError::new(format!(
-                "GitHub Release {:?} in {} has prerelease={}, expected {expected_prerelease}",
-                release.tag, self.repository, github_release.prerelease
-            )));
-        }
-        // Assets go up before a draft is published, so a release never appears without them.
-        let mut steps = Vec::with_capacity(self.assets.len());
-        for asset in &self.assets {
-            let step = if self
-                .remote_asset(release, &github_release, asset)
-                .map_err(PublicationError::new)?
-            {
-                AssetStep::AlreadyUploaded
-            } else {
-                self.client
-                    .upload_asset(&self.repository, release, &github_release, asset)?;
-                AssetStep::Uploaded
-            };
-            let step = ArtifactStep {
-                kind: ArtifactKind::Asset,
-                name: asset.name.clone(),
-                step,
-            };
-            progress(&step);
-            steps.push(step);
-        }
-        if github_release.draft {
-            self.client
-                .publish_draft(&self.repository, release, github_release.id)?;
-        }
-
-        match self.checked_state(release)? {
-            PublisherState::Published => Ok(steps),
-            state => Err(PublicationError::new(format!(
-                "GitHub Release {:?} in {} was not published: {state:?}",
-                release.tag, self.repository
-            ))),
-        }
-    }
-
-    fn complete_steps(&self, _release: &Release) -> Result<ArtifactSteps, PublicationError> {
-        Ok(self
-            .assets
-            .iter()
-            .map(|asset| ArtifactStep {
-                kind: ArtifactKind::Asset,
-                name: asset.name.clone(),
-                step: AssetStep::AlreadyUploaded,
-            })
-            .collect())
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct GithubRelease {
-    id: u64,
-    draft: bool,
-    prerelease: bool,
-    body: Option<String>,
-    #[serde(default)]
-    upload_url: Option<String>,
-    #[serde(default)]
-    assets: Vec<GithubAsset>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct GithubAsset {
-    name: String,
-    /// The asset's content digest, such as `sha256:…`; GitHub reports it for uploaded assets.
-    #[serde(default)]
-    digest: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ListedGithubRelease {
-    tag_name: String,
-    #[serde(flatten)]
-    release: GithubRelease,
-}
-
-#[derive(Debug, Serialize)]
-struct GithubReleaseRequest<'a> {
-    tag_name: &'a str,
-    target_commitish: &'a str,
-    name: &'a str,
-    body: &'a str,
-    draft: bool,
-    prerelease: bool,
 }
 
 #[derive(Clone)]
@@ -1350,6 +652,9 @@ pub fn publish_to_remote(
         .map_err(|error| PublicationError::new(error.to_string()))?;
     let commit = evaluated.commit;
     let declaration = evaluated.declaration;
+    // Read the secrets first, so that nothing printed from here on can show one. Whether all are
+    // set only matters for a release commit.
+    let session = Session::for_declaration(&declaration);
     let commit_id = commit.to_string();
     let candidate_version = declaration.version.clone();
     let classification =
@@ -1375,7 +680,25 @@ pub fn publish_to_remote(
         }
     }
 
-    validate_release_publisher_tags(&declaration)?;
+    let publishers = declaration
+        .publishers
+        .nodes()
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+    crate::publishers::check_claims(&declaration.publishers, &declaration.version)
+        .map_err(PublicationError::new)?;
+    // Every declared secret was resolved up front, so a missing one stops before anything is
+    // written, even if this run would not have needed it.
+    let missing = session.secrets.missing();
+    if !missing.is_empty() {
+        return Err(PublicationError::new(format!(
+            "{}; publish needs every declared secret before it writes anything",
+            missing
+                .iter()
+                .map(|(path, source)| format!("secret {source} for publishers.{path} is not set"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )));
+    }
 
     let tag = declaration
         .tag
@@ -1395,36 +718,29 @@ pub fn publish_to_remote(
         notes,
     };
     let tag_publisher = GitTagPublisher::new(repository_path, remote);
+    // Every publisher must be able to express this version before anything is written.
+    for node in &publishers {
+        node.publisher
+            .describe(&release.version, &release.tag)
+            .map_err(|error| PublicationError::new(format!("{}: {error}", node.name)))?;
+    }
 
     // Every artifact must be obtainable without building before anything is written.
-    let assets = declaration
-        .publishers
-        .github_release
+    let artifacts: Vec<_> = publishers
         .iter()
-        .flat_map(|(name, publisher)| {
-            publisher.assets.iter().map(move |(asset, path)| {
-                (
-                    format!("github-release.{name} asset {asset}"),
-                    path.as_str(),
-                )
-            })
-        });
-    let images = declaration
-        .publishers
-        .oci_image
-        .iter()
-        .flat_map(|(name, publisher)| {
-            publisher.platforms.iter().map(move |(platform, path)| {
-                (format!("oci-image.{name} image {platform}"), path.as_str())
-            })
-        });
-    let charts = declaration
-        .publishers
-        .oci_helm
-        .iter()
-        .map(|(name, publisher)| (format!("oci-helm.{name} chart"), publisher.chart.as_str()));
-    crate::artifacts::fetch(images.chain(charts).chain(assets))
-        .map_err(|error| PublicationError::new(error.to_string()))?;
+        .flat_map(|node| {
+            node.publisher
+                .artifacts()
+                .into_iter()
+                .map(move |(label, path)| (format!("{} {label}", node.name), path))
+        })
+        .collect();
+    crate::artifacts::fetch(
+        artifacts
+            .iter()
+            .map(|(label, path)| (label.clone(), path.as_str())),
+    )
+    .map_err(|error| PublicationError::new(error.to_string()))?;
 
     let (tag_publisher, trusted_predecessor) = match tag_publisher.state(&release)? {
         RemoteState::Missing => {
@@ -1450,45 +766,19 @@ pub fn publish_to_remote(
         RemoteState::Conflicting(message) => return Err(PublicationError::new(message)),
     };
 
-    let mut publishers = Vec::new();
-    for (name, publisher) in &declaration.publishers.oci_image {
-        publishers.push(PublisherNode::new(
-            format!("oci-image.{name}"),
-            Box::new(
-                crate::oci::OciImagePublisher::from_declaration(publisher)?
-                    .with_trusted_predecessor(trusted_predecessor.clone()),
-            ),
-            publisher.after.clone(),
-        ));
-    }
-    for (name, publisher) in &declaration.publishers.oci_helm {
-        publishers.push(PublisherNode::new(
-            format!("oci-helm.{name}"),
-            Box::new(crate::helm::OciHelmPublisher::from_declaration(
-                publisher,
-                &release.version,
-            )?),
-            publisher.after.clone(),
-        ));
-    }
-    for (name, publisher) in &declaration.publishers.github_release {
-        publishers.push(PublisherNode::new(
-            format!("github-release.{name}"),
-            Box::new(GithubPublisher::from_declaration(
-                publisher,
-                &declaration.changelog.path,
-            )?),
-            publisher.after.clone(),
-        ));
-    }
+    let session = Session {
+        trusted_predecessor,
+        ..session
+    };
     progress(PublishEvent::Started {
         tag: &release.tag,
         commit: &release.commit,
     });
-    let (tag_step, outcomes) = publish_ordered_with_jobs(
+    let (tag_step, outcomes) = publish_in_session(
         &tag_publisher,
         &release,
         &publishers,
+        &session,
         jobs,
         fail_fast,
         progress,
@@ -1524,6 +814,8 @@ pub fn publish_ordered(
     )
 }
 
+/// Like [`publish_ordered`], with up to `jobs` publishers at once. The publishers get no secrets,
+/// so they must bring their own clients.
 pub fn publish_ordered_with_jobs(
     tag_publisher: &dyn TagPublisher,
     release: &Release,
@@ -1532,8 +824,29 @@ pub fn publish_ordered_with_jobs(
     fail_fast: bool,
     progress: &mut Progress<'_>,
 ) -> Result<(TagStep, Vec<PublisherOutcome>), PublicationError> {
+    publish_in_session(
+        tag_publisher,
+        release,
+        publishers,
+        &Session::default(),
+        jobs,
+        fail_fast,
+        progress,
+    )
+}
+
+/// Publishes the tag, then completes every publisher with the secrets and facts of `session`.
+pub fn publish_in_session(
+    tag_publisher: &dyn TagPublisher,
+    release: &Release,
+    publishers: &[PublisherNode],
+    session: &Session,
+    jobs: NonZeroUsize,
+    fail_fast: bool,
+    progress: &mut Progress<'_>,
+) -> Result<(TagStep, Vec<PublisherOutcome>), PublicationError> {
     let tag_state = tag_publisher.state(release);
-    let states = publisher_states(release, publishers, jobs);
+    let states = publisher_states(release, publishers, session, jobs);
     let tag_step = match tag_state? {
         RemoteState::Missing => TagStep::Pushed,
         RemoteState::Matching => TagStep::AlreadyPushed,
@@ -1646,7 +959,7 @@ pub fn publish_ordered_with_jobs(
                 let state = &states[index];
                 scope.spawn(move || {
                     let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                        complete_publisher(release, publisher, state, progress)
+                        complete_publisher(release, publisher, session, state, progress)
                     }))
                     .unwrap_or_else(|_| {
                         Err(PublicationError::new(format!(
@@ -1685,6 +998,7 @@ pub fn publish_ordered_with_jobs(
                         &progress,
                         PublishEvent::Publisher {
                             name: &publishers[index].name,
+                            labels: publishers[index].publisher.labels(),
                             step,
                         },
                     );
@@ -1730,6 +1044,7 @@ pub fn publish_ordered_with_jobs(
 fn publisher_states(
     release: &Release,
     publishers: &[PublisherNode],
+    session: &Session,
     jobs: NonZeroUsize,
 ) -> Vec<Result<PublisherState, PublicationError>> {
     let next = AtomicUsize::new(0);
@@ -1744,8 +1059,9 @@ fn publisher_states(
                     let Some(publisher) = publishers.get(index) else {
                         break;
                     };
+                    let ctx = Context::new(session, &publisher.name);
                     checked
-                        .send((index, publisher.publisher.state(release)))
+                        .send((index, publisher.publisher.state(release, &ctx)))
                         .expect("publication pre-check receives every result");
                 }
             });
@@ -1766,6 +1082,7 @@ fn publisher_states(
 fn complete_publisher(
     release: &Release,
     publisher: &PublisherNode,
+    session: &Session,
     state: &PublisherState,
     progress: &Mutex<&mut Progress<'_>>,
 ) -> Result<(PublisherStep, ArtifactSteps), PublicationError> {
@@ -1778,20 +1095,20 @@ fn complete_publisher(
         }
         PublisherState::Conflicting(_) => unreachable!("conflicts were checked before the tag"),
     };
+    let report = |artifact: &ArtifactStep| {
+        report_publish_event(progress, PublishEvent::Artifact(artifact));
+    };
+    let ctx = Context::new(session, &publisher.name).with_progress(&report);
     let artifacts = if step == PublisherStep::AlreadyPublished {
-        let artifacts = publisher.publisher.complete_steps(release)?;
+        let artifacts = publisher.publisher.complete_steps(release, &ctx)?;
         for artifact in &artifacts {
-            report_publish_event(progress, PublishEvent::Artifact(artifact));
+            ctx.progress(artifact);
         }
         artifacts
     } else {
-        publisher
-            .publisher
-            .publish_with_progress(release, &mut |artifact| {
-                report_publish_event(progress, PublishEvent::Artifact(artifact));
-            })?
+        publisher.publisher.publish(release, &ctx)?
     };
-    match publisher.publisher.state(release)? {
+    match publisher.publisher.state(release, &ctx)? {
         PublisherState::Published | PublisherState::AliasesPending => {}
         state => {
             return Err(PublicationError::new(format!(
@@ -2207,13 +1524,14 @@ fn verify_predecessor_with_trust_mode(
                 commit,
                 schema_version,
             )),
-            Err(EvaluationError::Declaration(DeclarationError::IncompatibleUnstableSchema(_))) => {
-                Err(PublicationError::unsupported_predecessor(
-                    previous_tag.clone(),
-                    commit,
-                    UNSTABLE_SCHEMA_VERSION,
-                ))
-            }
+            // Such as an unknown publisher type, or an option shape of another Presswerk version.
+            Err(EvaluationError::Declaration(DeclarationError::IncompatibleUnstableSchema(
+                reason,
+            ))) => Err(PublicationError::incompatible_predecessor(
+                previous_tag.clone(),
+                commit,
+                &reason,
+            )),
             // Presswerk never released a commit without a lock file, so it has no declaration either.
             Err(EvaluationError::MissingDeclaration(_) | EvaluationError::MissingLockFile(_)) => {
                 Err(PublicationError::undeclared_predecessor(
@@ -2223,57 +1541,14 @@ fn verify_predecessor_with_trust_mode(
             }
             Err(error) => Err(PublicationError::new(error.to_string())),
         },
-        |publisher, tag, _version| {
-            GithubClient::from_environment(&publisher.api_url, &publisher.token.secret)?
-                .release_state(&publisher.repository, tag)
-        },
-        |publisher, tag| {
-            registry_manifest(
-                &publisher.repository,
-                publisher.public,
-                &publisher.username,
-                &publisher.password,
-                tag,
-            )
-        },
-        |publisher, tag| {
-            registry_manifest(
-                &publisher.repository,
-                publisher.public,
-                &publisher.username,
-                &publisher.password,
-                tag,
-            )
-        },
+        |node, release, ctx| node.publisher.completeness(release, ctx),
     )
 }
 
-fn registry_manifest(
-    repository: &str,
-    public: bool,
-    username: &crate::declaration::Username,
-    password: &crate::declaration::Token,
-    tag: &str,
-) -> Result<Option<Vec<u8>>, PublicationError> {
-    // A public repository is read anonymously, so its credentials are never needed.
-    let credentials = if public {
-        None
-    } else {
-        Some(crate::oci::Credentials::from_environment(
-            username,
-            &password.secret,
-        )?)
-    };
-    Ok(crate::oci::RegistryClient::new(repository, credentials)?
-        .manifest(tag)?
-        .map(|(_, manifest)| manifest))
-}
-
+/// Verify a predecessor with `completeness` reading whether each of its publishers is complete,
+/// such as a fake remote in tests.
 #[allow(clippy::too_many_arguments)]
-///
-/// `release_state` reads a GitHub Release by tag; `oci_image_manifest` reads the manifest an OCI tag
-/// points to, or `None` if the registry has no such tag.
-pub fn verify_predecessor_with<E, F, O>(
+pub fn verify_predecessor_with<E, C>(
     repository_path: &Path,
     candidate: Oid,
     previous_version: &Version,
@@ -2281,17 +1556,11 @@ pub fn verify_predecessor_with<E, F, O>(
     tag_publisher: &dyn TagPublisher,
     trusted_predecessor: Option<&TrustedPredecessor>,
     evaluate_declaration: E,
-    release_state: F,
-    oci_image_manifest: O,
+    completeness: C,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError>
 where
     E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
-    F: FnMut(
-        &GithubReleaseDeclaration,
-        &str,
-        &Version,
-    ) -> Result<GithubReleaseState, PublicationError>,
-    O: FnMut(&OciImageDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
+    C: FnMut(&PublisherNode, &Release, &Context) -> Result<Completeness, PublicationError>,
 {
     verify_predecessor_with_mode(
         repository_path,
@@ -2303,59 +1572,12 @@ where
         true,
         None,
         evaluate_declaration,
-        release_state,
-        oci_image_manifest,
-        |publisher, _| {
-            Err(PublicationError::new(format!(
-                "no OCI Helm manifest reader was provided for {}",
-                publisher.repository
-            )))
-        },
-    )
-}
-
-/// Verify a predecessor while supplying readers for every built-in publisher.
-#[allow(clippy::too_many_arguments)]
-pub fn verify_predecessor_with_oci_helm<E, F, O, H>(
-    repository_path: &Path,
-    candidate: Oid,
-    previous_version: &Version,
-    current_declaration: &ReleaseDeclaration,
-    tag_publisher: &dyn TagPublisher,
-    trusted_predecessor: Option<&TrustedPredecessor>,
-    evaluate_declaration: E,
-    release_state: F,
-    oci_image_manifest: O,
-    oci_helm_manifest: H,
-) -> Result<Option<VerifiedPredecessor>, PublicationError>
-where
-    E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
-    F: FnMut(
-        &GithubReleaseDeclaration,
-        &str,
-        &Version,
-    ) -> Result<GithubReleaseState, PublicationError>,
-    O: FnMut(&OciImageDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
-    H: FnMut(&OciHelmDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
-{
-    verify_predecessor_with_mode(
-        repository_path,
-        candidate,
-        previous_version,
-        current_declaration,
-        tag_publisher,
-        trusted_predecessor,
-        true,
-        None,
-        evaluate_declaration,
-        release_state,
-        oci_image_manifest,
-        oci_helm_manifest,
+        completeness,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_predecessor_with_mode<E, F, O, H>(
+fn verify_predecessor_with_mode<E, C>(
     repository_path: &Path,
     candidate: Oid,
     previous_version: &Version,
@@ -2366,19 +1588,11 @@ fn verify_predecessor_with_mode<E, F, O, H>(
     // The commit the remote tag points to, when the tag is published but not fetched.
     published_commit: Option<Oid>,
     mut evaluate_declaration: E,
-    mut release_state: F,
-    mut oci_image_manifest: O,
-    mut oci_helm_manifest: H,
+    mut completeness: C,
 ) -> Result<Option<VerifiedPredecessor>, PublicationError>
 where
     E: FnMut(Oid) -> Result<ReleaseDeclaration, PublicationError>,
-    F: FnMut(
-        &GithubReleaseDeclaration,
-        &str,
-        &Version,
-    ) -> Result<GithubReleaseState, PublicationError>,
-    O: FnMut(&OciImageDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
-    H: FnMut(&OciHelmDeclaration, &str) -> Result<Option<Vec<u8>>, PublicationError>,
+    C: FnMut(&PublisherNode, &Release, &Context) -> Result<Completeness, PublicationError>,
 {
     let repository = Repository::open(repository_path).map_err(|error| {
         PublicationError::new(format!("could not open Git repository: {error}"))
@@ -2486,60 +1700,35 @@ where
         false,
     )?;
 
-    let expected_prerelease = !previous_version.pre.is_empty();
-    for publisher in previous_declaration.publishers.github_release.values() {
-        match release_state(publisher, &previous_tag, previous_version)? {
-            GithubReleaseState::Published { prerelease } if prerelease == expected_prerelease => {}
-            state => {
+    let previous = Release {
+        commit: previous_commit.to_string(),
+        version: previous_version.clone(),
+        tag: previous_tag,
+        notes: String::new(),
+    };
+    let publishers = previous_declaration
+        .publishers
+        .nodes()
+        .map_err(|error| PublicationError::new(error.to_string()))?;
+    let session = Session::for_declaration(&previous_declaration);
+    for node in &publishers {
+        let ctx = Context::new(&session, &node.name);
+        match completeness(node, &previous, &ctx)? {
+            Completeness::Complete => {}
+            Completeness::Incomplete { target, reason } => {
                 return Err(PublicationError::new(format!(
-                    "previous GitHub Release {previous_tag:?} in {} is incomplete: {state:?}",
-                    publisher.repository
+                    "previous {target} ({}) is incomplete: {reason}",
+                    node.name
+                )));
+            }
+            // Fail safe: what cannot be checked now may be missing.
+            Completeness::Unknown(reason) => {
+                return Err(PublicationError::new(format!(
+                    "cannot tell whether the previous release of {} is complete: {reason}",
+                    node.name
                 )));
             }
         }
-    }
-    // Only version tags count: aliases are best effort and may point to another release.
-    for (name, publisher) in &previous_declaration.publishers.oci_image {
-        let tags = crate::oci::render_tags(&publisher.tags, &publisher.aliases, previous_version)
-            .map_err(|error| PublicationError::new(format!("oci-image.{name}: {error}")))?;
-        for tag in tags {
-            let crate::oci::OciTag::Version(tag) = tag else {
-                continue;
-            };
-            let found = match oci_image_manifest(publisher, &tag)? {
-                None => "the tag is missing".to_owned(),
-                Some(manifest) => match crate::oci::annotated_version(&manifest) {
-                    Some(version) if version == *previous_version => continue,
-                    Some(version) => format!("the tag points to version {version}"),
-                    None => "the tag does not point to an image index with a version annotation"
-                        .to_owned(),
-                },
-            };
-            return Err(PublicationError::new(format!(
-                "previous OCI image release {}:{tag} (oci-image.{name}) is incomplete: {found}, expected version {previous_version}",
-                publisher.repository
-            )));
-        }
-    }
-    for (name, publisher) in &previous_declaration.publishers.oci_helm {
-        let tag = crate::helm::tag(previous_version);
-        let found = match oci_helm_manifest(publisher, &tag)? {
-            None => "the tag is missing".to_owned(),
-            Some(manifest)
-                if crate::helm::is_release_manifest(
-                    &manifest,
-                    previous_version,
-                    &publisher.chart,
-                ) =>
-            {
-                continue;
-            }
-            Some(_) => "the tag does not point to this release's Helm chart".to_owned(),
-        };
-        return Err(PublicationError::new(format!(
-            "previous OCI Helm release {}:{tag} (oci-helm.{name}) is incomplete: {found}, expected version {previous_version} from {}",
-            publisher.repository, publisher.chart
-        )));
     }
     Ok(Some(verified))
 }
@@ -2674,14 +1863,6 @@ fn has_release_tags(
     Ok(false)
 }
 
-fn validate_release_publisher_tags(
-    declaration: &ReleaseDeclaration,
-) -> Result<(), PublicationError> {
-    declaration
-        .validate_publisher_tags(&declaration.version)
-        .map_err(|error| PublicationError::new(error.to_string()))
-}
-
 fn read_text_at(
     repository_path: &Path,
     commit: Oid,
@@ -2723,62 +1904,4 @@ fn read_text_at(
 
 fn version_core(version: &Version) -> [u64; 3] {
     [version.major, version.minor, version.patch]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::validate_release_publisher_tags;
-    use crate::declaration::ReleaseDeclaration;
-
-    #[test]
-    fn publication_rejects_actual_version_registry_tag_collisions() {
-        let declaration = ReleaseDeclaration::from_json(
-            r#"{
-              "schemaVersion": 0,
-              "version": "0.1.0",
-              "stable": false,
-              "versionFiles": [],
-              "tag": { "format": "v{version}" },
-              "analyzer": {
-                "convention": "gitmoji",
-                "gitmoji": { "catalog": {} }
-              },
-              "changelog": { "path": "CHANGELOG.md" },
-              "publishers": {
-                "github-release": {},
-                "oci-image": {
-                  "image": {
-                    "repository": "ghcr.io/owner/project",
-                    "platforms": {
-                      "linux/amd64": "/nix/store/00000000000000000000000000000000-image.tar.gz"
-                    },
-                    "tags": ["v{version}"],
-                    "aliases": ["0.1.0"],
-                    "username": { "secret": "REGISTRY_USERNAME" },
-                    "password": { "secret": "REGISTRY_TOKEN" }
-                  }
-                },
-                "oci-helm": {
-                  "chart": {
-                    "repository": "ghcr.io/owner/project",
-                    "chart": "/nix/store/00000000000000000000000000000000-chart.tgz",
-                    "username": { "secret": "REGISTRY_USERNAME" },
-                    "password": { "secret": "REGISTRY_TOKEN" }
-                  }
-                }
-              }
-            }"#,
-        )
-        .unwrap();
-
-        let error = validate_release_publisher_tags(&declaration)
-            .unwrap_err()
-            .to_string();
-
-        assert!(
-            error.contains("oci-image.image and oci-helm.chart"),
-            "{error}"
-        );
-        assert!(error.contains("both render 0.1.0"), "{error}");
-    }
 }

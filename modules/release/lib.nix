@@ -1,10 +1,6 @@
 { config, lib, self, ... }:
 let
   version = (builtins.fromTOML (builtins.readFile (self.outPath + "/Cargo.toml"))).package.version;
-  normalizePublisher = publisher:
-    builtins.removeAttrs
-      (publisher // { after = publisher.resolvedAfter; })
-      [ "before" "cycleHint" "resolvedAfter" ];
 in
 {
   flake.lib.mkRelease =
@@ -106,21 +102,10 @@ in
             (lib.filterAttrs (_identifier: entry: entry != null) releaseConfig.analyzer.gitmoji.catalog);
         };
       changelog = releaseConfig.changelog;
-      publishers.github-release = lib.mapAttrs
-        (_name: publisher: normalizePublisher publisher)
-        releaseConfig.publishers.github-release;
-      publishers.oci-image = lib.mapAttrs
-        (_name: oci: normalizePublisher oci // {
-          compression =
-            if oci.compression.zstd.enable then { zstd.level = oci.compression.zstd.level; }
-            else { gzip.level = oci.compression.gzip.level; };
-          username = lib.filterAttrs (_source: value: value != null) oci.username;
-        })
-        releaseConfig.publishers.oci-image;
-      publishers.oci-helm = lib.mapAttrs
-        (_name: helm: normalizePublisher helm // {
-          username = lib.filterAttrs (_source: value: value != null) helm.username;
-        })
-        releaseConfig.publishers.oci-helm;
+      # Each type decides what its instances write into the declaration; `after` and `claims` are
+      # shared.
+      publishers = lib.mapAttrs
+        (_type: lib.mapAttrs (_name: publisher: publisher.declaration // { after = publisher.resolvedAfter; inherit (publisher) claims; }))
+        (builtins.removeAttrs releaseConfig.publishers releaseConfig.publisherAliases);
     };
 }

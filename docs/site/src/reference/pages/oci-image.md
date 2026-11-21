@@ -14,8 +14,8 @@ with the image for each platform. The Nix option `publishers.oci` is an alias fo
     tags = [ "{version}" ];
     aliases = [ "latest" "{major}.{minor}" ];
     public = true;
-    username.secret = "GITHUB_ACTOR";
-    password.secret = "GITHUB_TOKEN";
+    username.env = "GITHUB_ACTOR";
+    password.env = "GITHUB_TOKEN";
   };
 }
 ```
@@ -138,15 +138,15 @@ pushed again.
 
 ## Credentials
 
-`username.secret` and `password.secret` name the environment variables that hold the registry
-username and password or token. Neither enters the declaration or the Nix store; Presswerk reads
-them at run time, stops if one is unset or empty, and never prints them. They answer the registry's
+`username.env` and `password.env` name the environment variables that hold the
+registry username and password or token. Neither enters the declaration or the Nix store; Presswerk
+reads them at run time, stops if one is unset or empty, and never prints them. They answer the registry's
 authentication challenge, either with HTTP basic authentication or with the bearer token flow that
 most registries use.
 
 A username that is no secret can be given as `username.value` instead, such as
 `oauth2accesstoken` for Google Artifact Registry. It is written into the declaration like any
-other option. The password always comes from an environment variable.
+other option. The password is always a secret.
 
 `publish` always needs the credentials. By default, `plan` and `prepare` need them too, as soon as a
 previous release declared this publisher, since they read that release's tags. With

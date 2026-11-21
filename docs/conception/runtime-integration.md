@@ -52,11 +52,12 @@ candidate identity and reject a stale or unexpected ref.
 The release declaration may name the secrets a publisher needs, but never contains them.
 Values arrive at runtime.
 
-The baseline is environment variables and files, which every runtime supports. Declaration
-fields such as `token.secret = "GITHUB_TOKEN"` name a logical secret; for the first milestone
-the runtime resolves that name from an environment variable of the same name. The declaration
-does not encode the provider as `secret.env`, so another resolver can supply the same logical
-name later.
+The baseline is environment variables and files, which every runtime supports. Every
+credential of every publisher has one shape: exactly one of the value itself, `{ value = "…"; }`,
+for what is no secret, or a source to read it from, `{ env = "GITHUB_TOKEN"; }`. Sources are
+siblings of `value`, so other resolvers, such as `file` or `command`, can be added next to `env`
+later. The CLI finds every secret of a declaration,
+resolves them all before a publisher runs, and redacts their values from everything it prints.
 
 Beyond that, [secretspec](https://secretspec.dev/) is the preferred candidate for an
 integration. It declares a project's secrets once, in `secretspec.toml`, and resolves them from

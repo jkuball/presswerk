@@ -94,8 +94,8 @@ let
   imagePublisher = {
     repository = "ghcr.io/owner/project";
     platforms."linux/amd64" = image;
-    username.secret = "REGISTRY_USERNAME";
-    password.secret = "REGISTRY_TOKEN";
+    username.env = "REGISTRY_USERNAME";
+    password.env = "REGISTRY_TOKEN";
   };
 
   image = derivation {
@@ -155,8 +155,12 @@ in
           apiUrl = "https://api.github.com";
           repository = "owner/project";
           body = "{{ notes }}";
-          token.secret = "GITHUB_TOKEN";
+          token.env = "GITHUB_TOKEN";
           assets = { };
+          claims = [{
+            destination = "https://api.github.com/repos/owner/project";
+            key = "v{version}";
+          }];
         };
         publishers.oci-image = { };
         publishers.oci-helm = { };
@@ -493,8 +497,8 @@ in
           publishers.oci-image.default = {
             repository = "ghcr.io/owner/project";
             platforms."linux/amd64" = image;
-            username.secret = "REGISTRY_USERNAME";
-            password.secret = "REGISTRY_TOKEN";
+            username.env = "REGISTRY_USERNAME";
+            password.env = "REGISTRY_TOKEN";
           };
         }).publishers.oci-image.default;
       expected = {
@@ -505,8 +509,12 @@ in
         aliases = [ ];
         public = false;
         compression.gzip.level = 6;
-        username.secret = "REGISTRY_USERNAME";
-        password.secret = "REGISTRY_TOKEN";
+        username.env = "REGISTRY_USERNAME";
+        password.env = "REGISTRY_TOKEN";
+        claims = [{
+          destination = "oci://ghcr.io/owner/project";
+          key = "{version}";
+        }];
       };
     };
 
@@ -520,8 +528,8 @@ in
             repository = "ghcr.io/owner/charts/project";
             chart = image;
             public = true;
-            username.secret = "REGISTRY_USERNAME";
-            password.secret = "REGISTRY_TOKEN";
+            username.env = "REGISTRY_USERNAME";
+            password.env = "REGISTRY_TOKEN";
           };
         }).publishers.oci-helm.default;
       expected = {
@@ -529,8 +537,12 @@ in
         repository = "ghcr.io/owner/charts/project";
         chart = image.outPath;
         public = true;
-        username.secret = "REGISTRY_USERNAME";
-        password.secret = "REGISTRY_TOKEN";
+        username.env = "REGISTRY_USERNAME";
+        password.env = "REGISTRY_TOKEN";
+        claims = [{
+          destination = "oci://ghcr.io/owner/charts/project";
+          key = "{version}";
+        }];
       };
     };
 
@@ -543,8 +555,8 @@ in
           publishers.oci-helm.default = {
             repository = "ghcr.io/owner/charts/project";
             chart = image;
-            username.secret = "REGISTRY_USERNAME";
-            password.secret = "REGISTRY_TOKEN";
+            username.env = "REGISTRY_USERNAME";
+            password.env = "REGISTRY_TOKEN";
           } // helm;
         }).publishers.oci-helm)
         [
@@ -555,7 +567,7 @@ in
           { repository = "ghcr.io/Owner/project"; }
           { repository = "user:secret@ghcr.io/owner/charts/project"; }
           { chart = "/nix/store/00000000000000000000000000000000-chart.tgz"; }
-          { username = { secret = "REGISTRY_USERNAME"; value = "user"; }; }
+          { username = { env = "REGISTRY_USERNAME"; value = "user"; }; }
         ];
       expected = [ true true true false false false false false ];
     };
@@ -570,14 +582,14 @@ in
             publishers.oci-helm.default = {
               repository = "ghcr.io/owner/charts/project";
               chart = image;
-              username.secret = "REGISTRY_USERNAME";
-              password.secret = "REGISTRY_TOKEN";
+              username.env = "REGISTRY_USERNAME";
+              password.env = "REGISTRY_TOKEN";
             };
             publishers.oci-image.default = {
               repository = "ghcr.io/owner/images/project";
               platforms."linux/amd64" = image;
-              username.secret = "REGISTRY_USERNAME";
-              password.secret = "REGISTRY_TOKEN";
+              username.env = "REGISTRY_USERNAME";
+              password.env = "REGISTRY_TOKEN";
             };
           }
           publishers)).publishers)
@@ -587,16 +599,16 @@ in
             publishers.oci-helm.other = {
               repository = "ghcr.io/owner/charts/other";
               chart = image;
-              username.secret = "REGISTRY_USERNAME";
-              password.secret = "REGISTRY_TOKEN";
+              username.env = "REGISTRY_USERNAME";
+              password.env = "REGISTRY_TOKEN";
             };
           }
           {
             publishers.oci-helm.other = {
               repository = "ghcr.io/owner/charts/project";
               chart = image;
-              username.secret = "REGISTRY_USERNAME";
-              password.secret = "REGISTRY_TOKEN";
+              username.env = "REGISTRY_USERNAME";
+              password.env = "REGISTRY_TOKEN";
             };
           }
           { publishers.oci-image.default.repository = "ghcr.io/owner/charts/project"; }
@@ -610,6 +622,28 @@ in
       expected = [ true true false false true ];
     };
 
+    "test a token is a secret source, never a value or an old shape" = {
+      expr = map
+        (token: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          publishers.github-release.default = {
+            repository = "owner/project";
+            inherit token;
+          };
+        }).publishers)
+        [
+          { env = "PRESSWERK_GITHUB_TOKEN"; }
+          { value = "ghp_written-into-the-declaration"; }
+          { secret = "GITHUB_TOKEN"; }
+          { secret.env = "GITHUB_TOKEN"; }
+          { }
+          { env = ""; }
+          { env = "GITHUB_TOKEN"; value = "token"; }
+        ];
+      expected = [ true false false false false false false ];
+    };
+
     "test a literal OCI username normalizes without the secret" = {
       expr =
         (mkRelease {
@@ -620,7 +654,7 @@ in
             repository = "europe-docker.pkg.dev/project/repo/image";
             platforms."linux/amd64" = image;
             username.value = "oauth2accesstoken";
-            password.secret = "GAR_TOKEN";
+            password.env = "GAR_TOKEN";
           };
         }).publishers.oci-image.default.username;
       expected.value = "oauth2accesstoken";
@@ -635,8 +669,8 @@ in
           publishers.oci-image.default = {
             repository = "ghcr.io/owner/project";
             platforms."linux/amd64" = image;
-            username.secret = "REGISTRY_USERNAME";
-            password.secret = "REGISTRY_TOKEN";
+            username.env = "REGISTRY_USERNAME";
+            password.env = "REGISTRY_TOKEN";
           } // oci;
         }).publishers.oci-image)
         [
@@ -671,14 +705,16 @@ in
           { aliases = [ "{unknown}" ]; }
           { aliases = [ "latest" "latest" ]; }
           { aliases = [ "{major}.{minor}.{patch}" ]; }
+          # A password is always a secret.
+          { password.value = "written-into-the-declaration"; }
           # A username comes from exactly one source.
-          { username = { secret = "REGISTRY_USERNAME"; value = "user"; }; }
+          { username = { env = "REGISTRY_USERNAME"; value = "user"; }; }
           # Exactly one compression, with a level in range.
           { compression = { gzip.enable = true; zstd.enable = true; }; }
           { compression.gzip.enable = false; }
           { compression.zstd = { enable = true; level = 23; }; }
         ];
-      expected = [ true true true true true true true true true false false false false false false false false false false false false false false false false false false false false false false ];
+      expected = [ true true true true true true true true true false false false false false false false false false false false false false false false false false false false false false false false ];
     };
 
     "test OCI image publishers of one repository share no image tag" = {
@@ -691,8 +727,8 @@ in
             (_name: oci: {
               repository = "ghcr.io/owner/project";
               platforms."linux/amd64" = image;
-              username.secret = "REGISTRY_USERNAME";
-              password.secret = "REGISTRY_TOKEN";
+              username.env = "REGISTRY_USERNAME";
+              password.env = "REGISTRY_TOKEN";
             } // oci)
             ({ default.aliases = [ "latest" ]; } // others);
         }).publishers.oci-image)
@@ -708,6 +744,59 @@ in
       expected = [ true true true false false false ];
     };
 
+    "test publishers that claim the same remote object fail with both names" = {
+      expr = {
+        image = failedAssertion {
+          publishers.oci-image.image = imagePublisher;
+          publishers.oci-helm.chart = {
+            inherit (imagePublisher) repository username password;
+            chart = image;
+          };
+        };
+        # Different templates that name the same object.
+        alias = failedAssertion {
+          publishers.oci-image.image = imagePublisher // {
+            tags = [ "v{version}" ];
+            aliases = [ "1.2.3" ];
+          };
+          publishers.oci-helm.chart = {
+            inherit (imagePublisher) repository username password;
+            chart = image;
+          };
+        };
+        github = failedAssertion {
+          publishers.github-release.a.repository = "owner/project";
+          publishers.github-release.b = {
+            repository = "owner/project";
+            after = [ ];
+          };
+        };
+      };
+      expected = {
+        image = "publishers.oci-helm.chart and publishers.oci-image.image both claim {version} in oci://ghcr.io/owner/project";
+        alias = "publishers.oci-helm.chart and publishers.oci-image.image both claim the same object in oci://ghcr.io/owner/project: {version} and 1.2.3";
+        github = "publishers.github-release.a and publishers.github-release.b both claim v{version} in https://api.github.com/repos/owner/project";
+      };
+    };
+
+    "test GitHub Releases of other repositories or API URLs claim nothing in common" = {
+      expr = map
+        (other: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          publishers.github-release.default.repository = "owner/project";
+          publishers.github-release.other = { after = [ ]; } // other;
+        }).publishers)
+        [
+          { repository = "owner/other"; }
+          { repository = "owner/project"; apiUrl = "https://github.example/api/v3"; }
+          { repository = "owner/project"; }
+          # GitHub names are case-insensitive.
+          { repository = "Owner/Project"; }
+        ];
+      expected = [ true true false false ];
+    };
+
     "test publisher dependencies normalize to after edges" = {
       expr = {
         githubDefault = (mkRelease {
@@ -718,8 +807,8 @@ in
           publishers.oci-helm.chart = {
             repository = "ghcr.io/owner/charts/project";
             chart = image;
-            username.secret = "REGISTRY_USERNAME";
-            password.secret = "REGISTRY_TOKEN";
+            username.env = "REGISTRY_USERNAME";
+            password.env = "REGISTRY_TOKEN";
           };
         }).publishers.github-release.default.after;
         githubOverride = (mkRelease {
@@ -836,8 +925,8 @@ in
           ociPublisher = repository: {
             inherit repository;
             platforms."linux/amd64" = image;
-            username.secret = "REGISTRY_USERNAME";
-            password.secret = "REGISTRY_TOKEN";
+            username.env = "REGISTRY_USERNAME";
+            password.env = "REGISTRY_TOKEN";
           };
           publishers = (mkRelease {
             sourceRoot = fixtureRoot;
@@ -863,8 +952,8 @@ in
         publishers.oci.default = {
           repository = "ghcr.io/owner/legacy";
           platforms."linux/amd64" = image;
-          username.secret = "REGISTRY_USERNAME";
-          password.secret = "REGISTRY_TOKEN";
+          username.env = "REGISTRY_USERNAME";
+          password.env = "REGISTRY_TOKEN";
         };
         publishers.oci-image.default.repository = "ghcr.io/owner/current";
       }).publishers;
@@ -878,8 +967,8 @@ in
         publishers.helm.default = {
           repository = "ghcr.io/owner/charts/project";
           chart = image;
-          username.secret = "REGISTRY_USERNAME";
-          password.secret = "REGISTRY_TOKEN";
+          username.env = "REGISTRY_USERNAME";
+          password.env = "REGISTRY_TOKEN";
         };
       }).publishers;
       expected = false;

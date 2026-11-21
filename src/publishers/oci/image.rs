@@ -7,195 +7,354 @@
 //! its image, so a retry recognizes the release's index by its store paths, whatever bytes the
 //! compressor produced.
 
-use crate::declaration::Compression;
+use crate::declaration::DeclarationError;
 use crate::publication::{
-    ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, Publisher,
-    PublisherState, Release,
+    ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, PublisherState, Release,
+};
+use crate::publishers::shared::secrets::Credential;
+use crate::publishers::{
+    Completeness, Context, Description, Labels, Publisher, PublisherType, WarningLevel, shared,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
-use std::env;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::OnceLock;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use tempfile::SpooledData;
-use url::Url;
 
-pub const INDEX_MEDIA_TYPE: &str = "application/vnd.oci.image.index.v1+json";
-pub const MANIFEST_MEDIA_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
-pub const CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.image.config.v1+json";
-pub const GZIP_LAYER_MEDIA_TYPE: &str = "application/vnd.oci.image.layer.v1.tar+gzip";
-pub const ZSTD_LAYER_MEDIA_TYPE: &str = "application/vnd.oci.image.layer.v1.tar+zstd";
-/// The index annotation that records the release version, so aliases can be compared.
-pub const VERSION_ANNOTATION: &str = "org.opencontainers.image.version";
-/// The annotation on each manifest in an index that records the Nix store path of its image, so a
-/// later run recognizes the release's index without comparing compressed bytes.
-pub const ORIGIN_ANNOTATION: &str = "dev.presswerk.origin";
+use super::*;
 
-const VERSION_PLACEHOLDER: &str = "{version}";
-const MANIFEST_ACCEPT: &str = "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json";
+/// The image of one platform.
+pub const IMAGE: ArtifactKind = ArtifactKind::new("image", "pushed");
+/// A tag that follows the highest final version, such as `latest`.
+pub const ALIAS: ArtifactKind = ArtifactKind::new("alias", "set");
 
-/// A registry repository such as `ghcr.io/owner/project`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RepositoryReference {
-    /// The registry's base URL, such as `https://ghcr.io/`.
-    pub registry: Url,
-    /// The repository name within the registry, such as `owner/project`.
-    pub name: String,
+/// `publishers.oci-image.<name>`: container images pushed to an OCI registry under tags rendered
+/// from the version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OciImageDeclaration {
+    /// Registry host and repository path, such as `ghcr.io/owner/project`.
+    pub repository: String,
+    /// The image for each platform, such as `linux/amd64`, each a path in the Nix store.
+    pub platforms: BTreeMap<String, String>,
+    /// Tag templates of the release; each contains `{version}`.
+    pub tags: Vec<String>,
+    /// Alias templates, such as `latest` or `{major}.{minor}`, that move to a higher version.
+    /// Missing in declarations written before the option existed.
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    /// Whether anyone may pull the images; the previous-release check then reads anonymously.
+    /// Missing in declarations written before the option existed.
+    #[serde(default)]
+    pub public: bool,
+    /// How layers are compressed for the registry.
+    /// Missing in declarations written before the option existed.
+    #[serde(default)]
+    pub compression: Compression,
+    pub username: Credential,
+    pub password: Credential,
 }
 
-impl RepositoryReference {
-    /// Parse `host[:port]/path`. The host is required, so an image never lands on a default
-    /// registry by accident. Loopback hosts use plain HTTP, like Docker's default insecure
-    /// registries; every other registry uses HTTPS.
-    pub fn parse(repository: &str) -> Result<Self, String> {
-        let invalid = |reason: &str| format!("OCI repository {repository:?} {reason}");
-        let (host, name) = repository
-            .split_once('/')
-            .ok_or_else(|| invalid("must be a registry host followed by a repository path"))?;
-        if !(host.contains('.') || host.contains(':') || host == "localhost") {
-            return Err(invalid(
-                "must start with a registry host, such as ghcr.io/owner/project",
-            ));
+/// The compression of pushed image layers, with its level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+pub enum Compression {
+    Gzip { level: u32 },
+    Zstd { level: i32 },
+}
+
+impl Default for Compression {
+    fn default() -> Self {
+        Self::Gzip { level: 6 }
+    }
+}
+
+impl OciImageDeclaration {
+    fn registry(&self) -> Registry<'_> {
+        Registry {
+            repository: &self.repository,
+            public: self.public,
+            username: &self.username,
+            password: &self.password,
         }
-        // Only a host and port: credentials belong in environment variables, never in the
-        // declaration, and a query or fragment has no meaning for a registry.
-        if !valid_host(host) {
-            return Err(invalid(
-                "must start with a plain registry host and optional port, without credentials, query, or fragment",
-            ));
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        RepositoryReference::parse(&self.repository)?;
+        if self.platforms.is_empty() {
+            return Err("an OCI image publisher needs at least one image".into());
         }
-        if name.is_empty()
-            || !name.split('/').all(|component| {
-                !component.is_empty()
-                    && component
-                        .bytes()
-                        .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-'))
-                    && component.starts_with(|c: char| c.is_ascii_alphanumeric())
-                    && component.ends_with(|c: char| c.is_ascii_alphanumeric())
-            })
-        {
-            return Err(invalid(
-                "must have a lowercase repository path of letters, digits, and separators",
-            ));
-        }
-        let hostname = host.rsplit_once(':').map_or(host, |(hostname, port)| {
-            if port.bytes().all(|byte| byte.is_ascii_digit()) {
-                hostname
-            } else {
-                host
+        for (platform, path) in &self.platforms {
+            Platform::parse(platform)?;
+            if !path.starts_with('/') {
+                return Err(format!(
+                    "image {platform} must be an absolute store path, not {path:?}"
+                ));
             }
+        }
+        validate_tag_templates(&self.tags, &self.aliases)?;
+        match self.compression {
+            Compression::Gzip { level } if !(1..=9).contains(&level) => {
+                return Err(format!("gzip level {level} must be between 1 and 9"));
+            }
+            Compression::Zstd { level } if !(1..=22).contains(&level) => {
+                return Err(format!("zstd level {level} must be between 1 and 22"));
+            }
+            _ => {}
+        }
+        self.registry().validate()
+    }
+}
+
+/// The `oci-image` publisher type.
+#[derive(Debug)]
+pub struct OciImage {
+    declaration: OciImageDeclaration,
+    /// Built on first use, once the images are fetched and the credentials are known.
+    runner: OnceLock<OciImagePublisher>,
+}
+
+impl OciImage {
+    #[must_use]
+    pub fn declaration(&self) -> &OciImageDeclaration {
+        &self.declaration
+    }
+
+    fn runner(&self, ctx: &Context) -> Result<&OciImagePublisher, PublicationError> {
+        if let Some(runner) = self.runner.get() {
+            return Ok(runner);
+        }
+        let declaration = &self.declaration;
+        let runner = OciImagePublisher::new(
+            declaration
+                .registry()
+                .writing_client(&ctx.session.secrets)?,
+            &declaration.repository,
+            declaration.tags.clone(),
+            declaration.aliases.clone(),
+            declaration
+                .platforms
+                .iter()
+                .map(|(platform, path)| (platform.clone(), PathBuf::from(path))),
+            declaration.compression,
+        )?
+        .with_trusted_predecessor(ctx.session.trusted_predecessor.clone());
+        Ok(self.runner.get_or_init(|| runner))
+    }
+}
+
+impl PublisherType for OciImage {
+    const NAME: &'static str = "oci-image";
+    const ALIASES: &'static [&'static str] = &["oci"];
+
+    fn from_declaration(declaration: &Value) -> Result<Self, DeclarationError> {
+        let declaration: OciImageDeclaration = shared::decode(declaration)?;
+        declaration.validate().map_err(DeclarationError::Invalid)?;
+        Ok(Self {
+            declaration,
+            runner: OnceLock::new(),
+        })
+    }
+}
+
+/// Describes the images and tags that a release of `version` pushes.
+fn describe(
+    repository: &str,
+    platforms: impl Iterator<Item = String>,
+    tags: &[String],
+    aliases: &[String],
+    version: &Version,
+) -> Result<Description, String> {
+    // Store paths are left out: the release commit's images get their own paths.
+    let images = platforms.map(|platform| ("image".to_owned(), platform));
+    let tags = render_tags(tags, aliases, version)?.into_iter().map(|tag| {
+        let kind = match tag {
+            OciTag::Version(_) => "tag",
+            OciTag::Alias(_) => "alias",
+        };
+        (kind.to_owned(), tag.name().to_owned())
+    });
+    Ok(Description {
+        target: repository.into(),
+        items: images.chain(tags).collect(),
+    })
+}
+
+/// Whether every version tag of `release` points to its image index, as `manifest` reads the
+/// manifest a tag points to. Aliases do not count: they are best effort and may point to another
+/// release. A tag that cannot be read, such as when the registry denies access or is unreachable,
+/// makes the release `Unknown`.
+pub fn completeness_with(
+    repository: &str,
+    tags: &[String],
+    aliases: &[String],
+    release: &Release,
+    mut manifest: impl FnMut(&str) -> Result<Option<Vec<u8>>, PublicationError>,
+) -> Result<Completeness, PublicationError> {
+    let version = &release.version;
+    for tag in render_tags(tags, aliases, version).map_err(PublicationError::new)? {
+        let OciTag::Version(tag) = tag else {
+            continue;
+        };
+        let read = match manifest(&tag) {
+            Ok(read) => read,
+            Err(error) => return Ok(Completeness::Unknown(error.to_string())),
+        };
+        let found = match read {
+            None => "the tag is missing".to_owned(),
+            Some(manifest) => match annotated_version(&manifest) {
+                Some(found) if found == *version => continue,
+                Some(found) => format!("the tag points to version {found}"),
+                None => {
+                    "the tag does not point to an image index with a version annotation".to_owned()
+                }
+            },
+        };
+        return Ok(Completeness::Incomplete {
+            target: format!("OCI image release {repository}:{tag}"),
+            reason: format!("{found}, expected version {version}"),
         });
-        let scheme = if matches!(hostname, "localhost" | "127.0.0.1" | "[::1]") {
-            "http"
-        } else {
-            "https"
-        };
-        // Docker Hub answers under several hosts and names official images without `library/`;
-        // its registry API is registry-1.docker.io.
-        let (host, name) = if matches!(
-            host,
-            "docker.io" | "index.docker.io" | "registry-1.docker.io"
-        ) {
-            let name = if name.contains('/') {
-                name.to_owned()
-            } else {
-                format!("library/{name}")
-            };
-            ("registry-1.docker.io", name)
-        } else {
-            (host, name.to_owned())
-        };
-        let registry = Url::parse(&format!("{scheme}://{host}/"))
-            .map_err(|error| invalid(&format!("has an invalid registry host: {error}")))?;
-        if registry.path() != "/" || registry.query().is_some() {
-            return Err(invalid("has an invalid registry host"));
-        }
-        Ok(Self { registry, name })
     }
+    Ok(Completeness::Complete)
 }
 
-/// A registry host: a DNS name, IPv4 address, or bracketed IPv6 address, with an optional port.
-fn valid_host(host: &str) -> bool {
-    let (name_valid, port) = if let Some(rest) = host.strip_prefix('[') {
-        let Some((address, port)) = rest.split_once(']') else {
-            return false;
-        };
-        (
-            !address.is_empty()
-                && address
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() || byte == b':'),
-            port,
+impl Publisher for OciImage {
+    fn credentials(&self) -> Vec<(&'static str, &Credential)> {
+        vec![
+            ("username", &self.declaration.username),
+            ("password", &self.declaration.password),
+        ]
+    }
+
+    fn describe(&self, version: &Version, _tag: &str) -> Result<Description, String> {
+        let declaration = &self.declaration;
+        describe(
+            &declaration.repository,
+            declaration.platforms.keys().cloned(),
+            &declaration.tags,
+            &declaration.aliases,
+            version,
         )
-    } else {
-        let (name, port) = host
-            .find(':')
-            .map_or((host, ""), |index| (&host[..index], &host[index..]));
-        (
-            !name.is_empty()
-                && name
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-')),
-            port,
+    }
+
+    fn artifacts(&self) -> Vec<(String, String)> {
+        self.declaration
+            .platforms
+            .iter()
+            .map(|(platform, path)| (format!("image {platform}"), path.clone()))
+            .collect()
+    }
+
+    fn completeness(
+        &self,
+        release: &Release,
+        ctx: &Context,
+    ) -> Result<Completeness, PublicationError> {
+        let declaration = &self.declaration;
+        let registry = declaration
+            .registry()
+            .reading_client(&ctx.session.secrets)?;
+        completeness_with(
+            &declaration.repository,
+            &declaration.tags,
+            &declaration.aliases,
+            release,
+            |tag| Ok(registry.manifest(tag)?.map(|(_, manifest)| manifest)),
         )
-    };
-    name_valid
-        && (port.is_empty()
-            || port.strip_prefix(':').is_some_and(|digits| {
-                !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
-            }))
-}
+    }
 
-/// The platform an image runs on, such as `linux/amd64` or `linux/arm/v7`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Platform {
-    pub architecture: String,
-    pub os: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
-}
-
-impl Platform {
-    pub fn parse(platform: &str) -> Result<Self, String> {
-        let parts: Vec<_> = platform.split('/').collect();
-        let valid = |part: &&str| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    /// Reads the aliases of the release, so an alias another tool pushed does not stay behind
+    /// unnoticed.
+    fn preview(&self, release: &Release, ctx: &Context) {
+        let declaration = &self.declaration;
+        if declaration.aliases.is_empty() {
+            return;
+        }
+        let secrets = &ctx.session.secrets;
+        let variables =
+            missing_credentials(declaration, |name| secrets.env(name).map(str::to_owned));
+        // Without credentials, an anonymous read may still succeed, such as for a repository
+        // that is public without being marked so.
+        let registry = if variables.is_empty() {
+            declaration.registry().reading_client(secrets)
+        } else {
+            let verb = if variables.len() == 1 { "is" } else { "are" };
+            ctx.warn(
+                WarningLevel::Warning,
+                format!(
+                    "{} is not marked public and {} {verb} not set; checking its aliases anonymously, which will probably fail",
+                    ctx.address,
+                    variables.join("/")
+                ),
+            );
+            RegistryClient::new(&declaration.repository, None)
         };
-        match parts.as_slice() {
-            [os, architecture] | [os, architecture, _]
-                if parts.iter().all(valid) && !os.is_empty() && !architecture.is_empty() =>
-            {
-                Ok(Self {
-                    os: (*os).into(),
-                    architecture: (*architecture).into(),
-                    variant: parts.get(2).map(|variant| (*variant).into()),
-                })
+        let found = registry.and_then(|registry| {
+            foreign_aliases(
+                &registry,
+                &declaration.repository,
+                &declaration.tags,
+                &declaration.aliases,
+                &release.version,
+                ctx.session.trusted_predecessor.as_ref(),
+            )
+        });
+        match found {
+            Ok(found) => {
+                for alias in found {
+                    match &alias.predecessor_tag {
+                        Some(tag) => ctx.warn(
+                            WarningLevel::Note,
+                            format!(
+                                "alias {} points to the trusted predecessor's tag {tag}; publish will take it over",
+                                alias.reference
+                            ),
+                        ),
+                        None => ctx.warn(
+                            WarningLevel::Warning,
+                            format!(
+                                "alias {} points to {} without a version annotation, so another tool pushed it; publish will keep it",
+                                alias.reference, alias.digest
+                            ),
+                        ),
+                    }
+                }
             }
-            _ => Err(format!(
-                "image platform {platform:?} must have the form os/architecture[/variant], such as linux/amd64"
-            )),
+            Err(error) => ctx.warn(
+                WarningLevel::Warning,
+                format!("could not check the aliases of {}: {error}", ctx.address),
+            ),
         }
     }
-}
 
-impl fmt::Display for Platform {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}/{}", self.os, self.architecture)?;
-        if let Some(variant) = &self.variant {
-            write!(formatter, "/{variant}")?;
-        }
-        Ok(())
+    fn state(&self, release: &Release, ctx: &Context) -> Result<PublisherState, PublicationError> {
+        self.runner(ctx)?.state(release, ctx)
+    }
+
+    fn publish(&self, release: &Release, ctx: &Context) -> Result<ArtifactSteps, PublicationError> {
+        self.runner(ctx)?.publish(release, ctx)
+    }
+
+    fn complete_steps(
+        &self,
+        release: &Release,
+        ctx: &Context,
+    ) -> Result<ArtifactSteps, PublicationError> {
+        self.runner(ctx)?.complete_steps(release, ctx)
+    }
+
+    fn labels(&self) -> Labels {
+        LABELS
     }
 }
 
@@ -253,11 +412,7 @@ pub fn validate_tag_templates(tags: &[String], aliases: &[String]) -> Result<(),
 
 /// Replace the version placeholders of a template.
 fn render_template(template: &str, version: &Version) -> String {
-    template
-        .replace(VERSION_PLACEHOLDER, &version.to_string())
-        .replace("{major}", &version.major.to_string())
-        .replace("{minor}", &version.minor.to_string())
-        .replace("{patch}", &version.patch.to_string())
+    shared::template::render(template, version)
 }
 
 /// Render the tag and alias templates for a version, tags first.
@@ -297,85 +452,6 @@ pub fn render_tags(
         rendered.push(tag);
     }
     Ok(rendered)
-}
-
-pub(crate) fn sha256_digest(bytes: &[u8]) -> String {
-    hex_digest(&Sha256::digest(bytes))
-}
-
-pub(crate) fn sha256_digest_reader(mut reader: impl Read) -> io::Result<String> {
-    let mut hash = Sha256::new();
-    let mut buffer = [0; 64 * 1024];
-    loop {
-        let read = reader.read(&mut buffer)?;
-        if read == 0 {
-            return Ok(hex_digest(&hash.finalize()));
-        }
-        hash.update(&buffer[..read]);
-    }
-}
-
-pub(crate) fn hex_digest(digest: &[u8]) -> String {
-    digest
-        .iter()
-        .fold(String::from("sha256:"), |mut output, byte| {
-            use fmt::Write as _;
-            let _ = write!(output, "{byte:02x}");
-            output
-        })
-}
-
-/// A blob of an image, as it is uploaded: a compressed layer or the config.
-#[derive(Debug)]
-pub struct Blob<'a> {
-    pub digest: String,
-    pub size: u64,
-    pub data: BlobData<'a>,
-}
-
-#[derive(Debug)]
-pub enum BlobData<'a> {
-    /// A compressed layer too large to keep in memory, in an unnamed temporary file that is gone
-    /// once the blob is handled.
-    File(&'a File),
-    Bytes(&'a [u8]),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Descriptor {
-    pub media_type: String,
-    #[serde(default)]
-    pub digest: String,
-    #[serde(default)]
-    pub size: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub platform: Option<Platform>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub annotations: BTreeMap<String, String>,
-}
-
-impl Descriptor {
-    pub(crate) fn new(media_type: &str, digest: &str, size: u64) -> Self {
-        Self {
-            media_type: media_type.into(),
-            digest: digest.into(),
-            size,
-            platform: None,
-            annotations: BTreeMap::new(),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Manifest {
-    pub(crate) schema_version: u32,
-    pub(crate) media_type: String,
-    pub(crate) config: Descriptor,
-    pub(crate) layers: Vec<Descriptor>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) annotations: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -679,16 +755,23 @@ impl Image {
         let mut read = |reader: &mut dyn Read| Members::read(reader, compression, spool_limit, put);
 
         let members = if metadata.permissions().mode() & 0o111 != 0 {
-            let mut child = Command::new(path)
+            let mut child = image_command(path)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
+                .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|error| failed(&format!("could not run the image executable: {error}")))?;
+            // The executable inherits the environment, so its diagnostics could show a secret.
+            // They are drained while stdout is read, so a noisy executable cannot block.
+            let stderr = child.stderr.take().expect("piped stderr");
+            let diagnostics = thread::spawn(move || {
+                forward_diagnostics(BufReader::new(stderr), &mut io::stderr())
+            });
             let mut stdout = child.stdout.take().expect("piped stdout");
             let members = read(&mut stdout);
             drop(stdout);
             let status = child.wait().map_err(|error| failed(&error))?;
+            let _ = diagnostics.join();
             let members = members.map_err(read_failed)?;
             if !status.success() {
                 return Err(failed(&format!(
@@ -877,6 +960,29 @@ fn read_prefix(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
     Ok(read)
 }
 
+/// The command that runs an image executable. It never needs a publisher's secret; without them,
+/// its diagnostics cannot show one, not even a value that spans several lines, which line-by-line
+/// redaction would miss.
+fn image_command(path: &Path) -> Command {
+    let mut command = Command::new(path);
+    for name in crate::publishers::shared::secrets::secret_variables() {
+        command.env_remove(name);
+    }
+    command
+}
+
+/// Copies what an image executable prints on stderr to `sink`, line by line, with every secret
+/// value replaced.
+fn forward_diagnostics(reader: impl io::BufRead, sink: &mut dyn io::Write) {
+    for line in reader.split(b'\n') {
+        let Ok(line) = line else {
+            return;
+        };
+        let line = crate::publishers::shared::secrets::redact(&String::from_utf8_lossy(&line));
+        let _ = writeln!(sink, "{line}");
+    }
+}
+
 /// The image index for a release: one manifest per platform, annotated with the version.
 #[must_use]
 pub fn image_index(images: &[Image], version: &Version) -> (Vec<u8>, String) {
@@ -891,445 +997,6 @@ pub fn image_index(images: &[Image], version: &Version) -> (Vec<u8>, String) {
     .expect("serialize an image index");
     let digest = sha256_digest(&index);
     (index, digest)
-}
-
-/// Registry credentials, read from the environment at run time.
-#[derive(Clone)]
-pub struct Credentials {
-    pub username: String,
-    pub password: String,
-}
-
-impl fmt::Debug for Credentials {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("Credentials([redacted])")
-    }
-}
-
-impl Credentials {
-    pub fn from_environment(
-        username: &crate::declaration::Username,
-        password: &str,
-    ) -> Result<Self, PublicationError> {
-        let read = |name: &str| {
-            let value = env::var(name).map_err(|_| {
-                PublicationError::new(format!(
-                    "OCI credential environment variable {name:?} is not set"
-                ))
-            })?;
-            if value.is_empty() {
-                return Err(PublicationError::new(format!(
-                    "OCI credential environment variable {name:?} is empty"
-                )));
-            }
-            Ok(value)
-        };
-        Ok(Self {
-            username: match username {
-                crate::declaration::Username::Secret(name) => read(name)?,
-                crate::declaration::Username::Value(username) => username.clone(),
-            },
-            password: read(password)?,
-        })
-    }
-}
-
-enum Body<'a> {
-    Empty,
-    Bytes(&'a [u8]),
-    File(&'a File, u64),
-}
-
-enum CallError {
-    Status(u16),
-    Transport(String),
-}
-
-impl fmt::Display for CallError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Status(status) => write!(formatter, "HTTP {status}"),
-            Self::Transport(error) => formatter.write_str(error),
-        }
-    }
-}
-
-/// A client for one repository of an OCI distribution registry.
-pub struct RegistryClient {
-    agent: ureq::Agent,
-    repository: RepositoryReference,
-    display: String,
-    /// `None` reads anonymously, for repositories anyone may pull from.
-    credentials: Option<Credentials>,
-    authorization: Mutex<Option<String>>,
-}
-
-impl fmt::Debug for RegistryClient {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("RegistryClient")
-            .field("repository", &self.display)
-            .field("credentials", &self.credentials)
-            .finish_non_exhaustive()
-    }
-}
-
-impl RegistryClient {
-    /// A client for `repository`; without credentials it only pulls, anonymously.
-    pub fn new(
-        repository: &str,
-        credentials: Option<Credentials>,
-    ) -> Result<Self, PublicationError> {
-        Ok(Self {
-            agent: ureq::AgentBuilder::new().build(),
-            repository: RepositoryReference::parse(repository).map_err(PublicationError::new)?,
-            display: repository.into(),
-            credentials,
-            authorization: Mutex::new(None),
-        })
-    }
-
-    fn url(&self, kind: &str, reference: &str) -> Url {
-        self.repository
-            .registry
-            .join(&format!("v2/{}/{kind}/{reference}", self.repository.name))
-            .expect("registry URLs are valid")
-    }
-
-    fn call(
-        &self,
-        method: &str,
-        url: &Url,
-        headers: &[(&str, &str)],
-        body: &Body<'_>,
-    ) -> Result<ureq::Response, CallError> {
-        let mut authenticated = false;
-        loop {
-            let mut request = self
-                .agent
-                .request(method, url.as_str())
-                .set("User-Agent", "presswerk");
-            for (name, value) in headers {
-                request = request.set(name, value);
-            }
-            if let Some(authorization) = self.authorization.lock().expect("lock").as_deref() {
-                request = request.set("Authorization", authorization);
-            }
-            let result = match body {
-                Body::Empty => request.call(),
-                Body::Bytes(bytes) => request.send_bytes(bytes),
-                Body::File(file, size) => {
-                    // A retry after authenticating sends the file again from its start.
-                    let mut file = *file;
-                    file.rewind().map_err(|error| {
-                        CallError::Transport(format!("could not read a compressed layer: {error}"))
-                    })?;
-                    request
-                        .set("Content-Length", &size.to_string())
-                        .send(BufReader::new(file))
-                }
-            };
-            match result {
-                Ok(response) => return Ok(response),
-                Err(ureq::Error::Status(401, response)) if !authenticated => {
-                    authenticated = true;
-                    let challenge = response.header("WWW-Authenticate").unwrap_or_default();
-                    let authorization = self.authenticate(challenge)?;
-                    *self.authorization.lock().expect("lock") = Some(authorization);
-                }
-                Err(ureq::Error::Status(status @ (401 | 403), _)) if self.credentials.is_none() => {
-                    return Err(self.not_public(&format!("the registry answered HTTP {status}")));
-                }
-                Err(ureq::Error::Status(status, _)) => return Err(CallError::Status(status)),
-                Err(ureq::Error::Transport(error)) => {
-                    return Err(CallError::Transport(error.to_string()));
-                }
-            }
-        }
-    }
-
-    fn not_public(&self, reason: &str) -> CallError {
-        CallError::Transport(format!(
-            "{reason} to an anonymous read, so {} does not seem to be publicly readable; is `public = true` correct?",
-            self.display
-        ))
-    }
-
-    /// Answer a registry's authentication challenge with the configured credentials, or
-    /// anonymously with pull access only.
-    fn authenticate(&self, challenge: &str) -> Result<String, CallError> {
-        let basic = self.credentials.as_ref().map(|credentials| {
-            format!(
-                "Basic {}",
-                base64(format!("{}:{}", credentials.username, credentials.password))
-            )
-        });
-        let (scheme, parameters) = challenge.split_once(' ').unwrap_or((challenge, ""));
-        if scheme.eq_ignore_ascii_case("basic") {
-            return basic.ok_or_else(|| self.not_public("the registry asked for a password"));
-        }
-        if !scheme.eq_ignore_ascii_case("bearer") {
-            return Err(CallError::Transport(format!(
-                "registry asked for unsupported authentication {scheme:?}"
-            )));
-        }
-        let parameters = challenge_parameters(parameters);
-        let realm = parameters.get("realm").ok_or_else(|| {
-            CallError::Transport("registry sent a bearer challenge without a realm".into())
-        })?;
-        let mut url = Url::parse(realm).map_err(|error| {
-            CallError::Transport(format!("registry sent an invalid token realm: {error}"))
-        })?;
-        {
-            let mut query = url.query_pairs_mut();
-            if let Some(service) = parameters.get("service") {
-                query.append_pair("service", service);
-            }
-            let actions = if basic.is_some() { "pull,push" } else { "pull" };
-            query.append_pair(
-                "scope",
-                &format!("repository:{}:{actions}", self.repository.name),
-            );
-        }
-        let mut request = self.agent.get(url.as_str()).set("User-Agent", "presswerk");
-        if let Some(basic) = &basic {
-            request = request.set("Authorization", basic);
-        }
-        let response = match request.call() {
-            Ok(response) => response,
-            Err(ureq::Error::Status(status, _)) if basic.is_none() => {
-                return Err(self.not_public(&format!(
-                    "the registry token service answered HTTP {status}"
-                )));
-            }
-            Err(ureq::Error::Status(status, _)) => {
-                return Err(CallError::Transport(format!(
-                    "registry token service rejected the credentials (HTTP {status})"
-                )));
-            }
-            Err(ureq::Error::Transport(error)) => {
-                return Err(CallError::Transport(format!(
-                    "could not reach the registry token service: {error}"
-                )));
-            }
-        };
-        #[derive(Deserialize)]
-        struct TokenResponse {
-            token: Option<String>,
-            access_token: Option<String>,
-        }
-        let token: TokenResponse = response.into_json().map_err(|error| {
-            CallError::Transport(format!("invalid registry token response: {error}"))
-        })?;
-        token
-            .token
-            .or(token.access_token)
-            .filter(|token| !token.is_empty())
-            .map(|token| format!("Bearer {token}"))
-            .ok_or_else(|| CallError::Transport("registry token response has no token".into()))
-    }
-
-    fn unknown(&self, what: &str, error: &CallError) -> PublicationError {
-        PublicationError::new(format!(
-            "could not inspect {what} in {}: {error}; Presswerk cannot tell whether it exists",
-            self.display
-        ))
-    }
-
-    /// The digest a tag or digest reference resolves to, or `None` if the registry has none.
-    pub fn manifest_digest(&self, reference: &str) -> Result<Option<String>, PublicationError> {
-        let url = self.url("manifests", reference);
-        match self.call("HEAD", &url, &[("Accept", MANIFEST_ACCEPT)], &Body::Empty) {
-            Ok(response) => match response.header("Docker-Content-Digest") {
-                Some(digest) if digest.starts_with("sha256:") => Ok(Some(digest.to_owned())),
-                _ => Ok(self.manifest(reference)?.map(|(digest, _)| digest)),
-            },
-            Err(CallError::Status(404)) => Ok(None),
-            Err(error) => Err(self.unknown(&format!("manifest {reference}"), &error)),
-        }
-    }
-
-    /// The manifest a reference resolves to, with the digest of its bytes.
-    pub fn manifest(&self, reference: &str) -> Result<Option<(String, Vec<u8>)>, PublicationError> {
-        let url = self.url("manifests", reference);
-        match self.call("GET", &url, &[("Accept", MANIFEST_ACCEPT)], &Body::Empty) {
-            Ok(response) => {
-                let mut bytes = Vec::new();
-                response
-                    .into_reader()
-                    .take(16 * 1024 * 1024)
-                    .read_to_end(&mut bytes)
-                    .map_err(|error| {
-                        self.unknown(
-                            &format!("manifest {reference}"),
-                            &CallError::Transport(error.to_string()),
-                        )
-                    })?;
-                Ok(Some((sha256_digest(&bytes), bytes)))
-            }
-            Err(CallError::Status(404)) => Ok(None),
-            Err(error) => Err(self.unknown(&format!("manifest {reference}"), &error)),
-        }
-    }
-
-    pub fn blob_exists(&self, digest: &str) -> Result<bool, PublicationError> {
-        match self.call("HEAD", &self.url("blobs", digest), &[], &Body::Empty) {
-            Ok(_) => Ok(true),
-            Err(CallError::Status(404)) => Ok(false),
-            Err(error) => Err(self.unknown(&format!("blob {digest}"), &error)),
-        }
-    }
-
-    /// Upload a blob unless the registry already has it. Returns whether it was uploaded.
-    pub fn push_blob(&self, blob: &Blob<'_>) -> Result<bool, PublicationError> {
-        if self.blob_exists(&blob.digest)? {
-            return Ok(false);
-        }
-        self.upload_blob(blob)?;
-        Ok(true)
-    }
-
-    /// Upload a blob in one request; a blob that appears meanwhile counts as uploaded.
-    pub fn upload_blob(&self, blob: &Blob<'_>) -> Result<(), PublicationError> {
-        let failure = match self.start_upload() {
-            Ok(mut location) => {
-                location
-                    .query_pairs_mut()
-                    .append_pair("digest", &blob.digest);
-                match self.call(
-                    "PUT",
-                    &location,
-                    &[("Content-Type", "application/octet-stream")],
-                    &match blob.data {
-                        BlobData::File(path) => Body::File(path, blob.size),
-                        BlobData::Bytes(bytes) => Body::Bytes(bytes),
-                    },
-                ) {
-                    Ok(_) => return Ok(()),
-                    Err(error) => error.to_string(),
-                }
-            }
-            Err(error) => error,
-        };
-        if self.blob_exists(&blob.digest)? {
-            return Ok(());
-        }
-        Err(PublicationError::new(format!(
-            "could not upload blob {} to {}: {failure}",
-            blob.digest, self.display
-        )))
-    }
-
-    fn start_upload(&self) -> Result<Url, String> {
-        let url = self
-            .repository
-            .registry
-            .join(&format!("v2/{}/blobs/uploads/", self.repository.name))
-            .expect("registry URLs are valid");
-        let response = self
-            .call("POST", &url, &[], &Body::Bytes(&[]))
-            .map_err(|error| error.to_string())?;
-        let location = response
-            .header("Location")
-            .ok_or("the registry started an upload without a Location")?;
-        url.join(location)
-            .map_err(|error| format!("the registry sent an invalid upload location: {error}"))
-    }
-
-    /// Put a manifest under its digest unless the registry already has it.
-    pub fn push_manifest(
-        &self,
-        media_type: &str,
-        bytes: &[u8],
-        digest: &str,
-    ) -> Result<bool, PublicationError> {
-        if self.manifest_digest(digest)?.is_some() {
-            return Ok(false);
-        }
-        self.put_manifest(digest, media_type, bytes, digest)?;
-        Ok(true)
-    }
-
-    /// Put a manifest under a tag or digest; a failed write is inspected again, and succeeds
-    /// only if the reference now holds exactly this manifest.
-    pub fn put_manifest(
-        &self,
-        reference: &str,
-        media_type: &str,
-        bytes: &[u8],
-        digest: &str,
-    ) -> Result<(), PublicationError> {
-        let url = self.url("manifests", reference);
-        let failure = match self.call(
-            "PUT",
-            &url,
-            &[("Content-Type", media_type)],
-            &Body::Bytes(bytes),
-        ) {
-            Ok(response) => match response.header("Docker-Content-Digest") {
-                Some(actual) if actual != digest => {
-                    return Err(PublicationError::new(format!(
-                        "{} stored {reference} with digest {actual}, expected {digest}",
-                        self.display
-                    )));
-                }
-                _ => return Ok(()),
-            },
-            Err(error) => error.to_string(),
-        };
-        if self.manifest_digest(reference)?.as_deref() == Some(digest) {
-            return Ok(());
-        }
-        Err(PublicationError::new(format!(
-            "could not push {}:{reference}: {failure}",
-            self.display
-        )))
-    }
-}
-
-fn challenge_parameters(parameters: &str) -> BTreeMap<String, String> {
-    let mut result = BTreeMap::new();
-    let mut rest = parameters.trim();
-    while let Some((key, value)) = rest.split_once('=') {
-        let key = key
-            .trim()
-            .trim_start_matches(',')
-            .trim()
-            .to_ascii_lowercase();
-        let value = value.trim_start();
-        let (value, remainder) = if let Some(quoted) = value.strip_prefix('"') {
-            let end = quoted.find('"').unwrap_or(quoted.len());
-            (&quoted[..end], quoted.get(end + 1..).unwrap_or(""))
-        } else {
-            let end = value.find(',').unwrap_or(value.len());
-            (&value[..end], &value[end..])
-        };
-        result.insert(key, value.to_owned());
-        rest = remainder.trim_start_matches([',', ' ']);
-    }
-    result
-}
-
-fn base64(input: impl AsRef<[u8]>) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let input = input.as_ref();
-    let mut output = String::with_capacity(input.len().div_ceil(3) * 4);
-    for chunk in input.chunks(3) {
-        let bytes = [
-            chunk[0],
-            *chunk.get(1).unwrap_or(&0),
-            *chunk.get(2).unwrap_or(&0),
-        ];
-        let value = (u32::from(bytes[0]) << 16) | (u32::from(bytes[1]) << 8) | u32::from(bytes[2]);
-        for index in 0..4 {
-            if index <= chunk.len() {
-                output.push(ALPHABET[(value >> (18 - 6 * index) & 63) as usize] as char);
-            } else {
-                output.push('=');
-            }
-        }
-    }
-    output
 }
 
 /// What a registry holds under one tag, compared with what this release pushes.
@@ -1372,25 +1039,6 @@ struct RemoteIndex {
 }
 
 impl OciImagePublisher {
-    /// Build the publisher from its declaration; its images must already be fetched.
-    pub fn from_declaration(
-        declaration: &crate::declaration::OciImagePublisher,
-    ) -> Result<Self, PublicationError> {
-        let credentials =
-            Credentials::from_environment(&declaration.username, &declaration.password.secret)?;
-        Self::new(
-            RegistryClient::new(&declaration.repository, Some(credentials))?,
-            &declaration.repository,
-            declaration.tags.clone(),
-            declaration.aliases.clone(),
-            declaration
-                .platforms
-                .iter()
-                .map(|(platform, path)| (platform.clone(), PathBuf::from(path))),
-            declaration.compression,
-        )
-    }
-
     pub fn new(
         registry: RegistryClient,
         repository: &str,
@@ -1735,15 +1383,15 @@ impl OciImagePublisher {
             .keys()
             .zip(images)
             .map(|(platform, step)| ArtifactStep {
-                kind: ArtifactKind::Image,
+                kind: IMAGE,
                 name: platform.to_string(),
                 step,
             })
             .collect();
         steps.extend(inspection.tags.iter().map(|(tag, state)| ArtifactStep {
             kind: match tag {
-                OciTag::Version(_) => ArtifactKind::Tag,
-                OciTag::Alias(_) => ArtifactKind::Alias,
+                OciTag::Version(_) => TAG,
+                OciTag::Alias(_) => ALIAS,
             },
             name: self.reference(tag.name()),
             step: match state {
@@ -1831,38 +1479,10 @@ pub(crate) fn annotated_version(manifest: &[u8]) -> Option<Version> {
 /// The credential variables of a publisher that are unset or empty, as `lookup` reads them; none
 /// for a public repository, which `plan` and `prepare` read anonymously.
 pub fn missing_credentials(
-    declaration: &crate::declaration::OciImagePublisher,
+    declaration: &OciImageDeclaration,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> Vec<String> {
-    if declaration.public {
-        return Vec::new();
-    }
-    let username = match &declaration.username {
-        crate::declaration::Username::Secret(name) => Some(name.as_str()),
-        crate::declaration::Username::Value(_) => None,
-    };
-    username
-        .into_iter()
-        .chain([declaration.password.secret.as_str()])
-        .filter(|name| lookup(name).is_none_or(|value| value.is_empty()))
-        .map(str::to_owned)
-        .collect()
-}
-
-/// A client that reads a publisher's repository as `plan` and `prepare` do: anonymously if it is
-/// public, so its credentials are not needed.
-pub fn reading_client(
-    declaration: &crate::declaration::OciImagePublisher,
-) -> Result<RegistryClient, PublicationError> {
-    let credentials = if declaration.public {
-        None
-    } else {
-        Some(Credentials::from_environment(
-            &declaration.username,
-            &declaration.password.secret,
-        )?)
-    };
-    RegistryClient::new(&declaration.repository, credentials)
+    declaration.registry().missing_credentials(lookup)
 }
 
 /// The trusted predecessor's version tag that points to `digest`, so an alias without a version annotation
@@ -1931,8 +1551,82 @@ pub fn foreign_aliases(
     Ok(foreign)
 }
 
+/// An OCI image publisher with its own registry client, such as one for a test registry.
 impl Publisher for OciImagePublisher {
-    fn state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
+    fn describe(&self, version: &Version, _tag: &str) -> Result<Description, String> {
+        describe(
+            &self.repository,
+            self.platforms.keys().map(ToString::to_string),
+            &self.tags,
+            &self.aliases,
+            version,
+        )
+    }
+
+    fn completeness(
+        &self,
+        release: &Release,
+        _ctx: &Context,
+    ) -> Result<Completeness, PublicationError> {
+        completeness_with(
+            &self.repository,
+            &self.tags,
+            &self.aliases,
+            release,
+            |tag| Ok(self.registry.manifest(tag)?.map(|(_, manifest)| manifest)),
+        )
+    }
+
+    fn state(&self, release: &Release, _ctx: &Context) -> Result<PublisherState, PublicationError> {
+        self.checked_state(release)
+    }
+
+    fn publish(&self, release: &Release, ctx: &Context) -> Result<ArtifactSteps, PublicationError> {
+        let inspection = self.inspect(release)?;
+        if let Some(conflict) = inspection.conflict() {
+            return Err(PublicationError::new(conflict));
+        }
+        let (index, images) = self.release_index(&inspection, release, &mut |platform, step| {
+            ctx.progress(&ArtifactStep {
+                kind: IMAGE,
+                name: platform.to_string(),
+                step: step.clone(),
+            });
+        })?;
+
+        let mut steps = self.steps(&inspection, images);
+        let tag_steps = steps.len() - inspection.tags.len();
+        for ((tag, state), step) in inspection.tags.iter().zip(&mut steps[tag_steps..]) {
+            self.complete_tag(tag, state, &mut step.step, release, &index)?;
+            ctx.progress(step);
+        }
+
+        match self.checked_state(release)? {
+            PublisherState::Published | PublisherState::AliasesPending => Ok(steps),
+            state => Err(PublicationError::new(format!(
+                "{} was not published: {state:?}",
+                self.repository
+            ))),
+        }
+    }
+
+    fn complete_steps(
+        &self,
+        release: &Release,
+        _ctx: &Context,
+    ) -> Result<ArtifactSteps, PublicationError> {
+        let inspection = self.inspect(release)?;
+        let images = vec![AssetStep::AlreadyUploaded; self.platforms.len()];
+        Ok(self.steps(&inspection, images))
+    }
+
+    fn labels(&self) -> Labels {
+        LABELS
+    }
+}
+
+impl OciImagePublisher {
+    fn checked_state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
         let inspection = self.inspect(release)?;
         if let Some(conflict) = inspection.conflict() {
             return Ok(PublisherState::Conflicting(conflict.into()));
@@ -1965,45 +1659,6 @@ impl Publisher for OciImagePublisher {
             },
         )
     }
-
-    fn publish_with_progress(
-        &self,
-        release: &Release,
-        progress: &mut dyn FnMut(&ArtifactStep),
-    ) -> Result<ArtifactSteps, PublicationError> {
-        let inspection = self.inspect(release)?;
-        if let Some(conflict) = inspection.conflict() {
-            return Err(PublicationError::new(conflict));
-        }
-        let (index, images) = self.release_index(&inspection, release, &mut |platform, step| {
-            progress(&ArtifactStep {
-                kind: ArtifactKind::Image,
-                name: platform.to_string(),
-                step: step.clone(),
-            });
-        })?;
-
-        let mut steps = self.steps(&inspection, images);
-        let tag_steps = steps.len() - inspection.tags.len();
-        for ((tag, state), step) in inspection.tags.iter().zip(&mut steps[tag_steps..]) {
-            self.complete_tag(tag, state, &mut step.step, release, &index)?;
-            progress(step);
-        }
-
-        match self.state(release)? {
-            PublisherState::Published | PublisherState::AliasesPending => Ok(steps),
-            state => Err(PublicationError::new(format!(
-                "{} was not published: {state:?}",
-                self.repository
-            ))),
-        }
-    }
-
-    fn complete_steps(&self, release: &Release) -> Result<ArtifactSteps, PublicationError> {
-        let inspection = self.inspect(release)?;
-        let images = vec![AssetStep::AlreadyUploaded; self.platforms.len()];
-        Ok(self.steps(&inspection, images))
-    }
 }
 
 #[cfg(test)]
@@ -2011,73 +1666,78 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_registry_repositories() {
-        let ghcr = RepositoryReference::parse("ghcr.io/owner/project").unwrap();
-        assert_eq!(ghcr.registry.as_str(), "https://ghcr.io/");
-        assert_eq!(ghcr.name, "owner/project");
-
-        let local = RepositoryReference::parse("localhost:5000/team/image").unwrap();
-        assert_eq!(local.registry.as_str(), "http://localhost:5000/");
-        let loopback = RepositoryReference::parse("127.0.0.1:5000/image").unwrap();
-        assert_eq!(loopback.registry.as_str(), "http://127.0.0.1:5000/");
-
-        let hub = RepositoryReference::parse("docker.io/nginx").unwrap();
-        assert_eq!(hub.registry.as_str(), "https://registry-1.docker.io/");
-        assert_eq!(hub.name, "library/nginx");
-
-        let ipv6 = RepositoryReference::parse("[::1]:5000/image").unwrap();
-        assert_eq!(ipv6.registry.as_str(), "http://[::1]:5000/");
-
-        let gar = RepositoryReference::parse("europe-docker.pkg.dev/project/repo/image").unwrap();
-        assert_eq!(gar.name, "project/repo/image");
-
-        for invalid in [
-            "owner/project",
-            "ghcr.io",
-            "ghcr.io/",
-            "ghcr.io/Owner/project",
-            "ghcr.io/owner//project",
-            "ghcr.io/owner/project:tag",
-            "ghcr.io/-owner/project",
-            "user:secret@ghcr.io/owner/project",
-            "token@ghcr.io/owner/project",
-            "ghcr.io?x=1/owner/project",
-            "ghcr.io#fragment/owner/project",
-            "ghcr.io:port/owner/project",
-            "ghcr.io/owner/project?x=1",
-            "ghcr.io/owner/project#fragment",
-        ] {
-            assert!(RepositoryReference::parse(invalid).is_err(), "{invalid}");
-        }
-    }
-
-    #[test]
-    fn every_docker_hub_spelling_pushes_to_its_registry() {
-        for spelling in [
-            "docker.io/alpine",
-            "index.docker.io/alpine",
-            "registry-1.docker.io/alpine",
-            "registry-1.docker.io/library/alpine",
-        ] {
-            let parsed = RepositoryReference::parse(spelling).unwrap();
-            assert_eq!(
-                (parsed.registry.as_str(), parsed.name.as_str()),
-                ("https://registry-1.docker.io/", "library/alpine"),
-                "{spelling}"
-            );
-        }
-    }
-
-    #[test]
-    fn parses_platforms() {
-        assert_eq!(
-            Platform::parse("linux/arm/v7").unwrap().to_string(),
-            "linux/arm/v7"
+    fn an_image_executable_inherits_no_secret() {
+        let _secrets = crate::publishers::shared::secrets::Secrets::resolve_with(
+            vec![(
+                "oci-image.default.password".into(),
+                crate::publishers::shared::secrets::SecretSource::Env(
+                    "PRESSWERK_TEST_IMAGE_EXECUTABLE_SECRET".into(),
+                ),
+            )],
+            // A multiline value, such as JSON registry credentials.
+            |_| Some("{\n  \"password\": \"presswerk-multiline-sentinel\"\n}".into()),
         );
-        assert_eq!(Platform::parse("linux/amd64").unwrap().variant, None);
-        for invalid in ["linux", "linux/", "Linux/amd64", "linux/amd64/v8/x"] {
-            assert!(Platform::parse(invalid).is_err(), "{invalid}");
-        }
+        let command = image_command(Path::new("/nix/store/abc-image"));
+        assert!(command.get_envs().any(|(name, value)| {
+            name == "PRESSWERK_TEST_IMAGE_EXECUTABLE_SECRET" && value.is_none()
+        }));
+    }
+
+    #[test]
+    fn image_executable_diagnostics_never_show_a_secret() {
+        // Resolving a secret is what makes its value one that output never shows.
+        let _secrets = crate::publishers::shared::secrets::Secrets::resolve_with(
+            vec![(
+                "oci-image.default.password".into(),
+                crate::publishers::shared::secrets::SecretSource::Env(
+                    "PRESSWERK_TEST_DIAGNOSTICS".into(),
+                ),
+            )],
+            |_| Some("presswerk-diagnostics-sentinel".into()),
+        );
+        let mut sink = Vec::new();
+        forward_diagnostics(
+            &b"pushing with presswerk-diagnostics-sentinel\nsecond line"[..],
+            &mut sink,
+        );
+        assert_eq!(
+            String::from_utf8(sink).unwrap(),
+            "pushing with [redacted]\nsecond line\n"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_tag_is_unknown_not_incomplete() {
+        let release = Release {
+            commit: "0".repeat(40),
+            version: Version::new(1, 2, 3),
+            tag: "v1.2.3".into(),
+            notes: String::new(),
+        };
+        let completeness = completeness_with(
+            "ghcr.io/owner/project",
+            &["{version}".into()],
+            &[],
+            &release,
+            |_| Err(PublicationError::new("the registry answered HTTP 403")),
+        )
+        .unwrap();
+        assert_eq!(
+            completeness,
+            Completeness::Unknown("the registry answered HTTP 403".into())
+        );
+        // A tag that is read and missing is incomplete.
+        assert!(matches!(
+            completeness_with(
+                "ghcr.io/owner/project",
+                &["{version}".into()],
+                &[],
+                &release,
+                |_| Ok(None)
+            )
+            .unwrap(),
+            Completeness::Incomplete { .. }
+        ));
     }
 
     #[test]
@@ -2125,32 +1785,5 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("issues/89"), "{error}");
-    }
-
-    #[test]
-    fn parses_authentication_challenges() {
-        let parameters = challenge_parameters(
-            r#"realm="https://ghcr.io/token",service="ghcr.io",scope="repository:a/b:pull,push""#,
-        );
-        assert_eq!(parameters["realm"], "https://ghcr.io/token");
-        assert_eq!(parameters["service"], "ghcr.io");
-        assert_eq!(parameters["scope"], "repository:a/b:pull,push");
-    }
-
-    #[test]
-    fn encodes_basic_credentials() {
-        assert_eq!(base64("user:pass"), "dXNlcjpwYXNz");
-        assert_eq!(base64("a"), "YQ==");
-        assert_eq!(base64("ab"), "YWI=");
-        assert_eq!(base64(""), "");
-    }
-
-    #[test]
-    fn credentials_never_appear_in_debug_output() {
-        let credentials = Credentials {
-            username: "user".into(),
-            password: "secret-token".into(),
-        };
-        assert!(!format!("{credentials:?}").contains("secret-token"));
     }
 }
