@@ -98,6 +98,20 @@ let
     password.env = "REGISTRY_TOKEN";
   };
 
+  npmPublisher = {
+    name = "@scope/pi-extension";
+    package = derivation {
+      name = "pi-extension.tgz";
+      system = "x86_64-linux";
+      builder = "/bin/sh";
+    };
+    registry = "https://registry.npmjs.org";
+    access = "public";
+    tag = "presswerk";
+    aliases = [ "latest" ];
+    token.env = "NPM_TOKEN";
+  };
+
   image = derivation {
     name = "image.tar.gz";
     system = "x86_64-linux";
@@ -174,6 +188,7 @@ in
         };
         publishers.oci-image = { };
         publishers.oci-helm = { };
+        publishers.npm = { };
       };
     };
 
@@ -807,6 +822,106 @@ in
       expected = [ true true false false ];
     };
 
+    "test npm packages normalize with their claims and only the declared credentials" = {
+      expr = builtins.removeAttrs
+        (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.npm.default = npmPublisher // { registry = "https://registry.npmjs.org/"; };
+        }).publishers.npm.default [ "package" ];
+      expected = {
+        after = [ ];
+        name = "@scope/pi-extension";
+        registry = "https://registry.npmjs.org/";
+        access = "public";
+        tag = "presswerk";
+        aliases = [ "latest" ];
+        token.env = "NPM_TOKEN";
+        claims = [
+          { destination = "npm:https://registry.npmjs.org"; key = "@scope/pi-extension@{version}"; }
+          { destination = "npm:https://registry.npmjs.org"; key = "@scope/pi-extension@latest"; }
+        ];
+      };
+    };
+
+    "test npm publishers reject invalid declarations" = {
+      expr = map
+        (npm: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.npm.default = removeAttrs npmPublisher (npm.remove or [ ]) // removeAttrs npm [ "remove" ];
+        }).publishers.npm)
+        [
+          { }
+          { name = "pi-extension"; }
+          { registry = "http://localhost:4873"; }
+          { access = "restricted"; }
+          { tag = "latest"; aliases = [ ]; }
+          { aliases = [ "latest" "release-{major}.{minor}" ]; }
+          { remove = [ "token" ]; username.value = "_json_key_base64"; password.env = "REGISTRY_PASSWORD"; }
+          # Every option without a default is required.
+          { remove = [ "registry" ]; }
+          { remove = [ "access" ]; }
+          { remove = [ "tag" ]; }
+          { access = "private"; }
+          { name = "scope/pi-extension"; }
+          { registry = "registry.npmjs.org"; }
+          { registry = "https://user:secret@registry.npmjs.org"; }
+          { package = "/nix/store/00000000000000000000000000000000-fake.tgz"; }
+          # Exactly one way to authenticate, and tokens and passwords are secrets.
+          { remove = [ "token" ]; }
+          { username.value = "user"; password.env = "REGISTRY_PASSWORD"; }
+          { remove = [ "token" ]; username.value = "user"; }
+          { token.value = "npm_written-into-the-declaration"; }
+          { remove = [ "token" ]; username.value = "user"; password.value = "secret"; }
+          # npm refuses dist-tags that read as a version or range.
+          { tag = "v1"; }
+          { tag = "1.2"; }
+          { tag = "x"; }
+          { aliases = [ "{major}" ]; }
+          { aliases = [ "v{major}" ]; }
+          { aliases = [ "{version}" ]; }
+          # The tag is never moved, so it is no alias.
+          { aliases = [ "presswerk" ]; }
+          { aliases = [ "latest" "latest" ]; }
+        ];
+      expected = [ true true true true true true true false false false false false false false false false false false false false false false false false false false false false ];
+    };
+
+    "test npm dist-tag assertions link the npm rule" = {
+      expr = map
+        (npm: failedAssertion { analyzer.gitmoji.enable = true; publishers.npm.default = npmPublisher // npm; })
+        [
+          { tag = "v1"; }
+          { aliases = [ "release-{major}" "{major}.{minor}" ]; }
+          { aliases = [ "presswerk" ]; }
+        ];
+      expected = [
+        "publishers.npm.default.tag \"v1\" would be read as a version or range, which npm refuses as a dist-tag (https://docs.npmjs.com/cli/commands/npm-dist-tag#caveats); use a name that starts with a letter other than v"
+        "publishers.npm.default.aliases render to [\"1.2\"] for version 1.2.3, which npm would read as a version or range and refuses as a dist-tag (https://docs.npmjs.com/cli/commands/npm-dist-tag#caveats); use names that start with a letter other than v"
+        "publishers.npm.default.aliases must not contain the tag \"presswerk\": the tag is set with the upload and never moved"
+      ];
+    };
+
+    "test npm publishers of one package claim its versions and aliases" = {
+      expr = map
+        (other: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.npm = { default = npmPublisher; other = npmPublisher // other; };
+        }).publishers.npm)
+        [
+          { name = "@scope/other"; }
+          { registry = "https://npm.pkg.github.com"; }
+          { aliases = [ ]; }
+          { tag = "other"; aliases = [ "next" ]; }
+        ];
+      expected = [ true true false false ];
+    };
+
     "test publisher dependencies normalize to after edges" = {
       expr = {
         githubDefault = (mkRelease {
@@ -926,6 +1041,7 @@ in
         github-release = { };
         oci-image = { };
         oci-helm = { };
+        npm = { };
       };
     };
 
