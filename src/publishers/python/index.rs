@@ -145,30 +145,37 @@ impl Index for HttpIndex {
                 .saturating_duration_since(Instant::now())
                 .clamp(Duration::from_secs(1), READ_TIMEOUT)
         };
+        let mut login = None;
         let mut result = self.get(&url, None, timeout()).call();
-        if let (Err(ureq::Error::Status(401 | 403, _)), Some(login)) = (&result, &self.login) {
-            result = self.get(&url, Some(login), timeout()).call();
+        if let (Err(ureq::Error::Status(401 | 403, _)), Some(retry)) = (&result, &self.login) {
+            login = Some(retry);
+            result = self.get(&url, Some(retry), timeout()).call();
         }
-        let response = match result {
-            Ok(response) => response,
-            Err(ureq::Error::Status(404, _)) => return Ok(Vec::new()),
-            Err(ureq::Error::Status(status, _)) => {
-                return Err(PublicationError::new(format!(
-                    "could not read {url} (HTTP {status})"
-                )));
-            }
-            Err(ureq::Error::Transport(error)) => {
-                return Err(PublicationError::new(format!(
-                    "could not read {url}: {error}"
-                )));
-            }
+        let read = || -> Result<Vec<IndexFile>, String> {
+            let response = match result {
+                Ok(response) => response,
+                Err(ureq::Error::Status(404, _)) => return Ok(Vec::new()),
+                Err(ureq::Error::Status(status, _)) => {
+                    return Err(format!("could not read {url} (HTTP {status})"));
+                }
+                Err(ureq::Error::Transport(error)) => {
+                    return Err(format!("could not read {url}: {error}"));
+                }
+            };
+            let content_type = response.content_type().to_owned();
+            let body = response
+                .into_string()
+                .map_err(|error| format!("could not read {url}: {error}"))?;
+            parse_simple(&content_type, &body)
+                .map_err(|error| format!("could not decode {url}: {error}"))
         };
-        let content_type = response.content_type().to_owned();
-        let body = response
-            .into_string()
-            .map_err(|error| PublicationError::new(format!("could not read {url}: {error}")))?;
-        parse_simple(&content_type, &body)
-            .map_err(|error| PublicationError::new(format!("could not decode {url}: {error}")))
+        // What an index answers an authenticated read may echo the credentials.
+        read().map_err(|error| {
+            PublicationError::new(match login {
+                Some(login) => scrub(&error, login),
+                None => error,
+            })
+        })
     }
 
     fn upload(&self, distribution: &Distribution) -> Result<(), PublicationError> {
@@ -299,29 +306,73 @@ fn parse_html(body: &str) -> Result<Vec<IndexFile>, String> {
         Regex::new(r#"(?is)(?:^|\s)href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+))"#)
             .expect("valid href pattern")
     });
+    static TAG: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?s)<[^>]*>").expect("valid tag pattern"));
+    // PEP 629: a simple API page names its version. Not every index does, but a page without
+    // links needs that evidence, so an empty login page is never read as a project without files.
+    static VERSION: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?is)<meta\s[^>]*name\s*=\s*["']?pypi:repository-version\b"#)
+            .expect("valid meta pattern")
+    });
     let mut files = Vec::new();
     for anchor in ANCHOR.captures_iter(body) {
-        let attributes = &anchor[1];
         let href = HREF
-            .captures(attributes)
+            .captures(&anchor[1])
             .and_then(|href| href.get(1).or_else(|| href.get(2)).or_else(|| href.get(3)))
-            .ok_or_else(|| format!("a link has no readable href: {}", anchor[0].trim()))?;
+            .ok_or("a link has no readable href")?;
         let href = unescape(href.as_str());
-        let sha256 = href.split_once('#').and_then(|(_, fragment)| {
-            fragment
-                .strip_prefix("sha256=")
-                .map(str::to_ascii_lowercase)
-        });
+        let (target, fragment) = href.split_once('#').unwrap_or((&href, ""));
+        let target = target.split('?').next().unwrap_or_default();
+        let filename = percent_decode(target.rsplit('/').next().unwrap_or_default());
+        // PEP 503: the text of a link is the last path segment of its target.
+        let text = unescape(TAG.replace_all(&anchor[2], "").trim());
+        if text != filename {
+            return Err(format!(
+                "the link to {filename:?} is labeled {text:?}, not its file name"
+            ));
+        }
         files.push(IndexFile {
-            filename: unescape(anchor[2].trim()),
-            sha256,
+            filename,
+            sha256: fragment
+                .strip_prefix("sha256=")
+                .map(str::to_ascii_lowercase),
         });
     }
     // Every link must have been read; one that was not could be a file of the release.
     if OPENING.find_iter(body).count() != files.len() {
         return Err("a link could not be read".into());
     }
+    if files.is_empty() && !VERSION.is_match(body) {
+        return Err(
+            "the page has no links and names no pypi:repository-version, so it is no project page"
+                .into(),
+        );
+    }
     Ok(files)
+}
+
+/// `text` with every `%XX` escape decoded, as a URL path segment spells a file name.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let escaped = (bytes[index] == b'%')
+            .then(|| bytes.get(index + 1..index + 3))
+            .flatten()
+            .and_then(|hex| u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok());
+        match escaped {
+            Some(byte) => {
+                decoded.push(byte);
+                index += 3;
+            }
+            None => {
+                decoded.push(bytes[index]);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 /// The few HTML entities a filename can contain.
@@ -450,9 +501,31 @@ mod tests {
         for body in [
             "<a name=top>my_package-1.2.3.tar.gz</a>",
             "<a href=\"/files/a.tar.gz\">a.tar.gz</a><a href=\"/files/b.tar.gz\">b.tar.gz",
+            // A login page, with or without links.
+            "<html><body><form><input name=password></form></body></html>",
+            "<html><body><a href=\"/reset\">Forgot your password?</a></body></html>",
         ] {
             assert!(parse_simple("text/html", body).is_err(), "{body}");
         }
+        // A project without files.
+        assert_eq!(
+            parse_simple(
+                "text/html",
+                "<meta name=\"pypi:repository-version\" content=\"1.0\"><h1>Links for a</h1>"
+            ),
+            Ok(Vec::new())
+        );
+        // The link text may be wrapped in markup and the target percent-encoded.
+        assert_eq!(
+            parse_simple(
+                "text/html",
+                "<a href=\"/files/a%2Bb-1.0.0.tar.gz?x=1#sha256=AA\"><span>a+b-1.0.0.tar.gz</span></a>"
+            ),
+            Ok(vec![IndexFile {
+                filename: "a+b-1.0.0.tar.gz".into(),
+                sha256: Some("aa".into()),
+            }])
+        );
         assert!(parse_simple("application/vnd.pypi.simple.v1+json", "{}").is_err());
     }
 
@@ -679,5 +752,30 @@ mod tests {
         let debug = format!("{:?}", login().unwrap());
         assert!(!debug.contains("user\""), "{debug}");
         assert!(!debug.contains("presswerk-test-index-password"), "{debug}");
+    }
+
+    #[test]
+    fn authenticated_read_errors_never_show_the_credentials() {
+        let (address, _requests) = serve(vec![
+            (401, "text/plain", "Unauthorized"),
+            (
+                200,
+                "text/html",
+                "<a href=\"/files/a-1.0.0.tar.gz\">Basic dXNlcjpwcmVzc3dlcmstdGVzdC1pbmRleC1wYXNzd29yZA==</a>",
+            ),
+        ]);
+        let index = HttpIndex::new(
+            &format!("{address}/legacy/"),
+            &format!("{address}/simple/"),
+            login(),
+        )
+        .unwrap();
+        let error = index.files("a").unwrap_err().to_string();
+        assert_eq!(
+            error,
+            format!(
+                "could not decode {address}/simple/a/: the link to \"a-1.0.0.tar.gz\" is labeled \"Basic [redacted]\", not its file name"
+            )
+        );
     }
 }
