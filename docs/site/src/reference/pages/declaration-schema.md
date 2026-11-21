@@ -48,7 +48,7 @@ Every field is required, and unknown fields are rejected.
   `emoji`, a `description`, and a `semver` level of `"major"`, `"minor"`, `"patch"`, or `null`.
   `conventional.catalog` is keyed by lowercase type, and each entry has a `title` and a `semver`
   level.
-- `publishers`: keyed by publisher type, `github-release`, `oci-helm`, or `oci-image`, and then by
+- `publishers`: keyed by publisher type, `cargo`, `github-release`, `oci-helm`, or `oci-image`, and then by
   name. All may be empty. Every publisher has `after`, a list of publisher addresses in
   `<type>.<name>` form that must complete first. It may be missing in older declarations and then
   means an empty list. The module-only `before` option never enters the declaration. A credential
@@ -69,3 +69,5 @@ Every field is required, and unknown fields are rejected.
   may use `{major}`, `{minor}`, and `{patch}`; every tag contains `{version}`, no alias does, and
   `aliases` may be missing in older declarations. `compression` has either `gzip` or `zstd`, each
   with its `level`; it may be missing in older declarations and then means gzip at level 6.
+  `cargo` may be missing in older declarations. A Cargo publisher has the `name` of its crate, the
+  absolute store path of its `crate` archive, its sparse `index` URL, and a `token` credential.
