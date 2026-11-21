@@ -54,8 +54,9 @@ repository in Google Artifact Registry:
 ```
 
 One project version can only be released once per index, so two Python publishers with the same
-`name` and `indexUrl` fail module evaluation, also when the URLs are spelled differently, such as
-`https://PyPI.org:443/simple`. Publishing one project to two indexes, such as
+`name` and `indexUrl` fail module evaluation. So that no other spelling of the same index can slip
+past that check, `indexUrl` must be written in its canonical form: lowercase scheme and host, no
+default port, and no `.` or `..` path segments, such as `https://pypi.org/simple/`. Publishing one project to two indexes, such as
 PyPI and a private mirror, takes two publishers.
 
 ## Distributions
@@ -125,7 +126,8 @@ local file with the file of the same name:
 - **Conflicting:** the index lists it with another digest. Presswerk stops before the Git tag is
   pushed and never uploads anything, not even the other files.
 - **Unknown:** the index lists it without a SHA-256 digest, or its listing cannot be read
-  completely, so Presswerk cannot verify it. Presswerk stops as well.
+  completely, such as a login page instead of the project page, so Presswerk cannot verify it.
+  Presswerk stops as well.
 
 The release is complete once every declared file matches. A wheel that failed to upload is
 therefore uploaded on a retry, and the files already on the index are kept. If an upload fails
@@ -133,7 +135,7 @@ because another run uploaded the same file meanwhile, Presswerk accepts it once 
 with the same digest.
 
 An index may list a new file only some time after its upload. After its own uploads, Presswerk
-waits up to two minutes for the simple API to list them; if it still does not, the run fails and a
+waits about two minutes for the simple API to list them; if it still does not, the run fails and a
 retry completes it.
 
 Before `plan` and `prepare` start the next release, they check the previous release's own Python
