@@ -50,6 +50,14 @@ Every publisher must:
 1. avoid leaking credentials in output;
 1. respect publication ordering.
 
+A publisher reads from an artifact only what publishing it needs, such as the name and version
+that a registry's upload request carries. It may compare a version it reads anyway with the
+release version, so a stale artifact never goes out under the wrong version. It never validates
+the content beyond that: no logic or computation over what it publishes, such as honoring a
+package's own publish restrictions or checking its metadata against a registry's rules. Whether an
+artifact is right is the build's business, and whether a destination accepts it is the
+destination's.
+
 Idempotency is the core guarantee. A failure at any point is repaired by rerunning the same
 commit and version, so correctness does not depend on running every read-only check before the
 first external write.
