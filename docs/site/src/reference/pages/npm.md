@@ -99,9 +99,15 @@ registries that have no dist-tag API, but the upload then always sets `latest`: 
 version, such as a maintenance release or a republish, moves `latest` back to it on its first
 upload.
 
-npm refuses dist-tags that read as a version or a range, such as `1.2` or `v1`, as the
-[npm documentation](https://docs.npmjs.com/cli/commands/npm-dist-tag#caveats) explains. Module
-evaluation rejects such a `tag`, an alias that renders to one, and a `tag` that is also an alias.
+npm refuses dist-tags that read as a version or a range, such as `1.2`, `v1`, or `||`, as the
+[npm documentation](https://docs.npmjs.com/cli/commands/npm-dist-tag#caveats) explains. Tags
+such as `2026-lts` or `v2-next` are fine. Module evaluation rejects such a `tag`, an alias that
+renders to one, and a `tag` that is also an alias. It follows the grammar npm reads ranges with,
+and also rejects a few odd forms that npm would accept, such as `x.1`.
+
+`registry` must be written the one way Presswerk reads it, with a lowercase host and without the
+default port, such as `https://registry.npmjs.org`, so that two publishers of the same package on
+the same registry are recognized as such.
 
 ## Behavior
 
@@ -117,7 +123,10 @@ release's version with the tarball. The registry's `dist.integrity`, the tarball
 
 If the upload fails, Presswerk reads the version again: a concurrent run that uploaded the same
 tarball completes the release. After the upload, it waits until the registry shows the version,
-then moves the aliases.
+then moves the aliases. It reads each alias through the dist-tag API right before it moves it,
+since the package document a registry serves may lag behind, and leaves an alias it cannot read
+alone with a warning. Every request has a deadline, so a registry that stops answering fails the
+run instead of stalling it.
 
 A release's package is complete once its version exists in the registry. The integrity is not
 compared, the tag and the aliases do not count. Before `plan` and `prepare` start the next

@@ -120,20 +120,53 @@ impl Authentication {
     }
 }
 
-/// Whether a dist-tag would be read as a version or a range, which npm refuses, such as `1.2`,
-/// `v1`, or `x`. Approximates how npm's `semver.validRange` reads it; Nix checks the same.
+/// Whether a dist-tag looks like a version or a range, which npm refuses, such as `1.2`, `v1`,
+/// `x`, or `||`. Follows the grammar of npm's `semver.validRange`, without its loose mode: every
+/// tag it reads as a range is rejected, and so are a few odd forms it does not, such as `x.1`.
+/// Nix checks the same.
 #[must_use]
 pub fn looks_like_version(tag: &str) -> bool {
-    static PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^\s*(?:[<>]=?|=|~>?|\^)?\s*[vV=]?\s*(?:[0-9]|[xX*](?:$|[\s.|-]))")
-            .expect("the version pattern is valid")
-    });
-    tag.trim().is_empty() || PATTERN.is_match(tag)
+    tag.split("||").all(|range| is_range(range.trim()))
 }
+
+/// One range between `||`: empty, a hyphen range, or comparators separated by whitespace, where
+/// an operator may stand apart from its version.
+fn is_range(range: &str) -> bool {
+    static PATTERNS: LazyLock<(Regex, Regex, Regex)> = LazyLock::new(|| {
+        let part = "(?:[xX*]|0|[1-9][0-9]*)";
+        let identifier = "(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)";
+        let partial = format!(
+            r"{part}(?:\.{part}(?:\.{part}(?:-{identifier}(?:\.{identifier})*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)?)?"
+        );
+        let regex = |pattern: &str| Regex::new(pattern).expect("the range patterns are valid");
+        (
+            regex(&format!(r"^[v=\s]*{partial}\s+-\s+[v=\s]*{partial}$")),
+            regex(&format!(r"^{OPERATOR}?[v=]*{partial}$")),
+            regex(&format!("^{OPERATOR}$")),
+        )
+    });
+    let (hyphen, comparator, operator) = &*PATTERNS;
+    if range.is_empty() || hyphen.is_match(range) {
+        return true;
+    }
+    let mut comparators: Vec<String> = Vec::new();
+    for token in range.split_whitespace() {
+        match comparators.last_mut() {
+            Some(last) if operator.is_match(last) => last.push_str(token),
+            _ => comparators.push(token.to_owned()),
+        }
+    }
+    comparators
+        .iter()
+        .all(|candidate| comparator.is_match(candidate))
+}
+
+/// A comparison operator of a range.
+const OPERATOR: &str = r"(?:<=|>=|<|>|=|~>?|\^)";
 
 fn version_like_error(what: &str, tag: &str) -> String {
     format!(
-        "npm {what} {tag:?} would be read as a version or range, which npm refuses as a dist-tag ({DIST_TAG_RULE}); use a name that starts with a letter other than v"
+        "npm {what} {tag:?} looks like a version or range, which npm refuses as a dist-tag ({DIST_TAG_RULE})"
     )
 }
 
@@ -227,6 +260,14 @@ fn registry_url(registry: &str) -> Result<Url, String> {
             "npm registry {registry:?} must be an HTTP(S) base URL without credentials, query, or fragment"
         ));
     }
+    // Claims name the registry as written, so it must be written the one way the client reads it:
+    // a lowercase host, no default port, and no empty path segment.
+    let canonical = url.as_str().trim_end_matches('/');
+    if canonical != registry.trim_end_matches('/') || url.path().contains("//") {
+        return Err(format!(
+            "npm registry {registry:?} must be written canonically, such as {canonical:?}, so that claims recognize it"
+        ));
+    }
     Ok(url)
 }
 
@@ -314,6 +355,9 @@ pub trait NpmRegistry: fmt::Debug + Send + Sync {
     fn packument(&self, name: &str) -> Result<Option<Packument>, PublicationError>;
     /// Uploads a new version, as `npm publish` does.
     fn publish(&self, name: &str, document: &Value) -> Result<(), PublicationError>;
+    /// The dist-tags of `name` from the dist-tag API, which reflects the registry's current state
+    /// rather than a cached package document.
+    fn dist_tags(&self, name: &str) -> Result<BTreeMap<String, String>, DistTagError>;
     /// Points the dist-tag `tag` of `name` at `version`.
     fn set_dist_tag(&self, name: &str, tag: &str, version: &str) -> Result<(), DistTagError>;
 }
@@ -336,6 +380,10 @@ impl fmt::Debug for RegistryClient {
     }
 }
 
+/// How long a request may wait to connect, and for each read or write once connected.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const IO_TIMEOUT: Duration = Duration::from_secs(120);
+
 impl RegistryClient {
     /// A client for the registry at `registry`, anonymous without `authentication`.
     pub fn new(
@@ -343,10 +391,74 @@ impl RegistryClient {
         authentication: Option<Authentication>,
     ) -> Result<Self, PublicationError> {
         Ok(Self {
-            agent: ureq::AgentBuilder::new().build(),
+            agent: Self::agent(CONNECT_TIMEOUT, IO_TIMEOUT),
             base: registry_url(registry).map_err(PublicationError::new)?,
             authentication,
         })
+    }
+
+    /// Replaces the deadlines of every request, such as for a test against a stalled registry.
+    #[must_use]
+    pub fn with_timeouts(mut self, connect: Duration, io: Duration) -> Self {
+        self.agent = Self::agent(connect, io);
+        self
+    }
+
+    /// An agent whose requests cannot stall: a registry that stops answering fails the request.
+    fn agent(connect: Duration, io: Duration) -> ureq::Agent {
+        ureq::AgentBuilder::new()
+            .timeout_connect(connect)
+            .timeout_read(io)
+            .timeout_write(io)
+            .build()
+    }
+
+    /// What a failed request answered, for an error message. A registry may echo what it was
+    /// sent, so the `Authorization` header as sent is redacted, not only the secrets themselves.
+    fn failure(&self, error: ureq::Error) -> (Option<u16>, String) {
+        let (status, message) = match error {
+            ureq::Error::Status(status, response) => {
+                let body = response.into_string().unwrap_or_default();
+                let detail = serde_json::from_str::<Value>(&body)
+                    .ok()
+                    .and_then(|body| {
+                        body.get("error")
+                            .or_else(|| body.get("message"))
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .unwrap_or_else(|| body.chars().take(200).collect());
+                let detail = detail.trim();
+                let message = if detail.is_empty() {
+                    format!("HTTP {status}")
+                } else {
+                    format!("HTTP {status}: {detail}")
+                };
+                (Some(status), message)
+            }
+            ureq::Error::Transport(error) => (None, error.to_string()),
+        };
+        (status, self.redact(&message))
+    }
+
+    fn redact(&self, text: &str) -> String {
+        let mut text = text.to_owned();
+        if let Some(authentication) = &self.authentication {
+            let header = authentication.header();
+            let mut sent = vec![header.clone()];
+            sent.extend(header.split_once(' ').map(|(_, value)| value.to_owned()));
+            if let Authentication::Basic { username, password } = authentication {
+                sent.extend([password.clone(), format!("{username}:{password}")]);
+            }
+            if let Authentication::Token(token) = authentication {
+                sent.push(token.clone());
+            }
+            sent.sort_by_key(|value| std::cmp::Reverse(value.len()));
+            for value in sent.iter().filter(|value| !value.is_empty()) {
+                text = text.replace(value.as_str(), "[redacted]");
+            }
+        }
+        shared::secrets::redact(&text)
     }
 
     /// The URL of `segments` below the registry; a scoped name is one segment, `@scope%2Fname`.
@@ -368,32 +480,6 @@ impl RegistryClient {
             Some(authentication) => request.set("Authorization", &authentication.header()),
             None => request,
         }
-    }
-}
-
-/// What a failed request answered, for an error message.
-fn failure(error: ureq::Error) -> (Option<u16>, String) {
-    match error {
-        ureq::Error::Status(status, response) => {
-            let body = response.into_string().unwrap_or_default();
-            let detail = serde_json::from_str::<Value>(&body)
-                .ok()
-                .and_then(|body| {
-                    body.get("error")
-                        .or_else(|| body.get("message"))
-                        .and_then(Value::as_str)
-                        .map(str::to_owned)
-                })
-                .unwrap_or_else(|| body.chars().take(200).collect());
-            let detail = detail.trim();
-            let message = if detail.is_empty() {
-                format!("HTTP {status}")
-            } else {
-                format!("HTTP {status}: {detail}")
-            };
-            (Some(status), shared::secrets::redact(&message))
-        }
-        ureq::Error::Transport(error) => (None, shared::secrets::redact(&error.to_string())),
     }
 }
 
@@ -426,7 +512,7 @@ impl NpmRegistry for RegistryClient {
             Err(ureq::Error::Status(404, _)) => Ok(None),
             Err(error) => Err(PublicationError::new(format!(
                 "could not read {name} from {url}: {}",
-                failure(error).1
+                self.failure(error).1
             ))),
         }
     }
@@ -440,9 +526,32 @@ impl NpmRegistry for RegistryClient {
             .map_err(|error| {
                 PublicationError::new(format!(
                     "{url} refused to publish {name}: {}",
-                    failure(error).1
+                    self.failure(error).1
                 ))
             })
+    }
+
+    fn dist_tags(&self, name: &str) -> Result<BTreeMap<String, String>, DistTagError> {
+        let url = self.url(&["-", "package", name, "dist-tags"]);
+        match self
+            .request("GET", &url)
+            .set("npm-command", "dist-tag")
+            .set("Cache-Control", "no-cache")
+            .call()
+        {
+            Ok(response) => response.into_json().map_err(|error| {
+                DistTagError::Failed(format!(
+                    "could not decode the dist-tags of {name}: {}",
+                    self.redact(&error.to_string())
+                ))
+            }),
+            Err(error) => match self.failure(error) {
+                (Some(404 | 405 | 501), message) => Err(DistTagError::Unsupported(message)),
+                (_, message) => Err(DistTagError::Failed(format!(
+                    "could not read the dist-tags of {name}: {message}"
+                ))),
+            },
+        }
     }
 
     fn set_dist_tag(&self, name: &str, tag: &str, version: &str) -> Result<(), DistTagError> {
@@ -453,7 +562,7 @@ impl NpmRegistry for RegistryClient {
             .send_json(json!(version))
         {
             Ok(_) => Ok(()),
-            Err(error) => match failure(error) {
+            Err(error) => match self.failure(error) {
                 (Some(404 | 405 | 501), message) => Err(DistTagError::Unsupported(message)),
                 (_, message) => Err(DistTagError::Failed(format!(
                     "could not set dist-tag {tag} of {name}: {message}"
@@ -896,13 +1005,7 @@ impl NpmPublisher {
         Ok(aliases
             .into_iter()
             .map(|alias| {
-                let position = match packument.dist_tags.get(&alias) {
-                    None => alias::position(None, version),
-                    Some(current) => match Version::parse(current) {
-                        Ok(current) => alias::position(Some(&current), version),
-                        Err(_) => Position::Kept(format!("points to {current:?}, no version")),
-                    },
-                };
+                let position = alias_position(&packument.dist_tags, &alias, version);
                 (alias, position)
             })
             .collect())
@@ -963,48 +1066,63 @@ impl NpmPublisher {
         Ok(AssetStep::Uploaded)
     }
 
-    /// Moves every alias that points to a lower version or to nothing, after reading them again.
-    /// Aliases are best effort: a failure is a warning that a rerun repairs.
+    /// Moves every alias that points to a lower version or to nothing. Each is read through the
+    /// dist-tag API right before it is written, as `npm dist-tag add` does, since a cached package
+    /// document could move an alias back. Aliases are best effort: a failure is a warning that a
+    /// rerun repairs, and an alias that cannot be read is not written.
     fn move_aliases(&self, release: &Release) -> Vec<ArtifactStep> {
         let version = &release.version;
-        let positions = self
-            .registry
-            .packument(&self.declaration.name)
-            .and_then(|packument| self.alias_positions(&packument.unwrap_or_default(), version));
-        let positions = match positions {
-            Ok(positions) => positions,
-            Err(error) => {
-                return render_aliases(&self.declaration.tag, &self.declaration.aliases, version)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|alias| ArtifactStep {
-                        step: AssetStep::Warning(error.to_string()),
-                        ..self.alias_step(&alias, &Position::Same)
-                    })
-                    .collect();
-            }
-        };
-        positions
+        let name = &self.declaration.name;
+        let aliases = render_aliases(&self.declaration.tag, &self.declaration.aliases, version)
+            .unwrap_or_default();
+        aliases
             .into_iter()
-            .map(|(alias, position)| {
+            .map(|alias| {
+                let unsupported = |answer: String| {
+                    AssetStep::Warning(format!(
+                        "{} has no dist-tag API ({answer}); set {alias} another way, or publish with tag = \"{alias}\" and no aliases",
+                        self.declaration.registry
+                    ))
+                };
+                let position = match self.registry.dist_tags(name) {
+                    Ok(dist_tags) => alias_position(&dist_tags, &alias, version),
+                    Err(error) => {
+                        return ArtifactStep {
+                            step: match error {
+                                DistTagError::Unsupported(answer) => unsupported(answer),
+                                DistTagError::Failed(reason) => AssetStep::Warning(reason),
+                            },
+                            ..self.alias_step(&alias, &Position::Same)
+                        };
+                    }
+                };
                 let mut step = self.alias_step(&alias, &position);
                 if position.moves() {
-                    step.step = match self.registry.set_dist_tag(
-                        &self.declaration.name,
-                        &alias,
-                        &version.to_string(),
-                    ) {
+                    step.step = match self.registry.set_dist_tag(name, &alias, &version.to_string())
+                    {
                         Ok(()) => AssetStep::Uploaded,
-                        Err(DistTagError::Unsupported(answer)) => AssetStep::Warning(format!(
-                            "{} has no dist-tag API ({answer}); set {alias} another way, or publish with tag = \"{alias}\" and no aliases",
-                            self.declaration.registry
-                        )),
+                        Err(DistTagError::Unsupported(answer)) => unsupported(answer),
                         Err(DistTagError::Failed(reason)) => AssetStep::Warning(reason),
                     };
                 }
                 step
             })
             .collect()
+    }
+}
+
+/// Where the dist-tag `alias` stands for the release of `version`, by the version it points to.
+fn alias_position(
+    dist_tags: &BTreeMap<String, String>,
+    alias: &str,
+    version: &Version,
+) -> Position {
+    match dist_tags.get(alias) {
+        None => alias::position(None, version),
+        Some(current) => match Version::parse(current) {
+            Ok(current) => alias::position(Some(&current), version),
+            Err(_) => Position::Kept(format!("points to {current:?}, no version")),
+        },
     }
 }
 
