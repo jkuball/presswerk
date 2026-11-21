@@ -31,7 +31,7 @@ Declaring publishers for other targets in the flake itself is planned.
 
 Publishers form a dependency graph. Name a publisher as `<type>.<name>` in [`after`](/reference/options/#publishers.github-release.name.after) when it must complete first:
 
-```nix
+```nix presswerk-module
 {
   publishers.oci-image.api = {
     # …
@@ -52,7 +52,7 @@ Two publishers must never write the same remote object. Every publisher claims w
 destination such as an OCI repository plus a key such as a tag, and a duplicate claim fails module
 evaluation. An image and a Helm chart in one repository both claim the tag of the version:
 
-```nix
+```nix presswerk-module
 {
   publishers.oci-image.api = {
     repository = "ghcr.io/foo/api";
@@ -66,13 +66,10 @@ evaluation. An image and a Helm chart in one repository both claim the tag of th
 ```
 
 ```text
-publishers.oci-helm.chart and publishers.oci-image.api both push to oci://ghcr.io/foo/api and both render 1.2.3 for version 1.2.3
+publishers.oci-helm.chart and publishers.oci-image.api both claim {version} in oci://ghcr.io/foo/api
 ```
 
-Pushing the chart to another repository, such as `ghcr.io/foo/charts/api`, resolves it. Nix checks
-keys such as `{version}` with the sample version `1.2.3`; `plan`, `prepare`, and `publish` check
-them again with the version they release, so a collision that only that version renders, such as
-an image alias `0.1.0` and the chart tag of release `0.1.0`, stops before anything is written.
+Pushing the chart to another repository, such as `ghcr.io/foo/charts/api`, resolves it.
 
 ## Credentials
 
@@ -81,7 +78,7 @@ time, such as `{ env = "NAME"; }` for the environment variable `NAME`, or, for w
 such as a registry username, the value itself, `{ value = "…"; }`. Tokens and passwords are always
 secrets.
 
-```nix
+```nix presswerk-module
 {
   publishers.oci-image.api = {
     # …
