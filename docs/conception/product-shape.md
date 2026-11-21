@@ -70,7 +70,8 @@ Rule of thumb: what can be checked without a version and without the remote is c
 what needs the version, secrets, or the remote is checked by Rust. Two publishers that push the
 same tag, for example, fail while the module is evaluated, rendered with a sample version; the CLI
 checks the same claims again with the version it releases, since some only collide for that
-version.
+version. Neither checks the content of an artifact: publishers read only what publishing needs
+(see [publisher safety requirements](publication.md#publisher-safety-requirements)).
 
 ### Agent skill
 
