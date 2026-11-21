@@ -404,7 +404,8 @@ impl RegistryClient {
         self
     }
 
-    /// An agent whose requests cannot stall: a registry that stops answering fails the request.
+    /// An agent whose requests cannot stall: a registry that stops answering for longer than a
+    /// read or write may wait fails the request. ureq has no overall deadline that keeps these.
     fn agent(connect: Duration, io: Duration) -> ureq::Agent {
         ureq::AgentBuilder::new()
             .timeout_connect(connect)
@@ -418,7 +419,8 @@ impl RegistryClient {
     fn failure(&self, error: ureq::Error) -> (Option<u16>, String) {
         let (status, message) = match error {
             ureq::Error::Status(status, response) => {
-                let body = response.into_string().unwrap_or_default();
+                // Redacted before it is shortened, so no echoed credential is cut in half.
+                let body = self.redact(&response.into_string().unwrap_or_default());
                 let detail = serde_json::from_str::<Value>(&body)
                     .ok()
                     .and_then(|body| {
@@ -991,13 +993,24 @@ impl NpmPublisher {
                 }
             },
         };
-        let aliases = self.alias_positions(&packument, &release.version)?;
+        // Whether an alias still moves decides whether `publish` runs at all, so it is read
+        // through the dist-tag API, since a cached package document may lag behind either way.
+        // A registry without that API, or one that cannot be read now, leaves the document's view.
+        let dist_tags = if version == VersionState::Matching && !self.declaration.aliases.is_empty()
+        {
+            self.registry
+                .dist_tags(&self.declaration.name)
+                .unwrap_or(packument.dist_tags)
+        } else {
+            packument.dist_tags
+        };
+        let aliases = self.alias_positions(&dist_tags, &release.version)?;
         Ok(Inspection { version, aliases })
     }
 
     fn alias_positions(
         &self,
-        packument: &Packument,
+        dist_tags: &BTreeMap<String, String>,
         version: &Version,
     ) -> Result<Vec<(String, Position)>, PublicationError> {
         let aliases = render_aliases(&self.declaration.tag, &self.declaration.aliases, version)
@@ -1005,7 +1018,7 @@ impl NpmPublisher {
         Ok(aliases
             .into_iter()
             .map(|alias| {
-                let position = alias_position(&packument.dist_tags, &alias, version);
+                let position = alias_position(dist_tags, &alias, version);
                 (alias, position)
             })
             .collect())
