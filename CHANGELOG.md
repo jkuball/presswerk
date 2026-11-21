@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.21.0] - 2026-11-21
 
 - 💥 Credentials are declared as `{ env = "NAME"; }` instead of `{ secret = "NAME"; }`; usernames
   may still be `{ value = "…"; }`. This affects every publisher with credentials, including the
@@ -10,6 +10,57 @@
 - 💥 `publish` now stops before writing anything if a declared secret is missing.
 - ✨ Two publishers that claim the same tag or GitHub Release now stop the release before anything
   is published.
+
+### 💥 Introduce breaking changes
+
+- (release): Declare every credential as a value or a secret source
+
+### 📝 Add or update documentation
+
+- (docs): Phrase the upgrade note as changes
+- (docs): Classify the upgrade note with gitmojis
+- (docs): Drop the links from the upgrade note
+- (docs): Qualify the upgrade note
+- (docs): Turn the unreleased notes into a short upgrade note
+- (docs): Introduce the claim collision error
+- (docs): Link the publisher examples to their options and trim claims
+- (docs): Explain claims as a concept with one example
+- (docs): Name the claim setups exactly
+- (docs): Explain claims as a destination plus a version-template key
+- (docs): Explain the publisher interface, claims, and credentials
+
+### 🐛 Fix a bug
+
+- (publish): Read secrets only from the credentials each type names
+- (publish): Report an unreadable previous release as unknown
+- (publish): Check every publisher at the released version and redact all output
+
+### 🔒️ Fix security or privacy issues
+
+- (oci): Keep publisher secrets from image executables
+- (oci): Redact what image executables print
+- (release): Accept tokens and passwords only as secrets and fold GitHub repository case in claims
+
+### 🚸 Improve user experience / usability
+
+- (release): Name colliding claims as written, without the sample version
+- (prepare): Name why a previous declaration cannot be read
+
+### ♻️ Refactor code
+
+- (release): Flatten credentials to one of value or env
+- (release): Derive claims as version templates in Nix and render them in the CLI
+- (release): Split the publisher options by type and check claims in Nix
+- (publish): Put the publisher types behind one interface
+- (publish): Move the publisher types into their own modules
+
+### 🔥 Remove code or files
+
+- (release): Read only the current credential shape
+
+### ✅ Add, update, or pass tests
+
+- (oci): Check the stripped secrets without changing the test environment
 
 ## [0.20.1] - 2026-11-19
 
