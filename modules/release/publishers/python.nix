@@ -11,18 +11,22 @@
       # `_`, and `.` as one `-`.
       normalize = name: lib.concatStringsSep "-" (builtins.filter builtins.isString (builtins.split "[-_.]+" (lib.toLower name)));
 
-      # The simple API as one canonical string, so equivalent spellings claim the same index:
-      # lowercase scheme and host, no default port, and one trailing slash.
-      canonicalUrl = url:
-        let
-          parts = builtins.match "([A-Za-z]+)://(\\[[^]]*]|[^/:]+)(:([0-9]+))?(/.*)?" url;
-          scheme = lib.toLower (builtins.elemAt parts 0);
-          host = lib.toLower (builtins.elemAt parts 1);
-          port = builtins.elemAt parts 3;
-          path = builtins.elemAt parts 4;
-          defaultPort = { http = "80"; https = "443"; }.${scheme};
-        in
-        "${scheme}://${host}${lib.optionalString (port != null && port != defaultPort) ":${port}"}${lib.removeSuffix "/" (if path == null then "" else path)}/";
+      # The simple API in the canonical form that URL parsing writes, so that two spellings of
+      # one index never claim it twice: lowercase scheme and host, no default or zero-padded
+      # port, and no `.` or `..` path segments. The CLI checks the complete canonical form.
+      indexUrl = types.addCheck url
+        (url:
+          let
+            parts = builtins.match "(https?)://([a-z0-9.-]+|\\[[0-9a-f:.]+])(:([0-9]+))?(/[^\\]*)?" url;
+            scheme = builtins.elemAt parts 0;
+            port = builtins.elemAt parts 3;
+            path = builtins.elemAt parts 4;
+            segments = if path == null then [ ] else lib.splitString "/" (lib.toLower path);
+          in
+          parts != null
+            && (port == null || (builtins.match "[1-9][0-9]*" port != null && port != { http = "80"; https = "443"; }.${scheme}))
+            && !lib.any (segment: builtins.elem segment [ "." ".." "%2e" "%2e%2e" ".%2e" "%2e." ]) segments)
+      // { description = "canonical HTTP(S) URL without credentials, query, or fragment"; };
 
       pythonModule = { config, ... }: {
         imports = [ (publisherLib.instance { type = "python"; }) ];
@@ -47,7 +51,7 @@
           };
 
           indexUrl = mkOption {
-            type = url;
+            type = indexUrl;
             example = "https://pypi.org/simple/";
             description = "The index's simple API, which Presswerk reads the release's state from. It is read anonymously first, and with `username` and `password` only if the index asks for them.";
           };
@@ -69,7 +73,7 @@
           declaration = { inherit (config) name distributions repositoryUrl indexUrl username password; };
           # An index holds one release per project and version.
           claims = [{
-            destination = canonicalUrl config.indexUrl;
+            destination = "${lib.removeSuffix "/" config.indexUrl}/";
             key = "${normalize config.name}=={version}";
           }];
         };

@@ -750,9 +750,12 @@ in
           { indexUrl = "https://pypi.org/simple/"; }
           { indexUrl = "HTTPS://PyPI.org:443/simple"; }
           { indexUrl = "https://pypi.org:8443/simple/"; }
-          { indexUrl = "http://[::1]:80/simple"; }
+          { indexUrl = "http://[::1]:8080/simple"; }
+          { indexUrl = "https://pypi.org/proxy/../simple/"; }
+          { indexUrl = "https://pypi.org/x/%2E%2E/simple/"; }
+          { indexUrl = "https://pypi.org:0443/simple/"; }
         ];
-      expected = [ true true false false false true true ];
+      expected = [ true true false false false true true false false false ];
     };
 
     "test OCI Helm and OCI image publishers do not share a release tag" = {

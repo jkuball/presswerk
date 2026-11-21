@@ -62,6 +62,7 @@ impl PythonDeclaration {
         }
         validate_url("repositoryUrl", &self.repository_url)?;
         validate_url("indexUrl", &self.index_url)?;
+        validate_canonical_index_url(&self.index_url)?;
         self.username.validate()?;
         self.password.validate_secret("index password")
     }
@@ -106,6 +107,26 @@ fn validate_url(option: &str, url: &str) -> Result<(), DeclarationError> {
     {
         return Err(DeclarationError::Invalid(format!(
             "{option} {url:?} must be an HTTP(S) URL without credentials, query, or fragment"
+        )));
+    }
+    Ok(())
+}
+
+/// The simple API must be spelled as URL parsing writes it, with a trailing slash, so that two
+/// spellings of one index, such as `https://pypi.org/x/../simple/` and
+/// `https://pypi.org/simple/`, can never claim it twice.
+fn validate_canonical_index_url(url: &str) -> Result<(), DeclarationError> {
+    let with_slash = if url.ends_with('/') {
+        url.to_owned()
+    } else {
+        format!("{url}/")
+    };
+    let canonical = Url::parse(&with_slash)
+        .map_err(|error| DeclarationError::Invalid(format!("invalid indexUrl {url:?}: {error}")))?;
+    if canonical.as_str() != with_slash {
+        return Err(DeclarationError::Invalid(format!(
+            "indexUrl {url:?} must be written in its canonical form, {:?}",
+            canonical.as_str()
         )));
     }
     Ok(())
@@ -420,7 +441,11 @@ impl<I: Index> PythonPublisher<I> {
                     self.lag.timeout.as_secs()
                 )));
             }
-            std::thread::sleep(self.lag.interval);
+            std::thread::sleep(
+                self.lag
+                    .interval
+                    .min(deadline.saturating_duration_since(Instant::now())),
+            );
         }
     }
 }
@@ -910,6 +935,9 @@ mod tests {
             "password": { "env": "PYPI_TOKEN" }
         });
         let python = Python::from_declaration(&valid).unwrap();
+        let mut without_slash = valid.clone();
+        without_slash["indexUrl"] = json!("https://pypi.org/simple");
+        Python::from_declaration(&without_slash).unwrap();
         assert_eq!(
             python.credentials(),
             [
@@ -934,6 +962,10 @@ mod tests {
                 json!("https://user:secret@upload.pypi.org/legacy/"),
             ),
             ("indexUrl", json!("https://pypi.org/simple/?q=1")),
+            ("indexUrl", json!("https://pypi.org/proxy/../simple/")),
+            ("indexUrl", json!("https://pypi.org:0443/simple/")),
+            ("indexUrl", json!("https://pypi.org:443/simple/")),
+            ("indexUrl", json!("https://PyPI.org/simple/")),
             ("password", json!({ "value": "secret" })),
         ] {
             let mut invalid = valid.clone();
