@@ -1,5 +1,6 @@
-//! What several publisher types share: decoding, secrets, digests, and version templates.
+//! What several publisher types share: decoding, secrets, digests, version templates, and aliases.
 
+pub mod alias;
 pub mod digest;
 pub mod secrets;
 pub mod template;

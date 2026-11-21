@@ -11,6 +11,7 @@ use crate::declaration::DeclarationError;
 use crate::publication::{
     ArtifactKind, ArtifactStep, ArtifactSteps, AssetStep, PublicationError, PublisherState, Release,
 };
+use crate::publishers::shared::alias::Position;
 use crate::publishers::shared::secrets::Credential;
 use crate::publishers::{
     Completeness, Context, Description, Labels, Publisher, PublisherType, WarningLevel, shared,
@@ -397,10 +398,7 @@ pub fn validate_tag_templates(tags: &[String], aliases: &[String]) -> Result<(),
             "OCI tag {tag:?} must contain {{version}}; declare a tag that follows other versions under aliases"
         ));
     }
-    if let Some(alias) = aliases
-        .iter()
-        .find(|alias| alias.contains(VERSION_PLACEHOLDER))
-    {
+    if let Some(alias) = shared::alias::single_version_template(aliases) {
         return Err(format!(
             "OCI alias {alias:?} must not contain {{version}}, which names a single version; declare it under tags"
         ));
@@ -435,7 +433,8 @@ pub fn render_tags(
     });
     let aliases = aliases
         .iter()
-        .map(|template| (template, OciTag::Alias(render_template(template, version))));
+        .zip(shared::alias::render(aliases, version))
+        .map(|(template, alias)| (template, OciTag::Alias(alias)));
     let mut rendered = Vec::new();
     for (template, tag) in tags.chain(aliases) {
         if !is_valid_tag(tag.name()) {
@@ -1157,14 +1156,11 @@ impl OciImagePublisher {
                     Err(error) => return Ok((TagState::Unknown(error.to_string()), None)),
                 };
                 let Some((actual, manifest)) = current else {
-                    return Ok((
-                        if prerelease {
-                            TagState::Kept("pre-release".into())
-                        } else {
-                            TagState::Missing
-                        },
-                        None,
-                    ));
+                    let state = match shared::alias::position(None, &release.version) {
+                        Position::Kept(reason) => TagState::Kept(reason),
+                        _ => TagState::Missing,
+                    };
+                    return Ok((state, None));
                 };
                 if self.is_release_index(&manifest, &release.version) {
                     return Ok(matching(actual, manifest));
@@ -1185,14 +1181,16 @@ impl OciImagePublisher {
                         )),
                         Err(error) => TagState::Unknown(error.to_string()),
                     },
-                    Some(current) if current > release.version => {
-                        TagState::Kept(format!("{current} is higher"))
+                    Some(current) => {
+                        match shared::alias::position(Some(&current), &release.version) {
+                            Position::Missing | Position::Behind => TagState::Behind,
+                            Position::Kept(reason) => TagState::Kept(reason),
+                            Position::Same => TagState::Conflicting(format!(
+                                "{} points to {actual}, an index of version {current} with other images",
+                                self.reference(name)
+                            )),
+                        }
                     }
-                    Some(current) if current == release.version => TagState::Conflicting(format!(
-                        "{} points to {actual}, an index of version {current} with other images",
-                        self.reference(name)
-                    )),
-                    Some(_) => TagState::Behind,
                 };
                 Ok((state, None))
             }

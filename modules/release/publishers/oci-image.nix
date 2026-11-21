@@ -4,6 +4,7 @@
     let
       inherit (lib) mkOption types;
       oci = import ./_oci.nix { inherit lib publisherLib; };
+      aliasLib = import ./_aliases.nix { inherit lib; };
       renderTags = image: map oci.renderTag (image.tags ++ image.aliases);
 
       ociImageModule = { config, ... }: {
@@ -32,7 +33,7 @@
             type = types.listOf oci.tag;
             default = [ ];
             example = [ "latest" "{major}" "{major}.{minor}" ];
-            description = "Floating tags, also called rolling tags, that follow the release line, such as `latest`, `{major}`, or `{major}.{minor}`. An alias may use `{major}`, `{minor}`, and `{patch}`, but not `{version}`. It moves only to a higher final version than the one it points to, so `{major}` stays within its major version.";
+            description = "Floating tags, also called rolling tags, that follow the release line, such as `latest`, `{major}`, or `{major}.{minor}`. ${aliasLib.rule}";
           };
 
           compression = {
@@ -113,10 +114,11 @@
               assertion = image.tags != [ ] && lib.all (lib.hasInfix "{version}") image.tags;
               message = "publishers.oci-image.${name}.tags must contain {version} in every tag, and at least one tag, so every release has a tag of its own; declare tags that follow other versions under aliases";
             }
-            {
-              assertion = !lib.any (lib.hasInfix "{version}") image.aliases;
-              message = "publishers.oci-image.${name}.aliases must not contain {version}, which names a single version; declare such tags under tags";
-            }
+            (aliasLib.assertion {
+              address = "oci-image.${name}";
+              inherit (image) aliases;
+              hint = "declare such tags under tags";
+            })
             {
               assertion = image.compression.gzip.enable != image.compression.zstd.enable;
               message = "publishers.oci-image.${name}.compression needs exactly one of gzip and zstd enabled";
