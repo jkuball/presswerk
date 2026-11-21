@@ -761,9 +761,9 @@ fn a_predecessor_with_an_unknown_publisher_type_needs_trust() {
     predecessor_this_cli_cannot_read_needs_trust(
         &RELEASE_FLAKE.replace(
             "publishers.\"github-release\".default = {",
-            "publishers.npm.default = { };\n      publishers.\"github-release\".default = {",
+            "publishers.nuget.default = { };\n      publishers.\"github-release\".default = {",
         ),
-        "unknown publisher type \"npm\"",
+        "unknown publisher type \"nuget\"",
     );
 }
 
