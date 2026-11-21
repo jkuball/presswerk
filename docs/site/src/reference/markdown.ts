@@ -10,6 +10,7 @@ import gitmojiPage from './pages/gitmoji.md?raw';
 import npmPage from './pages/npm.md?raw';
 import ociImagePage from './pages/oci-image.md?raw';
 import publishersPage from './pages/publishers.md?raw';
+import pythonPage from './pages/python.md?raw';
 import type { CliArgument, CliCommand, Literal, ReferenceData, ReleaseOption } from './data';
 
 /**
@@ -213,6 +214,15 @@ export const referencePages: ReferencePage[] = [
     markdown: ({ options }, base, target) =>
       fill(ociImagePage, base, {
         options: optionList(options, 'publishers.oci-image.', 3, target),
+      }),
+  },
+  {
+    slug: 'reference/publishers/python',
+    title: 'Python publisher',
+    description: 'The Python publisher for wheels and sdists on PyPI and other package indexes: indexes, distributions, behavior, credentials, and options.',
+    markdown: ({ options }, base, target) =>
+      fill(pythonPage, base, {
+        options: optionList(options, 'publishers.python.', 3, target),
       }),
   },
   {

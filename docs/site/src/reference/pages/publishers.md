@@ -26,6 +26,7 @@ Presswerk has these built-in publishers:
 - [npm](/reference/publishers/npm/) for package tarballs
 - [OCI: Helm Chart](/reference/publishers/oci-helm/) for packaged charts in OCI registries
 - [OCI: Image](/reference/publishers/oci-image/) for container images
+- [Python](/reference/publishers/python/) for wheels and sdists on PyPI and other package indexes
 
 Declaring publishers for other targets in the flake itself is planned.
 
