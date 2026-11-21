@@ -107,5 +107,9 @@ in
       publishers = lib.mapAttrs
         (_type: lib.mapAttrs (_name: publisher: publisher.declaration // { after = publisher.resolvedAfter; inherit (publisher) claims; }))
         (builtins.removeAttrs releaseConfig.publishers releaseConfig.publisherAliases);
+    }
+    # Only a declared trust is written, so declarations without one keep their shape.
+    // lib.optionalAttrs (releaseConfig.trustedPredecessor != null) {
+      trustedPredecessor = { inherit (releaseConfig.trustedPredecessor) tag commit; };
     };
 }

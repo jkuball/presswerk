@@ -131,22 +131,26 @@ Before 1.0, an intentional schema break may require a one-time crossing:
 1. record the annotated tag's peeled commit SHA and confirm the local and remote tag agree;
 1. update the release toolchain, then run `prepare` normally. It must stop with the dedicated
    unsupported-predecessor error naming that exact tag and SHA;
-1. rerun `prepare --trust-predecessor <tag>=<sha>`. The exception is accepted only when the local
-   tag, remote tag, SHA, and ancestry all match that exact unsupported predecessor;
+1. declare `trustedPredecessor = { tag = "<tag>"; commit = "<sha>"; }` in the release module, or
+   rerun `prepare --trust-predecessor <tag>=<sha>` for one run; `plan` accepts both as well. The
+   exception is accepted only when the local tag, remote tag, SHA, and ancestry all match that
+   exact unsupported predecessor;
 1. review and push the generated release commit. It records
    `Presswerk-Trusted-Predecessor: <tag> <sha>` as its final commit trailer. `publish` takes no
    trust flag; it consumes the immutable trailer and revalidates the same facts before writing.
 
-The flag and trailer are rejected for a supported predecessor, the first release, a different
+The trust and trailer are rejected for a supported predecessor, the first release, a different
 SHA or tag, a missing or moved remote tag, or a non-ancestor. They bypass only decoding and
-rechecking the old publishers, which step 1 performed with the old tool.
+rechecking the old publishers, which step 1 performed with the old tool. If both the option and
+the flag are given, they must name the same release. An option that names a release older than
+the direct predecessor, such as the one an earlier release commit already trusted, has no effect;
+`plan` and `prepare` warn that it can be removed.
 
-This crossing cannot land through the ordinary green path by itself. A pin-bump pull request's
-`plan` intentionally fails at the unsupported predecessor, while trusted `prepare` creates an
-untagged release commit that ordinary CI still recognizes as pending. The migration therefore
-needs an explicit landing workflow or a temporary, reviewed CI or branch-protection exception to
-land the pin update together with that generated release commit. Normal `publish` resumes from
-the committed trailer afterward.
+Declared in the release module, the crossing lands through the ordinary green path: the pin-bump
+pull request carries the option, its `plan` passes, and the usual `prepare` writes the trailer.
+With the flag alone, `plan` without it still fails at the unsupported predecessor, so the pin
+update needs a manual `prepare` or a temporary, reviewed CI exception to land. Normal `publish`
+resumes from the committed trailer afterward.
 
 After 1.0, schema evolution is expected to preserve backward compatibility. This mechanism
 remains an emergency fallback, not the normal upgrade procedure.

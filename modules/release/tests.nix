@@ -110,6 +110,16 @@ let
     versionFiles.cargo.presswerk = { };
   };
 
+  trusted = commit: mkRelease {
+    inherit sourceRoot;
+    imports = [ publisher ];
+    versionFiles.cargo.presswerk = { };
+    trustedPredecessor = {
+      tag = "v0.20.1";
+      inherit commit;
+    };
+  };
+
   overrides = mkRelease {
     sourceRoot = fixtureRoot;
     imports = [ publisher ];
@@ -1511,6 +1521,47 @@ in
     "test normalized declaration round-trips through JSON" = {
       expr = builtins.fromJSON (builtins.toJSON defaults);
       expected = defaults;
+    };
+
+    "test trusted predecessor is omitted unless declared" = {
+      expr = defaults ? trustedPredecessor;
+      expected = false;
+    };
+
+    "test trusted predecessor is written into the declaration" = {
+      expr = (trusted "d1d91d0afbc0840d2f9b4c60321acbc8e1b7ce6b").trustedPredecessor;
+      expected = {
+        tag = "v0.20.1";
+        commit = "d1d91d0afbc0840d2f9b4c60321acbc8e1b7ce6b";
+      };
+    };
+
+    "test trusted predecessor accepts a SHA-256 commit" = {
+      expr = succeeds (trusted (lib.concatStrings (lib.replicate 8 "0123abcd")));
+      expected = true;
+    };
+
+    "test trusted predecessor rejects an abbreviated commit" = {
+      expr = succeeds (trusted "d1d91d0");
+      expected = false;
+    };
+
+    "test trusted predecessor rejects a commit that is not hexadecimal" = {
+      expr = succeeds (trusted "g1d91d0afbc0840d2f9b4c60321acbc8e1b7ce6b");
+      expected = false;
+    };
+
+    "test trusted predecessor rejects an empty tag" = {
+      expr = succeeds (mkRelease {
+        inherit sourceRoot;
+        imports = [ publisher ];
+        versionFiles.cargo.presswerk = { };
+        trustedPredecessor = {
+          tag = "";
+          commit = "d1d91d0afbc0840d2f9b4c60321acbc8e1b7ce6b";
+        };
+      });
+      expected = false;
     };
 
     "test Presswerk self release uses the current schema" = {

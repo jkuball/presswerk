@@ -56,9 +56,13 @@ fn run() -> Result<bool> {
 
     let mut successful = true;
     match command {
-        Command::Plan => {
+        Command::Plan { trust_predecessor } => {
             let dirty = is_worktree_dirty(".")?;
-            let plan = build_head_release_plan(".", &GitCliffAnalyzer)?;
+            let plan = build_head_release_plan(
+                ".",
+                &GitCliffAnalyzer,
+                trusted_predecessor(trust_predecessor.as_deref())?,
+            )?;
             if dirty {
                 errln!(
                     "warning: working tree is dirty; showing the plan for HEAD ({}) without local changes",
@@ -70,11 +74,11 @@ fn run() -> Result<bool> {
         }
         Command::Prepare { trust_predecessor } => {
             let dirty = is_worktree_dirty(".")?;
-            let trusted_predecessor = trust_predecessor
-                .as_deref()
-                .map(TrustedPredecessor::from_argument)
-                .transpose()?;
-            let plan = build_head_preparation_plan(".", &GitCliffAnalyzer, trusted_predecessor)?;
+            let plan = build_head_preparation_plan(
+                ".",
+                &GitCliffAnalyzer,
+                trusted_predecessor(trust_predecessor.as_deref())?,
+            )?;
             if dirty {
                 errln!(
                     "warning: working tree is dirty; preparing HEAD ({}) without local changes",
@@ -173,6 +177,12 @@ fn run() -> Result<bool> {
         },
     }
     Ok(successful)
+}
+
+fn trusted_predecessor(argument: Option<&str>) -> Result<Option<TrustedPredecessor>> {
+    Ok(argument
+        .map(TrustedPredecessor::from_argument)
+        .transpose()?)
 }
 
 /// Tells before anything is written what the publishers found on their remotes, such as the
