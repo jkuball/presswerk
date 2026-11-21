@@ -44,6 +44,8 @@ pub struct ReleasePlan {
     pub publisher_descriptions: Vec<(String, Description)>,
     release_files: Vec<ReleaseFile>,
     trusted_predecessor: Option<TrustedPredecessor>,
+    /// Trust given only by `--trust-predecessor`, which `prepare` needs again.
+    trust_argument: Option<TrustedPredecessor>,
     /// What the publishers found on their remotes for the next release before anything is
     /// written, such as an alias another tool pushed.
     pub warnings: Vec<Warning>,
@@ -101,6 +103,7 @@ fn build_head_plan(
     let secrets = crate::publishers::shared::secrets::Secrets::resolve(
         evaluated.declaration.publishers.secrets(),
     );
+    let declares_trust = evaluated.declaration.trusted_predecessor.is_some();
     let (trusted_predecessor, trust_warning) =
         resolve_trusted_predecessor(repository_path, &evaluated, trusted_predecessor)?;
     let date = time::OffsetDateTime::now_utc().date().to_string();
@@ -127,6 +130,7 @@ fn build_head_plan(
             Ok(verified)
         },
     )?;
+    plan.trust_argument = trusted_predecessor.clone().filter(|_| !declares_trust);
     plan.trusted_predecessor = trusted_predecessor;
     let session = plan_session(&plan, secrets);
     preview_publishers(&mut plan, &session)?;
@@ -413,6 +417,7 @@ pub fn build_release_plan(
         publisher_descriptions,
         release_files,
         trusted_predecessor: None,
+        trust_argument: None,
         warnings: Vec::new(),
     })
 }
@@ -582,9 +587,14 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
     // `prepare` refuses to build on a pending release, so it is not suggested then.
     match &plan.next_version {
         Some(version) if plan.pending_release().is_none() => {
+            let trust = plan
+                .trust_argument
+                .as_ref()
+                .map(|trust| format!(" --trust-predecessor {trust}"))
+                .unwrap_or_default();
             let _ = writeln!(
                 output,
-                "\nNothing written. Run `presswerk prepare` to commit {version}."
+                "\nNothing written. Run `presswerk prepare{trust}` to commit {version}."
             );
         }
         _ => output.push_str("\nNothing written.\n"),

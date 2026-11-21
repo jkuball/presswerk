@@ -490,6 +490,10 @@ fn plan_and_prepare_adopt_a_release_trusted_in_the_release_module() {
         String::from_utf8_lossy(&plan.stderr)
     );
     assert!(stdout.contains("next version       0.39.0\n"), "{stdout}");
+    assert!(
+        stdout.ends_with("\nNothing written. Run `presswerk prepare` to commit 0.39.0.\n"),
+        "{stdout}"
+    );
 
     let prepared = presswerk_in(repository.path(), &["prepare"]);
     let stderr = String::from_utf8_lossy(&prepared.stderr);
@@ -633,7 +637,12 @@ fn plan_crosses_an_untrusted_predecessor_with_the_flag() {
         String::from_utf8_lossy(&plan.stderr)
     );
     assert!(stdout.contains("next version       0.39.0\n"), "{stdout}");
-    assert!(stdout.contains("\nNothing written."), "{stdout}");
+    assert!(
+        stdout.ends_with(&format!(
+            "\nNothing written. Run `presswerk prepare --trust-predecessor {trust}` to commit 0.39.0.\n"
+        )),
+        "{stdout}"
+    );
 }
 
 #[test]
