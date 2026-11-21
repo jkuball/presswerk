@@ -58,8 +58,14 @@ impl PublicationError {
         schema_version: i64,
     ) -> Self {
         let tag = tag.into();
+        let trust = TrustedPredecessor {
+            tag: tag.clone(),
+            commit,
+        };
         let message = format!(
-            "previous release tag {tag:?} at {commit} uses a declaration with schemaVersion {schema_version} that this CLI cannot read; verify that release with its original Presswerk toolchain, then trust it with `trustedPredecessor = {{ tag = \"{tag}\"; commit = \"{commit}\"; }};` in the release module or `presswerk prepare --trust-predecessor {tag}={commit}`"
+            "previous release tag {tag:?} at {commit} uses a declaration with schemaVersion {schema_version} that this CLI cannot read; verify that release with its original Presswerk toolchain, then trust it with `{}` in the release module or `presswerk prepare {}`",
+            trust.option(),
+            trust.flag()
         );
         Self::unreadable_predecessor(
             message,
@@ -77,8 +83,14 @@ impl PublicationError {
         reason: &impl fmt::Display,
     ) -> Self {
         let tag = tag.into();
+        let trust = TrustedPredecessor {
+            tag: tag.clone(),
+            commit,
+        };
         let message = format!(
-            "previous release tag {tag:?} at {commit} uses a declaration with schemaVersion {UNSTABLE_SCHEMA_VERSION} that this CLI cannot read ({reason}); verify that release with its original Presswerk toolchain, then trust it with `trustedPredecessor = {{ tag = \"{tag}\"; commit = \"{commit}\"; }};` in the release module or `presswerk prepare --trust-predecessor {tag}={commit}`"
+            "previous release tag {tag:?} at {commit} uses a declaration with schemaVersion {UNSTABLE_SCHEMA_VERSION} that this CLI cannot read ({reason}); verify that release with its original Presswerk toolchain, then trust it with `{}` in the release module or `presswerk prepare {}`",
+            trust.option(),
+            trust.flag()
         );
         Self::unreadable_predecessor(
             message,
@@ -90,8 +102,14 @@ impl PublicationError {
 
     pub fn undeclared_predecessor(tag: impl Into<String>, commit: Oid) -> Self {
         let tag = tag.into();
+        let trust = TrustedPredecessor {
+            tag: tag.clone(),
+            commit,
+        };
         let message = format!(
-            "previous release {tag} at {commit} has no Presswerk declaration\n  If {tag} was released completely by another tool, trust it in the release module:\n    trustedPredecessor = {{ tag = \"{tag}\"; commit = \"{commit}\"; }};\n  or once with:\n    presswerk prepare --trust-predecessor {tag}={commit}"
+            "previous release {tag} at {commit} has no Presswerk declaration\n  If {tag} was released completely by another tool, trust it in the release module:\n    {}\n  or once with:\n    presswerk prepare {}",
+            trust.option(),
+            trust.flag()
         );
         Self::unreadable_predecessor(message, tag, commit, UnreadableDeclaration::Missing)
     }

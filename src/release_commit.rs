@@ -79,9 +79,47 @@ impl TrustedPredecessor {
         })
     }
 
+    /// The `--trust-predecessor` argument, quoted for a POSIX shell where the tag needs it.
+    #[must_use]
+    pub fn flag(&self) -> String {
+        format!("--trust-predecessor {}", shell_word(&self.to_string()))
+    }
+
+    /// The `trustedPredecessor` option for the release module, with the tag as a Nix string.
+    #[must_use]
+    pub fn option(&self) -> String {
+        format!(
+            "trustedPredecessor = {{ tag = {}; commit = \"{}\"; }};",
+            nix_string(&self.tag),
+            self.commit
+        )
+    }
+
     fn trailer(&self) -> String {
         format!("{TRUSTED_PREDECESSOR_TRAILER} {} {}", self.tag, self.commit)
     }
+}
+
+/// `word` as one POSIX shell word: unchanged if it holds only characters no shell treats specially,
+/// otherwise in single quotes.
+fn shell_word(word: &str) -> String {
+    if !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.,/:@%+=".contains(c))
+    {
+        return word.to_owned();
+    }
+    format!("'{}'", word.replace('\'', r"'\''"))
+}
+
+/// `text` as a double-quoted Nix string, escaping what Nix would interpret.
+fn nix_string(text: &str) -> String {
+    let escaped = text
+        .replace('\\', r"\\")
+        .replace('"', r#"\""#)
+        .replace("${", r"\${");
+    format!("\"{escaped}\"")
 }
 
 impl fmt::Display for TrustedPredecessor {

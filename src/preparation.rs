@@ -104,8 +104,9 @@ fn build_head_plan(
         evaluated.declaration.publishers.secrets(),
     );
     let declares_trust = evaluated.declaration.trusted_predecessor.is_some();
-    let (trusted_predecessor, trust_warning) =
-        resolve_trusted_predecessor(repository_path, &evaluated, trusted_predecessor)?;
+    let (trusted_predecessor, other_entry) =
+        resolve_trusted_predecessor(&evaluated, trusted_predecessor)?;
+    let mut trust_warning = None;
     let date = time::OffsetDateTime::now_utc().date().to_string();
     let mut plan = build_release_plan(
         repository_path,
@@ -120,7 +121,17 @@ fn build_head_plan(
                 declaration,
                 "origin",
                 trusted_predecessor.as_ref(),
-            )?;
+            );
+            if let Some(entry) = &other_entry {
+                let previous_tag = declaration.tag.render(previous_version)?;
+                trust_warning = Some(older_entry_warning(
+                    repository_path,
+                    entry,
+                    &previous_tag,
+                    &verified,
+                )?);
+            }
+            let verified = verified?;
             if refuse_pending_base
                 && let Some(pending) = verified.as_ref().filter(|previous| previous.pending)
                 && pending.commit != candidate
@@ -139,15 +150,15 @@ fn build_head_plan(
 }
 
 /// The trust in the previous release from `--trust-predecessor` and the `trustedPredecessor`
-/// option, which must name the same release if both are given.
+/// option, which must name the same release if both are given; and, apart from it, an option entry
+/// whose tag is not the previous release's.
 ///
-/// The option applies only to the direct predecessor. One that names an older release, such as the
-/// one the previous release commit trusted, has no effect and comes back as a warning instead.
+/// The option applies only to the direct predecessor. One that names another tag must name an
+/// older release, such as the one the previous release commit trusted, and then has no effect.
 fn resolve_trusted_predecessor(
-    repository_path: &Path,
     evaluated: &EvaluatedReleaseDeclaration,
     flag: Option<TrustedPredecessor>,
-) -> Result<(Option<TrustedPredecessor>, Option<Warning>)> {
+) -> Result<(Option<TrustedPredecessor>, Option<TrustedPredecessor>)> {
     let declaration = &evaluated.declaration;
     let Some(declared) = declaration
         .trusted_predecessor
@@ -170,25 +181,47 @@ fn resolve_trusted_predecessor(
     if declared.tag == previous_tag {
         return Ok((Some(declared), None));
     }
+    Ok((None, Some(declared)))
+}
+
+/// The warning for an option entry that names an older release than the predecessor Presswerk
+/// found, published, pending, or unreadable; an error if it names no such release.
+fn older_entry_warning(
+    repository_path: &Path,
+    entry: &TrustedPredecessor,
+    previous_tag: &str,
+    verified: &Result<Option<VerifiedPredecessor>, crate::publication::PublicationError>,
+) -> Result<Warning> {
+    let predecessor = match verified {
+        Ok(verified) => verified.as_ref().map(|previous| previous.commit),
+        Err(error) => match error.as_unreadable_predecessor() {
+            Some(unreadable) => Some(unreadable.commit),
+            // The predecessor could not be established; that error is the one to report.
+            None => return Err(error.clone().into()),
+        },
+    };
     let repository = Repository::open(repository_path).context("could not open Git repository")?;
-    let older = repository.find_commit(declared.commit).is_ok()
-        && repository
-            .graph_descendant_of(evaluated.commit, declared.commit)
-            .context("could not check the trusted predecessor's ancestry")?;
+    let older = match predecessor {
+        Some(predecessor) => {
+            entry.commit != predecessor
+                && repository.find_commit(entry.commit).is_ok()
+                && repository
+                    .graph_descendant_of(predecessor, entry.commit)
+                    .context("could not check the trusted predecessor's ancestry")?
+        }
+        None => false,
+    };
     if !older {
         bail!(
-            "trustedPredecessor {declared} in the release declaration names neither the previous release {previous_tag} nor an older one"
+            "trustedPredecessor {entry} in the release declaration names neither the previous release {previous_tag} nor an older one"
         );
     }
-    Ok((
-        None,
-        Some(Warning {
-            level: WarningLevel::Warning,
-            message: format!(
-                "trustedPredecessor {declared} names an older release than the previous release {previous_tag}; it has no effect and can be removed"
-            ),
-        }),
-    ))
+    Ok(Warning {
+        level: WarningLevel::Warning,
+        message: format!(
+            "trustedPredecessor {entry} names an older release than the previous release {previous_tag}; it has no effect and can be removed"
+        ),
+    })
 }
 
 fn plan_session(
@@ -590,7 +623,7 @@ pub fn render_plan(plan: &ReleasePlan) -> String {
             let trust = plan
                 .trust_argument
                 .as_ref()
-                .map(|trust| format!(" --trust-predecessor {trust}"))
+                .map(|trust| format!(" {}", trust.flag()))
                 .unwrap_or_default();
             let _ = writeln!(
                 output,
