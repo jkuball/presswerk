@@ -193,15 +193,26 @@ impl CargoRegistry for HttpRegistry {
                 self.index
             ))
         })?;
-        let url = Url::parse(&format!("{}/api/v1/crates/new", api.trim_end_matches('/')))
-            .ok()
-            .filter(|url| matches!(url.scheme(), "http" | "https"))
-            .ok_or_else(|| {
-                PublicationError::new(format!(
-                    "Cargo index {} names publish API {api:?}, which is no HTTP(S) URL",
-                    self.index
-                ))
-            })?;
+        let invalid = || {
+            PublicationError::new(format!(
+                "Cargo index {} names publish API {api:?}, which is no HTTP(S) base URL",
+                self.index
+            ))
+        };
+        let mut url = Url::parse(api).map_err(|_| invalid())?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.cannot_be_a_base()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return Err(invalid());
+        }
+        url.path_segments_mut()
+            .map_err(|()| invalid())?
+            .pop_if_empty()
+            .extend(["api", "v1", "crates", "new"]);
         Ok(url.into())
     }
 
@@ -538,7 +549,31 @@ mod tests {
         let registry =
             HttpRegistry::new(&format!("sparse+{base}/"), Some("secret".into())).unwrap();
         let error = registry.upload_url().unwrap_err().to_string();
-        assert!(error.contains("which is no HTTP(S) URL"), "{error}");
+        assert!(error.contains("which is no HTTP(S) base URL"), "{error}");
+
+        // A query or fragment would swallow the route.
+        for api in [
+            "https://registry.example/?x=1",
+            "https://registry.example/#top",
+            "https://user:pw@registry.example/",
+        ] {
+            routes.lock().unwrap()[0].3 = format!(r#"{{"dl":"x","api":"{api}"}}"#);
+            let registry =
+                HttpRegistry::new(&format!("sparse+{base}/"), Some("secret".into())).unwrap();
+            assert!(registry.upload_url().is_err(), "{api}");
+        }
+        for (api, url) in [
+            ("https://crates.io", "https://crates.io/api/v1/crates/new"),
+            (
+                "https://kellnr.example/prefix/",
+                "https://kellnr.example/prefix/api/v1/crates/new",
+            ),
+        ] {
+            routes.lock().unwrap()[0].3 = format!(r#"{{"dl":"x","api":"{api}"}}"#);
+            let registry =
+                HttpRegistry::new(&format!("sparse+{base}/"), Some("secret".into())).unwrap();
+            assert_eq!(registry.upload_url().unwrap(), url);
+        }
     }
 
     #[test]
