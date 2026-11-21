@@ -125,8 +125,8 @@ If the upload fails, Presswerk reads the version again: a concurrent run that up
 tarball completes the release. After the upload, it waits until the registry shows the version,
 then moves the aliases. It reads each alias through the dist-tag API right before it moves it,
 since the package document a registry serves may lag behind, and leaves an alias it cannot read
-alone with a warning. Every request has a deadline, so a registry that stops answering fails the
-run instead of stalling it.
+alone with a warning. A registry that accepts no connection within 30 seconds, or stops sending or
+receiving for two minutes, fails the request instead of stalling the run.
 
 A release's package is complete once its version exists in the registry. The integrity is not
 compared, the tag and the aliases do not count. Before `plan` and `prepare` start the next

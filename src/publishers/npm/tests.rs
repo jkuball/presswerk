@@ -849,6 +849,33 @@ fn an_alias_is_decided_by_the_live_dist_tags_not_a_cached_document() {
 }
 
 #[test]
+fn a_cached_document_does_not_hide_an_alias_that_still_moves() {
+    let tarball = write_tarball("@scope/pi-extension", "1.4.0");
+    // The package document already shows `latest` at 1.4.0, but the registry still has 1.3.0.
+    let fake = Fake::default()
+        .with_version("1.4.0", Some(integrity(&tarball.bytes)))
+        .with_dist_tag("latest", "1.4.0");
+    fake.state().live_dist_tags = Some(BTreeMap::from([("latest".into(), "1.3.0".into())]));
+    let publisher: Box<dyn Publisher> = Box::new(publisher(&fake, declaration(&tarball.path)));
+    let release = release("1.4.0");
+    let ctx = Context::detached();
+
+    assert_eq!(
+        publisher.state(&release, &ctx).unwrap(),
+        PublisherState::AliasesPending
+    );
+    publisher.publish(&release, &ctx).unwrap();
+    assert_eq!(
+        fake.state().dist_tags_set,
+        [("latest".into(), "1.4.0".into())]
+    );
+    assert_eq!(
+        publisher.state(&release, &ctx).unwrap(),
+        PublisherState::Published
+    );
+}
+
+#[test]
 fn an_alias_that_cannot_be_read_is_not_written() {
     let tarball = write_tarball("@scope/pi-extension", "1.2.0");
     let fake = Fake::default();
@@ -1113,4 +1140,28 @@ fn a_stalled_registry_fails_the_request() {
     assert!(client.packument("pi-extension").is_err());
     assert!(started.elapsed() < Duration::from_secs(5));
     drop(held.join());
+}
+
+#[test]
+fn a_long_plain_text_echo_is_redacted_before_it_is_shortened() {
+    // A service account key is long, so its Base64 runs past where the message is shortened.
+    let password = format!("npm-key-sentinel-{}", "k".repeat(300));
+    let encoded = shared::base64(format!("_json_key_base64:{password}"));
+    let echo: &'static str =
+        Box::leak(format!("denied for Basic {encoded} and more").into_boxed_str());
+    let (registry, _requests) = serve(vec![(403, echo)]);
+    let client = RegistryClient::new(
+        &registry,
+        Some(Authentication::Basic {
+            username: "_json_key_base64".into(),
+            password,
+        }),
+    )
+    .unwrap();
+    let error = client
+        .publish("pi-extension", &json!({}))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("denied for [redacted] and more"), "{error}");
+    assert!(!error.contains(&encoded[..40]), "{error}");
 }
