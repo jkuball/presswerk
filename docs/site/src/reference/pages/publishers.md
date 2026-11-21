@@ -58,7 +58,7 @@ destination is fixed by the publisher's options:
 | --- | --- | --- |
 | `oci-image` | the OCI repository | every template in `tags` and `aliases` |
 | `oci-helm` | the OCI repository | the chart tag, `{version}` |
-| `github-release` | the GitHub repository, case-insensitive | the release tag, from `tag.format` |
+| `github-release` | the repository `owner/name` at `apiUrl`, case-insensitive | the release tag, from `tag.format` |
 
 So two publishers that both use `{version}` collide only if they write to the same destination.
 An image and a Helm chart pushed to one repository do, since image and chart tags share the
@@ -89,8 +89,9 @@ differ, so nothing collides.
 
 Nix renders the keys with the sample version `1.2.3`. The claims are part of the release
 declaration, and `plan`, `prepare`, and `publish` render them again with the version they release,
-so a collision that only that version renders stops before anything is written. An image alias
-`0.1.0` next to a Helm chart in the same repository passes with `1.2.3`, but collides with the
+so a collision that only that version renders stops before anything is written. An image with
+`tags = [ "v{version}" ]` and `aliases = [ "0.1.0" ]` next to a Helm chart in the same repository
+passes with `1.2.3`, since the keys render `v1.2.3`, `0.1.0`, and `1.2.3`, but collides with the
 chart tag when `0.1.0` is released.
 
 ## Credentials
