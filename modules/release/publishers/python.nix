@@ -5,11 +5,24 @@
       inherit (lib) mkOption types;
 
       # An HTTP(S) URL without credentials, query, or fragment.
-      url = types.strMatching "https?://[^/@?#]+(/[^@?#]*)?";
+      url = types.strMatching "[Hh][Tt][Tt][Pp][Ss]?://[^/@?#]+(/[^@?#]*)?";
 
       # The project name as the index compares it (PEP 503): lowercase, with every run of `-`,
       # `_`, and `.` as one `-`.
       normalize = name: lib.concatStringsSep "-" (builtins.filter builtins.isString (builtins.split "[-_.]+" (lib.toLower name)));
+
+      # The simple API as one canonical string, so equivalent spellings claim the same index:
+      # lowercase scheme and host, no default port, and one trailing slash.
+      canonicalUrl = url:
+        let
+          parts = builtins.match "([A-Za-z]+)://(\\[[^]]*]|[^/:]+)(:([0-9]+))?(/.*)?" url;
+          scheme = lib.toLower (builtins.elemAt parts 0);
+          host = lib.toLower (builtins.elemAt parts 1);
+          port = builtins.elemAt parts 3;
+          path = builtins.elemAt parts 4;
+          defaultPort = { http = "80"; https = "443"; }.${scheme};
+        in
+        "${scheme}://${host}${lib.optionalString (port != null && port != defaultPort) ":${port}"}${lib.removeSuffix "/" (if path == null then "" else path)}/";
 
       pythonModule = { config, ... }: {
         imports = [ (publisherLib.instance { type = "python"; }) ];
@@ -56,7 +69,7 @@
           declaration = { inherit (config) name distributions repositoryUrl indexUrl username password; };
           # An index holds one release per project and version.
           claims = [{
-            destination = "${lib.removeSuffix "/" config.indexUrl}/";
+            destination = canonicalUrl config.indexUrl;
             key = "${normalize config.name}=={version}";
           }];
         };
