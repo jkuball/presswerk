@@ -83,6 +83,13 @@ impl CargoDeclaration {
                 self.index
             ));
         }
+        // Claims compare the index as written, so one index has one spelling.
+        if Some(index.as_str()) != self.index.strip_prefix("sparse+") {
+            return invalid(format!(
+                "Cargo index {:?} must be written canonically, as \"sparse+{index}\"",
+                self.index
+            ));
+        }
         self.token.validate_secret("registry token")
     }
 }
@@ -403,7 +410,12 @@ impl<R: CargoRegistry> Publisher for CargoPublisher<R> {
         _release: &Release,
         _ctx: &Context,
     ) -> Result<PublisherState, PublicationError> {
-        Ok(self.inspect()?.0)
+        let state = self.inspect()?.0;
+        if state == PublisherState::Missing {
+            // Known before the Git tag is pushed: the registry takes uploads at all.
+            self.registry.upload_url()?;
+        }
+        Ok(state)
     }
 
     fn publish(
@@ -454,6 +466,8 @@ mod tests {
         pending: Option<(String, IndexEntry)>,
         /// Uploads fail, as when another run uploaded the same version first.
         upload_fails: bool,
+        /// The index names no publish API.
+        read_only: bool,
         index_fails: bool,
     }
 
@@ -488,6 +502,13 @@ mod tests {
                 }
             }
             Ok(state.entries.get(name).cloned())
+        }
+
+        fn upload_url(&self) -> Result<String, PublicationError> {
+            if self.0.lock().unwrap().read_only {
+                return Err(PublicationError::new("the index names no publish API"));
+            }
+            Ok("https://crates.io/api/v1/crates/new".into())
         }
 
         fn upload(&self, body: Vec<u8>) -> Result<Vec<String>, PublicationError> {
@@ -718,6 +739,52 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_version_needs_a_publish_api_before_the_git_tag_is_written() {
+        let directory = tempfile::tempdir().unwrap();
+        let (path, bytes) = write_crate(directory.path(), "demo", "1.2.3");
+        let registry = FakeRegistry::default();
+        registry.0.lock().unwrap().read_only = true;
+        let tag_writes = Rc::new(Cell::new(0));
+
+        let error = publish_ordered(
+            &FakeTagPublisher {
+                writes: tag_writes.clone(),
+            },
+            &release("1.2.3"),
+            &[PublisherNode::new(
+                "cargo.demo",
+                Box::new(publisher(&registry, &path)),
+                Vec::new(),
+            )],
+            false,
+            &mut |_| {},
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("names no publish API"), "{error}");
+        assert_eq!(tag_writes.get(), 0);
+
+        // A read-only index still serves a version that is already there.
+        registry
+            .0
+            .lock()
+            .unwrap()
+            .entries
+            .insert("demo".into(), vec![entry(&cksum(&bytes), false)]);
+        let publisher = publisher(&registry, &path);
+        assert_eq!(
+            publisher
+                .state(&release("1.2.3"), &Context::detached())
+                .unwrap(),
+            PublisherState::Published
+        );
+        assert_eq!(
+            completeness_with(&registry, INDEX, "demo", &release("1.2.3")),
+            Completeness::Complete
+        );
+    }
+
+    #[test]
     fn an_unreadable_index_fails_closed_and_makes_completeness_unknown() {
         let directory = tempfile::tempdir().unwrap();
         let (path, _) = write_crate(directory.path(), "demo", "1.2.3");
@@ -803,6 +870,19 @@ mod tests {
                 json!({ "env": "TOKEN" }),
             ),
             ("sparse+ftp://index.example/", json!({ "env": "TOKEN" })),
+            ("sparse+https://Index.Crates.io/", json!({ "env": "TOKEN" })),
+            (
+                "sparse+https://index.crates.io:443/",
+                json!({ "env": "TOKEN" }),
+            ),
+            (
+                "sparse+http://kellnr.example:80/api/",
+                json!({ "env": "TOKEN" }),
+            ),
+            (
+                "sparse+https://kellnr.example/api/./v1/",
+                json!({ "env": "TOKEN" }),
+            ),
             (INDEX, json!({ "value": "plain" })),
         ] {
             assert!(

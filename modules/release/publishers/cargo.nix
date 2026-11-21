@@ -7,6 +7,20 @@
       # crates.io treats names that differ only in case or in `-` and `_` as the same crate.
       canonicalName = name: lib.toLower (builtins.replaceStrings [ "_" ] [ "-" ] name);
 
+      # Claims compare the index as written, so it must be written canonically, as the CLI parses
+      # it: a lowercase host, no default port, and no `.` or `..` path segments.
+      canonicalIndex = index:
+        let
+          parts = builtins.match "sparse[+](https?)://[a-z0-9.-]+(:([0-9]+))?(/[^?#@[:space:]]*)?/" index;
+          scheme = builtins.elemAt parts 0;
+          port = builtins.elemAt parts 2;
+          path = builtins.elemAt parts 3;
+        in
+        parts != null
+        && !(scheme == "https" && port == "443" || scheme == "http" && port == "80")
+        && (port == null || builtins.match "0.*" port == null)
+        && (path == null || builtins.match "(.*/)?[.][.]?(/.*)?" path == null);
+
       cargoModule = { config, ... }: {
         imports = [ (publisherLib.instance { type = "cargo"; }) ];
 
@@ -24,9 +38,11 @@
           };
 
           index = mkOption {
-            type = types.strMatching "sparse[+]https?://[^/?#@[:space:]]+(/[^?#[:space:]]*)?/";
+            type = types.addCheck types.str canonicalIndex // {
+              description = "canonical sparse index URL ending in a slash";
+            };
             example = "sparse+https://index.crates.io/";
-            description = "Sparse index of the registry, ending in a slash, such as `sparse+https://index.crates.io/` for crates.io. The publish API is the `api` URL in the index's `config.json`.";
+            description = "Sparse index of the registry, ending in a slash, such as `sparse+https://index.crates.io/` for crates.io. It is written canonically: a lowercase host and no default port. The publish API is the `api` URL in the index's `config.json`.";
           };
 
           token = mkOption {
