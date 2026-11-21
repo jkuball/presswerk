@@ -33,7 +33,7 @@ const LABELS: Labels = Labels {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CargoDeclaration {
-    /// The crate's name on the index, the publisher's name in the module.
+    /// The crate's name on the index.
     pub name: String,
     /// The `.crate` archive, or a directory with exactly one, as a path in the Nix store.
     #[serde(rename = "crate")]
@@ -267,7 +267,7 @@ impl<R: CargoRegistry> CargoPublisher<R> {
         let local = LocalCrate::open(archive, index, release_version)?;
         if local.name != name {
             return Err(PublicationError::new(format!(
-                "crate archive {archive:?} holds crate {:?}, but publishers.cargo.{name} publishes {name:?}",
+                "crate archive {archive:?} holds crate {:?}, expected name {name:?}",
                 local.name
             )));
         }
@@ -769,7 +769,7 @@ mod tests {
         .unwrap()
         .to_string();
         assert!(
-            error.contains("holds crate \"other\", but publishers.cargo.demo publishes \"demo\""),
+            error.contains("holds crate \"other\", expected name \"demo\""),
             "{error}"
         );
     }

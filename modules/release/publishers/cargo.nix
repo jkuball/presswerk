@@ -1,20 +1,26 @@
 {
   flake.modules.presswerk.default =
-    { config, lib, publisherLib, ... }:
+    { lib, publisherLib, ... }:
     let
       inherit (lib) mkOption types;
 
       # crates.io treats names that differ only in case or in `-` and `_` as the same crate.
       canonicalName = name: lib.toLower (builtins.replaceStrings [ "_" ] [ "-" ] name);
 
-      cargoModule = { config, name, ... }: {
+      cargoModule = { config, ... }: {
         imports = [ (publisherLib.instance { type = "cargo"; }) ];
 
         options = {
+          name = mkOption {
+            type = types.strMatching "[A-Za-z0-9_-]+";
+            example = "my-crate";
+            description = "The crate's name on the index. The packaged `Cargo.toml` must declare the same name.";
+          };
+
           crate = mkOption {
             type = publisherLib.artifactFile;
             example = lib.literalExpression "self.packages.x86_64-linux.my-crate-package";
-            description = "The packaged crate: a `.crate` file, or a derivation whose output holds exactly one, such as one that runs `cargo package`. Its version must be the release version and its name the publisher's name. `publish` fetches it from the local store or a substituter without building.";
+            description = "The packaged crate: a `.crate` file, or a derivation whose output holds exactly one, such as one that runs `cargo package`. Its name must be `name` and its version the release version. `publish` fetches it from the local store or a substituter without building.";
           };
 
           index = mkOption {
@@ -31,11 +37,11 @@
         };
 
         config = {
-          declaration = { inherit name; inherit (config) crate index token; };
+          declaration = { inherit (config) name crate index token; };
           # One version of a crate per index.
           claims = [{
             destination = config.index;
-            key = "${canonicalName name}@{version}";
+            key = "${canonicalName config.name}@{version}";
           }];
         };
       };
@@ -46,21 +52,15 @@
         default = { };
         example = lib.literalExpression ''
           {
-            my-crate = {
+            default = {
+              name = "my-crate";
               crate = self.packages.x86_64-linux.my-crate-package;
               index = "sparse+https://index.crates.io/";
               token.env = "CARGO_REGISTRY_TOKEN";
             };
           }
         '';
-        description = "Cargo publishers, keyed by the name of the crate each one uploads.";
+        description = "Cargo publishers, one per crate.";
       };
-
-      config.assertions = map
-        (name: {
-          assertion = builtins.match "[A-Za-z0-9_-]+" name != null;
-          message = "publishers.cargo.${builtins.toJSON name} must be named after its crate: ASCII letters, digits, `-`, and `_`";
-        })
-        (builtins.attrNames config.publishers.cargo);
     };
 }
