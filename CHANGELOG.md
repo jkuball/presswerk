@@ -6,11 +6,13 @@
   still be `{ value = "…"; }`. This affects every project with a GitHub Release publisher, since
   `token.secret = "GITHUB_TOKEN"` was the default, and every OCI publisher.
   ([Credentials](https://presswerk.dev/reference/publishers/#credentials))
-- The first release after updating needs `presswerk prepare --trust-predecessor <tag>=<commit>`,
-  which `prepare` prints; until then `plan` reports the previous release as unreadable.
+- If the previous release used the old credential syntax, the first release after updating needs
+  `presswerk prepare --trust-predecessor <tag>=<commit>`, which `prepare` prints, once you have
+  verified that the previous release is complete; until then `plan` reports it as unreadable.
   ([Recovery](https://presswerk.dev/guide/recovery/#the-previous-release-uses-an-unsupported-declaration))
 - `publish` stops before writing anything if a declared secret is missing.
-- Two publishers that would write the same tag or GitHub Release fail at module evaluation.
+- Two publishers that claim the same tag or GitHub Release stop the release before anything is
+  published.
 
 ## [0.20.1] - 2026-11-19
 
