@@ -89,8 +89,8 @@ its `cksum`, the SHA-256 of the uploaded archive, with the local archive:
 
 - **Missing:** the index does not list the version. Presswerk uploads it.
 - **Matching:** the index lists the version with the same checksum. It is left as it is and
-  reported as `already uploaded`, also when the version is yanked; Presswerk never republishes or
-  unyanks it.
+  reported as `already uploaded`. A yanked version is matching too and reported as `kept`;
+  Presswerk never republishes or unyanks it.
 - **Conflicting:** the index lists the version with another checksum. Presswerk stops before the
   Git tag is pushed.
 - **Unknown:** the index cannot be read. Presswerk stops.
