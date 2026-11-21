@@ -1,10 +1,12 @@
 The Cargo publisher uploads a packaged crate to a Cargo registry: crates.io or an alternative
 registry such as [kellnr](https://kellnr.io/). Declare it under
-[`publishers.cargo`](/reference/options/#publishers.cargo), keyed by the crate's name:
+[`publishers.cargo`](/reference/options/#publishers.cargo), keyed by a name of your choice, with
+the crate's `name` on the index:
 
 ```nix presswerk-module
 {
-  publishers.cargo.my-crate = {
+  publishers.cargo.default = {
+    name = "my-crate";
     crate = self.packages.x86_64-linux.my-crate-package;
     index = "sparse+https://index.crates.io/";
     token.env = "CARGO_REGISTRY_TOKEN";
@@ -17,7 +19,8 @@ index:
 
 ```nix presswerk-module
 {
-  publishers.cargo.my-crate = {
+  publishers.cargo.default = {
+    name = "my-crate";
     crate = self.packages.x86_64-linux.my-crate-package;
     index = "sparse+https://kellnr.example.com/api/v1/crates/";
     token.env = "KELLNR_TOKEN";
@@ -33,7 +36,7 @@ slash. Git indexes are not supported. Presswerk reads the publish API's URL from
 
 ```console
 publishers
-  cargo.my-crate  sparse+https://index.crates.io/
+  cargo.default  sparse+https://index.crates.io/
     crate    my-crate@1.2.0
 ```
 
@@ -73,8 +76,8 @@ against vendored dependencies:
 `--no-verify` skips building the packaged crate again; the flake's own checks build and test it.
 
 Presswerk reads the archive only as far as the upload needs it: the packaged `Cargo.toml` and the
-readme it names become the request's metadata. The crate's name must be the publisher's name and
-its version the release version; Presswerk checks both before it pushes the Git tag, so a mismatched
+readme it names become the request's metadata. The crate's name must be `name` and its version the
+release version; Presswerk checks both before it pushes the Git tag, so a mismatched
 archive leaves no release state behind. Nothing else is checked, such as `publish` in
 `Cargo.toml` or missing metadata: the registry decides what it accepts. Docs are not uploaded,
 including kellnr's rustdoc uploads.
@@ -120,11 +123,13 @@ let
 in
 {
   publishers.cargo.my-core = {
+    name = "my-core";
     crate = "${crates}/my-core-${config.version}.crate";
     index = "sparse+https://index.crates.io/";
     token.env = "CARGO_REGISTRY_TOKEN";
   };
   publishers.cargo.my-cli = {
+    name = "my-cli";
     crate = "${crates}/my-cli-${config.version}.crate";
     index = "sparse+https://index.crates.io/";
     token.env = "CARGO_REGISTRY_TOKEN";
@@ -139,8 +144,8 @@ workspace version on the release version.
 ## Claims
 
 Each publisher claims `<name>@{version}` on its index. crates.io treats names that differ only in
-case or in `-` and `_` as the same crate, so the claim does too: two publishers of `my-crate` and
-`My_Crate` on one index fail module evaluation.
+case or in `-` and `_` as the same crate, so the claim does too: two publishers with the names
+`my-crate` and `My_Crate` on one index fail module evaluation.
 
 ## Credentials
 
