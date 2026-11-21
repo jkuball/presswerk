@@ -54,7 +54,8 @@ repository in Google Artifact Registry:
 ```
 
 One project version can only be released once per index, so two Python publishers with the same
-`name` and `indexUrl` fail module evaluation. Publishing one project to two indexes, such as
+`name` and `indexUrl` fail module evaluation, also when the URLs are spelled differently, such as
+`https://PyPI.org:443/simple`. Publishing one project to two indexes, such as
 PyPI and a private mirror, takes two publishers.
 
 ## Distributions
@@ -95,8 +96,8 @@ Presswerk reads only what an upload needs: each file's name, its core metadata (
 wheel, `PKG-INFO` in an sdist), and its SHA-256 digest. It compares the project name and version in
 the filename and the metadata with `name` and the release version before it pushes the Git tag,
 so a mismatched build leaves no release state behind. Nothing else is checked; the index decides
-whether the metadata is valid. The metadata is sent with each upload unchanged, as `twine` and
-`uv publish` send it.
+whether the metadata is valid. Its core metadata fields are sent with each upload unchanged, as
+`twine` and `uv publish` send them.
 
 Keep the version in `pyproject.toml` among the release's
 [version files](/reference/version-files/):
@@ -121,8 +122,10 @@ local file with the file of the same name:
 - **Missing:** the index does not list it. Presswerk uploads it.
 - **Matching:** the index lists it with the same SHA-256 digest. It is left as it is and reported as
   `already uploaded`.
-- **Conflicting:** the index lists it with another digest, or without a SHA-256 digest, so it cannot
-  tell. Presswerk stops before the Git tag is pushed and never uploads anything.
+- **Conflicting:** the index lists it with another digest. Presswerk stops before the Git tag is
+  pushed and never uploads anything, not even the other files.
+- **Unknown:** the index lists it without a SHA-256 digest, or its listing cannot be read
+  completely, so Presswerk cannot verify it. Presswerk stops as well.
 
 The release is complete once every declared file matches. A wheel that failed to upload is
 therefore uploaded on a retry, and the files already on the index are kept. If an upload fails
