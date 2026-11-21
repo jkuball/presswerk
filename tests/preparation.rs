@@ -51,6 +51,7 @@ fn declaration(version: &str) -> ReleaseDeclaration {
             unreleased_heading: presswerk::changelog::DEFAULT_UNRELEASED_HEADING.into(),
         },
         publishers: github_release("owner/project", BTreeMap::new()),
+        trusted_predecessor: None,
     }
 }
 

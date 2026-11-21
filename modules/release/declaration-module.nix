@@ -531,6 +531,33 @@
           description = "Release tag format; must contain {version} exactly once, not adjacent to another brace. The release commit subject names the tag, such as `🔖 Release v1.2.0` with Gitmoji or `chore(release): v1.2.0` with Conventional Commits.";
         };
 
+        trustedPredecessor = mkOption {
+          type = types.nullOr (types.submodule {
+            options = {
+              tag = mkOption {
+                type = types.nonEmptyStr;
+                example = "v0.20.1";
+                description = "Tag of the previous release, as `prepare` names it.";
+              };
+
+              commit = mkOption {
+                type = types.addCheck types.str (commit: builtins.match "[0-9a-fA-F]{40}|[0-9a-fA-F]{64}" commit != null)
+                  // { description = "full hexadecimal commit SHA"; };
+                example = "d1d91d0afbc0840d2f9b4c60321acbc8e1b7ce6b";
+                description = "Full commit SHA the tag points to: 40 hexadecimal characters, or 64 in a SHA-256 repository.";
+              };
+            };
+          });
+          default = null;
+          example = lib.literalExpression ''
+            {
+              tag = "v0.20.1";
+              commit = "d1d91d0afbc0840d2f9b4c60321acbc8e1b7ce6b";
+            }
+          '';
+          description = "Previous release to trust although the CLI cannot read its declaration, such as one released by another tool or before a declaration schema change. It applies only to the direct predecessor, whose tag must point to `commit`; `plan` and `prepare` fail otherwise. An entry that names an older release has no effect, and `plan` and `prepare` warn that it can be removed. `prepare --trust-predecessor` does the same for one run.";
+        };
+
         analyzer = {
           gitmoji = gitmojiAnalyzerOptions;
           conventional = conventionalAnalyzerOptions;

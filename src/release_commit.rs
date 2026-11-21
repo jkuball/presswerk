@@ -55,6 +55,13 @@ impl TrustedPredecessor {
         Self::parse(tag, commit).map(Some)
     }
 
+    /// The `trustedPredecessor` option of the release declaration.
+    pub fn from_declaration(
+        declared: &crate::declaration::DeclaredTrustedPredecessor,
+    ) -> Result<Self, TrustedPredecessorError> {
+        Self::parse(&declared.tag, &declared.commit)
+    }
+
     fn parse(tag: &str, commit: &str) -> Result<Self, TrustedPredecessorError> {
         if tag.is_empty() || tag.chars().any(char::is_whitespace) {
             return Err(TrustedPredecessorError::new(
@@ -74,6 +81,12 @@ impl TrustedPredecessor {
 
     fn trailer(&self) -> String {
         format!("{TRUSTED_PREDECESSOR_TRAILER} {} {}", self.tag, self.commit)
+    }
+}
+
+impl fmt::Display for TrustedPredecessor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}={}", self.tag, self.commit)
     }
 }
 

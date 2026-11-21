@@ -60,15 +60,23 @@ impl ReleasePlan {
 }
 
 /// Plan the release of `HEAD` for `plan`. A pending release below `HEAD` is the base of the plan.
+/// `trusted_predecessor` comes from `--trust-predecessor`.
 pub fn build_head_release_plan(
     repository_path: impl AsRef<Path>,
     analyzer: &dyn Analyzer,
+    trusted_predecessor: Option<TrustedPredecessor>,
 ) -> Result<ReleasePlan> {
-    build_head_plan(repository_path.as_ref(), analyzer, None, false)
+    build_head_plan(
+        repository_path.as_ref(),
+        analyzer,
+        trusted_predecessor,
+        false,
+    )
 }
 
 /// Plan the release of `HEAD` for `prepare`. A pending release below `HEAD` is refused before the
 /// next release is computed, so no error about that hypothetical release hides the refusal.
+/// `trusted_predecessor` comes from `--trust-predecessor`.
 pub fn build_head_preparation_plan(
     repository_path: impl AsRef<Path>,
     analyzer: &dyn Analyzer,
@@ -93,6 +101,8 @@ fn build_head_plan(
     let secrets = crate::publishers::shared::secrets::Secrets::resolve(
         evaluated.declaration.publishers.secrets(),
     );
+    let (trusted_predecessor, trust_warning) =
+        resolve_trusted_predecessor(repository_path, &evaluated, trusted_predecessor)?;
     let date = time::OffsetDateTime::now_utc().date().to_string();
     let mut plan = build_release_plan(
         repository_path,
@@ -120,7 +130,61 @@ fn build_head_plan(
     plan.trusted_predecessor = trusted_predecessor;
     let session = plan_session(&plan, secrets);
     preview_publishers(&mut plan, &session)?;
+    plan.warnings.splice(0..0, trust_warning);
     Ok(plan)
+}
+
+/// The trust in the previous release from `--trust-predecessor` and the `trustedPredecessor`
+/// option, which must name the same release if both are given.
+///
+/// The option applies only to the direct predecessor. One that names an older release, such as the
+/// one the previous release commit trusted, has no effect and comes back as a warning instead.
+fn resolve_trusted_predecessor(
+    repository_path: &Path,
+    evaluated: &EvaluatedReleaseDeclaration,
+    flag: Option<TrustedPredecessor>,
+) -> Result<(Option<TrustedPredecessor>, Option<Warning>)> {
+    let declaration = &evaluated.declaration;
+    let Some(declared) = declaration
+        .trusted_predecessor
+        .as_ref()
+        .map(TrustedPredecessor::from_declaration)
+        .transpose()
+        .context("invalid trustedPredecessor in the release declaration")?
+    else {
+        return Ok((flag, None));
+    };
+    if let Some(flag) = flag {
+        if flag != declared {
+            bail!(
+                "--trust-predecessor {flag} differs from trustedPredecessor {declared} in the release declaration; give one of them, or the same release in both"
+            );
+        }
+        return Ok((Some(flag), None));
+    }
+    let previous_tag = declaration.tag.render(&declaration.version)?;
+    if declared.tag == previous_tag {
+        return Ok((Some(declared), None));
+    }
+    let repository = Repository::open(repository_path).context("could not open Git repository")?;
+    let older = repository.find_commit(declared.commit).is_ok()
+        && repository
+            .graph_descendant_of(evaluated.commit, declared.commit)
+            .context("could not check the trusted predecessor's ancestry")?;
+    if !older {
+        bail!(
+            "trustedPredecessor {declared} in the release declaration names neither the previous release {previous_tag} nor an older one"
+        );
+    }
+    Ok((
+        None,
+        Some(Warning {
+            level: WarningLevel::Warning,
+            message: format!(
+                "trustedPredecessor {declared} names an older release than the previous release {previous_tag}; it has no effect and can be removed"
+            ),
+        }),
+    ))
 }
 
 fn plan_session(

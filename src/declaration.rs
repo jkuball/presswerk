@@ -34,6 +34,18 @@ pub struct ReleaseDeclaration {
     pub analyzer: Analyzer,
     pub changelog: Changelog,
     pub publishers: Publishers,
+    /// The previous release to trust although this CLI cannot read its declaration. Only the
+    /// CLI checks it against Git.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trusted_predecessor: Option<DeclaredTrustedPredecessor>,
+}
+
+/// The `trustedPredecessor` option of the release module, as written into the declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeclaredTrustedPredecessor {
+    pub tag: String,
+    pub commit: String,
 }
 
 impl ReleaseDeclaration {
