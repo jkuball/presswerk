@@ -5,6 +5,7 @@
 //! crosses this boundary is serializable, so a type could also be implemented outside the CLI,
 //! with JSON in and out.
 
+pub mod cargo;
 pub mod github_release;
 pub mod oci;
 pub mod shared;
@@ -25,6 +26,7 @@ pub const TYPES: &[Registration] = &[
     Registration::of::<oci::image::OciImage>(),
     Registration::of::<oci::helm::OciHelm>(),
     Registration::of::<github_release::GithubRelease>(),
+    Registration::of::<cargo::Cargo>(),
 ];
 
 /// One declared publisher of a release, such as one GitHub Release or one OCI repository.
