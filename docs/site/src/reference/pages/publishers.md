@@ -19,8 +19,9 @@ publisher's page.
 
 ## Built-in publishers
 
-Presswerk has three built-in publishers:
+Presswerk has four built-in publishers:
 
+- [Cargo](/reference/publishers/cargo/) for crates on crates.io and alternative registries
 - [GitHub Release](/reference/publishers/github-release/)
 - [OCI: Helm Chart](/reference/publishers/oci-helm/) for packaged charts in OCI registries
 - [OCI: Image](/reference/publishers/oci-image/) for container images

@@ -164,6 +164,7 @@ in
         };
         publishers.oci-image = { };
         publishers.oci-helm = { };
+        publishers.cargo = { };
       };
     };
 
@@ -572,6 +573,87 @@ in
       expected = [ true true true false false false false false ];
     };
 
+    "test Cargo publishers declare their crate name and claim it on the index" = {
+      expr =
+        (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.cargo.default = {
+            name = "My_Crate";
+            crate = image;
+            index = "sparse+https://index.crates.io/";
+            token.env = "CARGO_REGISTRY_TOKEN";
+          };
+        }).publishers.cargo.default;
+      expected = {
+        after = [ ];
+        name = "My_Crate";
+        crate = image.outPath;
+        index = "sparse+https://index.crates.io/";
+        token.env = "CARGO_REGISTRY_TOKEN";
+        claims = [{
+          destination = "sparse+https://index.crates.io/";
+          key = "my-crate@{version}";
+        }];
+      };
+    };
+
+    "test Cargo publishers reject invalid declarations" = {
+      expr = map
+        (cargo: succeeds (mkRelease {
+          sourceRoot = fixtureRoot;
+          versionFiles.cargo.example.cargoToml = cargoToml;
+          imports = [ publisher ];
+          publishers.cargo.default = {
+            name = "my-crate";
+            crate = image;
+            index = "sparse+https://kellnr.example.com/api/v1/crates/";
+            token.env = "CARGO_REGISTRY_TOKEN";
+          } // cargo;
+        }).publishers.cargo)
+        [
+          { }
+          { index = "sparse+http://localhost:8000/api/v1/crates/"; }
+          { name = "../escape"; }
+          { index = "https://index.crates.io/"; }
+          { index = "sparse+https://index.crates.io"; }
+          { index = "sparse+https://user:secret@index.crates.io/"; }
+          { index = "sparse+https://index.crates.io/?x=1/"; }
+          { token = { value = "secret"; }; }
+          { crate = "/nix/store/00000000000000000000000000000000-demo.crate"; }
+          { index = "sparse+https://Index.Crates.io/"; }
+          { index = "sparse+https://index.crates.io:443/"; }
+          { index = "sparse+http://kellnr.example:80/api/"; }
+          { index = "sparse+https://kellnr.example/api/../v1/"; }
+          { index = "sparse+https://kellnr.example:8443/api/v1/crates/"; }
+        ];
+      expected = [ true true false false false false false false false false false false false true ];
+    };
+
+    "test Cargo publishers of one crate on one index share a claim" = {
+      expr =
+        let
+          cargo = name: index: { inherit name index; crate = image; token.env = "CARGO_REGISTRY_TOKEN"; };
+        in
+        map
+          (other: succeeds (mkRelease {
+            sourceRoot = fixtureRoot;
+            versionFiles.cargo.example.cargoToml = cargoToml;
+            imports = [ publisher ];
+            publishers.cargo = {
+              default = cargo "my-crate" "sparse+https://index.crates.io/";
+              other = other cargo;
+            };
+          }).publishers)
+          [
+            (cargo: cargo "my-other" "sparse+https://index.crates.io/")
+            (cargo: cargo "my_crate" "sparse+https://kellnr.example/api/v1/crates/")
+            (cargo: cargo "My_Crate" "sparse+https://index.crates.io/")
+          ];
+      expected = [ true true false ];
+    };
+
     "test OCI Helm and OCI image publishers do not share a release tag" = {
       expr = map
         (publishers: succeeds (mkRelease (lib.recursiveUpdate
@@ -916,6 +998,7 @@ in
         github-release = { };
         oci-image = { };
         oci-helm = { };
+        cargo = { };
       };
     };
 
