@@ -647,8 +647,13 @@ in
           { index = "sparse+https://index.crates.io/?x=1/"; }
           { token = { value = "secret"; }; }
           { crate = "/nix/store/00000000000000000000000000000000-demo.crate"; }
+          { index = "sparse+https://Index.Crates.io/"; }
+          { index = "sparse+https://index.crates.io:443/"; }
+          { index = "sparse+http://kellnr.example:80/api/"; }
+          { index = "sparse+https://kellnr.example/api/../v1/"; }
+          { index = "sparse+https://kellnr.example:8443/api/v1/crates/"; }
         ];
-      expected = [ true true false false false false false false false ];
+      expected = [ true true false false false false false false false false false false false true ];
     };
 
     "test Cargo publishers of one crate on one index share a claim" = {

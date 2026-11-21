@@ -29,7 +29,8 @@ index:
 ```
 
 `index` is the registry's sparse index, as Cargo's `registries.<name>.index` names it, ending in a
-slash. Git indexes are not supported. Presswerk reads the publish API's URL from the index's
+slash and written canonically, with a lowercase host and no default port, so that two spellings of
+one index cannot hide a duplicate [claim](#claims). Git indexes are not supported. Presswerk reads the publish API's URL from the index's
 `config.json` and uploads through `PUT /api/v1/crates/new`, the request `cargo publish` sends.
 
 `presswerk plan` shows the one crate version:
@@ -90,15 +91,17 @@ the package always carries the release version.
 Before anything is written, Presswerk reads the index entry of the crate's version and compares
 its `cksum`, the SHA-256 of the uploaded archive, with the local archive:
 
-- **Missing:** the index does not list the version. Presswerk uploads it.
+- **Missing:** the index does not list the version. Presswerk checks that the index names an
+  HTTP(S) publish API before the Git tag is pushed, then uploads the version.
 - **Matching:** the index lists the version with the same checksum. It is left as it is and
   reported as `already uploaded`. A yanked version is matching too and reported as `kept`;
   Presswerk never republishes or unyanks it.
 - **Conflicting:** the index lists the version with another checksum. Presswerk stops before the
   Git tag is pushed.
-- **Unknown:** the index cannot be read. Presswerk stops.
+- **Unknown:** the index cannot be read, including a response with a line that is no index
+  entry, or it does not answer within 30 seconds. Presswerk stops.
 
-After its own upload, Presswerk waits up to two minutes until the index lists the new version, so
+After its own upload, Presswerk waits about two minutes until the index lists the new version, so
 publishers that run after it, such as the next crate of a workspace, find it there. A version that
 was already listed is not waited for. If the index does not list it in time, the run fails, and a
 rerun finds the upload as matching.

@@ -5,7 +5,13 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::fmt;
 use std::sync::OnceLock;
+use std::time::Duration;
 use url::Url;
+
+/// How long one index request may take, so a stalled index cannot hold a release.
+pub const INDEX_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long the upload may take, archive included.
+pub const UPLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// What the index records for one version of a crate.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -21,6 +27,10 @@ pub struct IndexEntry {
 pub trait CargoRegistry: Send + Sync {
     /// Every version the index lists for `name`, or `None` if it lists none.
     fn versions(&self, name: &str) -> Result<Option<Vec<IndexEntry>>, PublicationError>;
+
+    /// The URL that [`CargoRegistry::upload`] sends to, so a missing version is known to be
+    /// uploadable before the Git tag is pushed.
+    fn upload_url(&self) -> Result<String, PublicationError>;
 
     /// Sends one `PUT /api/v1/crates/new` request, returning the registry's warnings.
     fn upload(&self, body: Vec<u8>) -> Result<Vec<String>, PublicationError>;
@@ -38,12 +48,16 @@ pub fn index_path(name: &str) -> String {
     }
 }
 
-/// The lines of an index file, skipping those this CLI cannot read, such as newer formats.
-#[must_use]
-pub fn parse_index(file: &str) -> Vec<IndexEntry> {
+/// The lines of an index file. A line this CLI cannot read, such as an HTML page or a truncated
+/// row, fails the read: it might be the version in question.
+pub fn parse_index(file: &str) -> Result<Vec<IndexEntry>, String> {
     file.lines()
-        .filter(|line| !line.trim().is_empty())
-        .filter_map(|line| serde_json::from_str(line).ok())
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(number, line)| {
+            serde_json::from_str(line)
+                .map_err(|error| format!("line {} is no index entry: {error}", number + 1))
+        })
         .collect()
 }
 
@@ -62,6 +76,7 @@ pub struct HttpRegistry {
     index: Url,
     token: Option<String>,
     config: OnceLock<IndexConfig>,
+    index_timeout: Duration,
 }
 
 impl fmt::Debug for HttpRegistry {
@@ -89,7 +104,14 @@ impl HttpRegistry {
             index,
             token,
             config: OnceLock::new(),
+            index_timeout: INDEX_TIMEOUT,
         })
+    }
+
+    #[cfg(test)]
+    fn with_index_timeout(mut self, timeout: Duration) -> Self {
+        self.index_timeout = timeout;
+        self
     }
 
     fn token(&self, what: &str) -> Result<&str, PublicationError> {
@@ -102,7 +124,11 @@ impl HttpRegistry {
     }
 
     fn get(&self, url: &Url, token: Option<&str>) -> ureq::Request {
-        let request = self.agent.get(url.as_str()).set("User-Agent", "presswerk");
+        let request = self
+            .agent
+            .get(url.as_str())
+            .timeout(self.index_timeout)
+            .set("User-Agent", "presswerk");
         match token {
             Some(token) => request.set("Authorization", token),
             None => request,
@@ -150,7 +176,9 @@ impl CargoRegistry for HttpRegistry {
                 let file = response.into_string().map_err(|error| {
                     PublicationError::new(format!("could not read {url}: {error}"))
                 })?;
-                Ok(Some(parse_index(&file)))
+                parse_index(&file).map(Some).map_err(|error| {
+                    PublicationError::new(format!("could not read {url}: {error}"))
+                })
             }
             // Cargo reads these as "no such crate".
             Err(ureq::Error::Status(404 | 410 | 451, _)) => Ok(None),
@@ -158,17 +186,31 @@ impl CargoRegistry for HttpRegistry {
         }
     }
 
-    fn upload(&self, body: Vec<u8>) -> Result<Vec<String>, PublicationError> {
-        let api = self.config()?.api.clone().ok_or_else(|| {
+    fn upload_url(&self) -> Result<String, PublicationError> {
+        let api = self.config()?.api.as_deref().ok_or_else(|| {
             PublicationError::new(format!(
                 "Cargo index {} names no publish API (`api` in config.json)",
                 self.index
             ))
         })?;
-        let url = format!("{}/api/v1/crates/new", api.trim_end_matches('/'));
+        let url = Url::parse(&format!("{}/api/v1/crates/new", api.trim_end_matches('/')))
+            .ok()
+            .filter(|url| matches!(url.scheme(), "http" | "https"))
+            .ok_or_else(|| {
+                PublicationError::new(format!(
+                    "Cargo index {} names publish API {api:?}, which is no HTTP(S) URL",
+                    self.index
+                ))
+            })?;
+        Ok(url.into())
+    }
+
+    fn upload(&self, body: Vec<u8>) -> Result<Vec<String>, PublicationError> {
+        let url = self.upload_url()?;
         let response = self
             .agent
             .put(&url)
+            .timeout(UPLOAD_TIMEOUT)
             .set("User-Agent", "presswerk")
             .set("Accept", "application/json")
             .set("Content-Type", "application/octet-stream")
@@ -176,6 +218,13 @@ impl CargoRegistry for HttpRegistry {
             .send_bytes(&body)
             .map_err(|error| call_error(&format!("publish to {url}"), error))?;
         let response: Value = response.into_json().unwrap_or(Value::Null);
+        // The Web API allows errors in a successful response, too.
+        let details = error_details(&response);
+        if !details.is_empty() {
+            return Err(PublicationError::new(format!(
+                "could not publish to {url}: {details}"
+            )));
+        }
         Ok(warnings(&response))
     }
 }
@@ -254,10 +303,10 @@ mod tests {
             r#"{"name":"demo","vers":"1.0.0","deps":[],"cksum":"aa","features":{},"yanked":false}"#,
             "\n",
             r#"{"name":"demo","vers":"1.1.0","deps":[],"cksum":"bb","features":{},"yanked":true,"v":2}"#,
-            "\n\nnot json\n",
+            "\n\n",
         );
         assert_eq!(
-            parse_index(file),
+            parse_index(file).unwrap(),
             [
                 IndexEntry {
                     vers: "1.0.0".into(),
@@ -271,6 +320,17 @@ mod tests {
                 },
             ]
         );
+        for unreadable in [
+            "<html>Service Unavailable</html>",
+            r#"{"name":"demo","vers":"1.0.0","cks"#,
+            r#"{"name":"demo","vers":"1.0.0","yanked":false}"#,
+        ] {
+            let file = format!("{}\n{unreadable}\n", file.lines().next().unwrap());
+            assert!(
+                parse_index(&file).unwrap_err().starts_with("line 2 "),
+                "{unreadable}"
+            );
+        }
     }
 
     #[test]
@@ -441,5 +501,61 @@ mod tests {
         );
         let error = registry.upload(Vec::new()).unwrap_err().to_string();
         assert!(error.contains("names no publish API"), "{error}");
+    }
+
+    #[test]
+    fn errors_in_a_successful_upload_response_fail_the_upload() {
+        let (base, routes, _) = serve();
+        routes.lock().unwrap().extend([
+            (
+                "GET",
+                "/config.json".into(),
+                200,
+                format!(r#"{{"dl":"x","api":"{base}"}}"#),
+            ),
+            (
+                "PUT",
+                "/api/v1/crates/new".into(),
+                200,
+                r#"{"errors":[{"detail":"crate name is reserved"}]}"#.into(),
+            ),
+        ]);
+        let registry =
+            HttpRegistry::new(&format!("sparse+{base}/"), Some("secret".into())).unwrap();
+        let error = registry.upload(vec![1]).unwrap_err().to_string();
+        assert!(error.ends_with(": crate name is reserved"), "{error}");
+    }
+
+    #[test]
+    fn an_api_that_is_no_http_url_is_not_uploadable() {
+        let (base, routes, _) = serve();
+        routes.lock().unwrap().push((
+            "GET",
+            "/config.json".into(),
+            200,
+            r#"{"dl":"x","api":"ftp://registry.example"}"#.into(),
+        ));
+        let registry =
+            HttpRegistry::new(&format!("sparse+{base}/"), Some("secret".into())).unwrap();
+        let error = registry.upload_url().unwrap_err().to_string();
+        assert!(error.contains("which is no HTTP(S) URL"), "{error}");
+    }
+
+    #[test]
+    fn a_stalled_index_times_out() {
+        // Accepts the connection, then never answers.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            let held: Vec<_> = listener.incoming().take(2).collect();
+            thread::sleep(std::time::Duration::from_secs(10));
+            drop(held);
+        });
+        let registry = HttpRegistry::new(&format!("sparse+{base}/"), None)
+            .unwrap()
+            .with_index_timeout(std::time::Duration::from_millis(100));
+        let start = std::time::Instant::now();
+        assert!(registry.versions("demo").is_err());
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
     }
 }
