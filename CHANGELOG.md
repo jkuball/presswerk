@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.22.0] - 2026-11-21
 
 - ✨ A previous release that Presswerk cannot read is now trusted with the `trustedPredecessor`
   option in the release module, so `plan` passes and the usual `prepare` releases on top of it,
@@ -8,6 +8,23 @@
 - ✨ `plan` now accepts `--trust-predecessor` too.
 - ✨ A `trustedPredecessor` that names an older release than the previous one now has no effect,
   and `plan` and `prepare` warn that it can be removed.
+
+### ✨ Introduce new features
+
+- (release): Declare a trusted predecessor in the release module
+
+### 📝 Add or update documentation
+
+- (docs): Note the trustedPredecessor option in the changelog
+- (docs): Show the trustedPredecessor option before the flag
+
+### 🐛 Fix a bug
+
+- (release): Check stale trust against the predecessor and quote trust hints
+
+### 🚸 Improve user experience / usability
+
+- (plan): Repeat the trust flag in the prepare hint
 
 ## [0.21.0] - 2026-11-21
 
