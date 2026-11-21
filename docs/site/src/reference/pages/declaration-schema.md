@@ -69,6 +69,6 @@ Every field is required, and unknown fields are rejected.
   may use `{major}`, `{minor}`, and `{patch}`; every tag contains `{version}`, no alias does, and
   `aliases` may be missing in older declarations. `compression` has either `gzip` or `zstd`, each
   with its `level`; it may be missing in older declarations and then means gzip at level 6.
-  `python` may be missing in older declarations. A Python publisher has a `project` name, the
+  `python` may be missing in older declarations. A Python publisher has the project `name`, the
   absolute store path of its `distributions` directory, a `repositoryUrl` and an `indexUrl`, and a
   `username` and a `password` credential.
