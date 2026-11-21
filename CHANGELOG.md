@@ -3,13 +3,11 @@
 ## [Unreleased]
 
 - Credentials are declared as `{ env = "NAME"; }` instead of `{ secret = "NAME"; }`; usernames may
-  still be `{ value = "…"; }`. This affects every project with a GitHub Release publisher, since
-  `token.secret = "GITHUB_TOKEN"` was the default, and every OCI publisher.
-  ([Credentials](https://presswerk.dev/reference/publishers/#credentials))
+  still be `{ value = "…"; }`. This affects every publisher with credentials, including the GitHub
+  Release token, which defaulted to `token.secret = "GITHUB_TOKEN"`.
 - If the previous release used the old credential syntax, the first release after updating needs
   `presswerk prepare --trust-predecessor <tag>=<commit>`, which `prepare` prints, once you have
   verified that the previous release is complete; until then `plan` reports it as unreadable.
-  ([Recovery](https://presswerk.dev/guide/recovery/#the-previous-release-uses-an-unsupported-declaration))
 - `publish` stops before writing anything if a declared secret is missing.
 - Two publishers that claim the same tag or GitHub Release stop the release before anything is
   published.
