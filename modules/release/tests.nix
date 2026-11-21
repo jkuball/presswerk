@@ -579,12 +579,13 @@ in
           sourceRoot = fixtureRoot;
           versionFiles.cargo.example.cargoToml = cargoToml;
           imports = [ publisher ];
-          publishers.cargo.My_Crate = {
+          publishers.cargo.default = {
+            name = "My_Crate";
             crate = image;
             index = "sparse+https://index.crates.io/";
             token.env = "CARGO_REGISTRY_TOKEN";
           };
-        }).publishers.cargo.My_Crate;
+        }).publishers.cargo.default;
       expected = {
         after = [ ];
         name = "My_Crate";
@@ -600,11 +601,12 @@ in
 
     "test Cargo publishers reject invalid declarations" = {
       expr = map
-        ({ name ? "my-crate", cargo ? { } }: succeeds (mkRelease {
+        (cargo: succeeds (mkRelease {
           sourceRoot = fixtureRoot;
           versionFiles.cargo.example.cargoToml = cargoToml;
           imports = [ publisher ];
-          publishers.cargo.${name} = {
+          publishers.cargo.default = {
+            name = "my-crate";
             crate = image;
             index = "sparse+https://kellnr.example.com/api/v1/crates/";
             token.env = "CARGO_REGISTRY_TOKEN";
@@ -612,37 +614,38 @@ in
         }).publishers.cargo)
         [
           { }
-          { cargo.index = "sparse+http://localhost:8000/api/v1/crates/"; }
+          { index = "sparse+http://localhost:8000/api/v1/crates/"; }
           { name = "../escape"; }
-          { cargo.index = "https://index.crates.io/"; }
-          { cargo.index = "sparse+https://index.crates.io"; }
-          { cargo.index = "sparse+https://user:secret@index.crates.io/"; }
-          { cargo.index = "sparse+https://index.crates.io/?x=1/"; }
-          { cargo.token = { value = "secret"; }; }
-          { cargo.crate = "/nix/store/00000000000000000000000000000000-demo.crate"; }
+          { index = "https://index.crates.io/"; }
+          { index = "sparse+https://index.crates.io"; }
+          { index = "sparse+https://user:secret@index.crates.io/"; }
+          { index = "sparse+https://index.crates.io/?x=1/"; }
+          { token = { value = "secret"; }; }
+          { crate = "/nix/store/00000000000000000000000000000000-demo.crate"; }
         ];
       expected = [ true true false false false false false false false ];
     };
 
     "test Cargo publishers of one crate on one index share a claim" = {
-      expr = map
-        (other: succeeds (mkRelease {
-          sourceRoot = fixtureRoot;
-          versionFiles.cargo.example.cargoToml = cargoToml;
-          imports = [ publisher ];
-          publishers.cargo = {
-            my-crate = {
-              crate = image;
-              index = "sparse+https://index.crates.io/";
-              token.env = "CARGO_REGISTRY_TOKEN";
+      expr =
+        let
+          cargo = name: index: { inherit name index; crate = image; token.env = "CARGO_REGISTRY_TOKEN"; };
+        in
+        map
+          (other: succeeds (mkRelease {
+            sourceRoot = fixtureRoot;
+            versionFiles.cargo.example.cargoToml = cargoToml;
+            imports = [ publisher ];
+            publishers.cargo = {
+              default = cargo "my-crate" "sparse+https://index.crates.io/";
+              other = other cargo;
             };
-          } // other;
-        }).publishers)
-        [
-          { my_other = { crate = image; index = "sparse+https://index.crates.io/"; token.env = "T"; }; }
-          { my_crate = { crate = image; index = "sparse+https://kellnr.example/api/v1/crates/"; token.env = "T"; }; }
-          { My_Crate = { crate = image; index = "sparse+https://index.crates.io/"; token.env = "T"; }; }
-        ];
+          }).publishers)
+          [
+            (cargo: cargo "my-other" "sparse+https://index.crates.io/")
+            (cargo: cargo "my_crate" "sparse+https://kellnr.example/api/v1/crates/")
+            (cargo: cargo "My_Crate" "sparse+https://index.crates.io/")
+          ];
       expected = [ true true false ];
     };
 
