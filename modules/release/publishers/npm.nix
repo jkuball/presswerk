@@ -5,11 +5,29 @@
       inherit (lib) mkOption types;
       aliasLib = import ./_aliases.nix { inherit lib; };
       distTagRule = "https://docs.npmjs.com/cli/commands/npm-dist-tag#caveats";
-      # npm refuses a dist-tag that semver reads as a version or range, such as `1.2`, `v1`, or
-      # `x`. The CLI checks the same.
-      looksLikeVersion = tag:
-        builtins.match "[[:space:]]*" tag != null
-        || builtins.match "[[:space:]]*([<>]=?|=|~>?|\\^)?[[:space:]]*[vV=]?[[:space:]]*([0-9].*|[xX*]([.[:space:]|-].*)?)" tag != null;
+      # npm refuses a dist-tag that its `semver.validRange` reads as a version or range, such as
+      # `1.2`, `v1`, `x`, or `||`. The same grammar as the CLI: ranges between `||`, each empty, a
+      # hyphen range, or comparators separated by whitespace, where an operator may stand apart. It
+      # also rejects a few odd forms that npm accepts, such as `x.1`.
+      part = "([xX*]|0|[1-9][0-9]*)";
+      identifier = "(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)";
+      partial = "${part}(\\.${part}(\\.${part}(-${identifier}(\\.${identifier})*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?)?)?";
+      operator = "(<=|>=|<|>|=|~>?|\\^)";
+      isRange = range:
+        let
+          tokens = builtins.filter (token: builtins.isString token && token != "") (builtins.split "[[:space:]]+" range);
+          comparators = builtins.foldl'
+            (merged: token:
+              if merged != [ ] && builtins.match operator (lib.last merged) != null
+              then lib.init merged ++ [ (lib.last merged + token) ]
+              else merged ++ [ token ])
+            [ ]
+            tokens;
+        in
+        range == ""
+        || builtins.match "[v=[:space:]]*${partial}[[:space:]]+-[[:space:]]+[v=[:space:]]*${partial}" range != null
+        || lib.all (comparator: builtins.match "${operator}?[v=]*${partial}" comparator != null) comparators;
+      looksLikeVersion = tag: lib.all (range: isRange (lib.trim range)) (lib.splitString "||" tag);
       renderAliases = npm: map publisherLib.renderTemplate npm.aliases;
 
       npmModule = { config, ... }: {
@@ -29,9 +47,11 @@
           };
 
           registry = mkOption {
-            type = types.strMatching "https?://[^@?#[:space:]]+";
+            # Written canonically, as the CLI reads it, so that claims recognize the same registry:
+            # a lowercase host and no empty path segment. The CLI checks the same.
+            type = types.strMatching "https?://[a-z0-9.-]+(:[0-9]+)?(/[^/?#@[:space:]]+)*/?";
             example = "https://registry.npmjs.org";
-            description = "Base URL of the npm registry. There is no default, so a package never lands on a public registry by accident.";
+            description = "Base URL of the npm registry, with a lowercase host and without the scheme's default port. There is no default, so a package never lands on a public registry by accident.";
           };
 
           access = mkOption {
@@ -124,8 +144,13 @@
               message = "publishers.npm.${name} needs either token, or username and password";
             }
             {
+              assertion = !(lib.hasPrefix "https://" npm.registry && builtins.match "https://[^/]+:443(/.*)?" npm.registry != null)
+                && !(lib.hasPrefix "http://" npm.registry && builtins.match "http://[^/]+:80(/.*)?" npm.registry != null);
+              message = "publishers.npm.${name}.registry must leave out the scheme's default port, so that claims recognize the registry";
+            }
+            {
               assertion = !looksLikeVersion npm.tag;
-              message = "publishers.npm.${name}.tag ${builtins.toJSON npm.tag} would be read as a version or range, which npm refuses as a dist-tag (${distTagRule}); use a name that starts with a letter other than v";
+              message = "publishers.npm.${name}.tag ${builtins.toJSON npm.tag} looks like a version or range, which npm refuses as a dist-tag (${distTagRule})";
             }
             (aliasLib.assertion {
               address = "npm.${name}";
@@ -134,7 +159,7 @@
             })
             {
               assertion = versionLike == [ ];
-              message = "publishers.npm.${name}.aliases render to ${builtins.toJSON versionLike} for version ${publisherLib.sampleVersion}, which npm would read as a version or range and refuses as a dist-tag (${distTagRule}); use names that start with a letter other than v";
+              message = "publishers.npm.${name}.aliases render to ${builtins.toJSON versionLike} for version ${publisherLib.sampleVersion}, which look like a version or range, which npm refuses as a dist-tag (${distTagRule})";
             }
             {
               assertion = !builtins.elem npm.tag (renderAliases npm);

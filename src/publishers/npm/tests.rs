@@ -89,6 +89,9 @@ struct FakeState {
     /// The registry accepts uploads but never shows them.
     hides_uploads: bool,
     no_dist_tag_api: bool,
+    /// The dist-tags as the dist-tag API reports them, when the package document lags behind.
+    live_dist_tags: Option<BTreeMap<String, String>>,
+    dist_tags_unreadable: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -159,12 +162,29 @@ impl NpmRegistry for Fake {
         Ok(())
     }
 
+    fn dist_tags(&self, _name: &str) -> Result<BTreeMap<String, String>, DistTagError> {
+        let state = self.state();
+        if state.no_dist_tag_api {
+            return Err(DistTagError::Unsupported("HTTP 405".into()));
+        }
+        if state.dist_tags_unreadable {
+            return Err(DistTagError::Failed("HTTP 503".into()));
+        }
+        Ok(state
+            .live_dist_tags
+            .clone()
+            .unwrap_or_else(|| state.packument.clone().unwrap_or_default().dist_tags))
+    }
+
     fn set_dist_tag(&self, _name: &str, tag: &str, version: &str) -> Result<(), DistTagError> {
         let mut state = self.state();
         if state.no_dist_tag_api {
             return Err(DistTagError::Unsupported("HTTP 405".into()));
         }
         state.dist_tags_set.push((tag.into(), version.into()));
+        if let Some(live) = &mut state.live_dist_tags {
+            live.insert(tag.into(), version.into());
+        }
         state
             .packument
             .get_or_insert_default()
@@ -279,6 +299,29 @@ fn decodes_a_declaration_with_a_token_or_a_username_and_password() {
         (json!({ "name": "scope/pi-extension" }), Some("@scope/name")),
         (json!({ "name": "@scope" }), Some("@scope/name")),
         (json!({ "tag": "v1" }), Some(DIST_TAG_RULE)),
+        (json!({ "tag": "||" }), Some(DIST_TAG_RULE)),
+        (json!({ "tag": "2026-lts" }), None),
+        (
+            json!({ "registry": "https://registry.example.org:8443/npm/" }),
+            None,
+        ),
+        // Claims name the registry as written, so it is written the one way the client reads it.
+        (
+            json!({ "registry": "https://Registry.npmjs.org" }),
+            Some("written canonically"),
+        ),
+        (
+            json!({ "registry": "https://registry.npmjs.org:443/" }),
+            Some("written canonically"),
+        ),
+        (
+            json!({ "registry": "https://registry.npmjs.org//npm" }),
+            Some("written canonically"),
+        ),
+        (
+            json!({ "registry": "https://registry.npmjs.org/a/../npm" }),
+            Some("written canonically"),
+        ),
         (
             json!({ "aliases": ["{version}"] }),
             Some("must not contain {version}"),
@@ -307,10 +350,49 @@ fn decodes_a_declaration_with_a_token_or_a_username_and_password() {
 
 #[test]
 fn rejects_dist_tags_that_npm_reads_as_a_version_or_range() {
+    // Checked against npm's `semver.validRange`.
     for tag in [
-        "1", "1.2", "1.2.3", "v1", "V1.4", "=1", "^1", "~1.2", ">=1", "<2", "x", "X", "*", "x.1",
-        "1.x", "1abc", " 1", "", " ",
+        "1",
+        "1.2",
+        "1.2.3",
+        "v1",
+        "=1",
+        "=v1",
+        "vv1",
+        "==1",
+        "^1",
+        "~1.2",
+        "~>1",
+        ">=1",
+        "<2",
+        "x",
+        "X",
+        "*",
+        "~x.1",
+        "1.x",
+        " 1",
+        "",
+        " ",
+        "\t1",
+        "||",
+        "1 || 2",
+        "1||2",
+        "1 - 2",
+        "1 -  2",
+        ">= 1",
+        "~ 1.2",
+        "^ 1",
+        "1 2",
+        "1.2.3-rc.1",
+        "1.2.3-0a",
+        "1.2.3+build.5",
+        "1.2.x-rc",
+        ">=1.2.3-rc.1 <2",
     ] {
+        assert!(looks_like_version(tag), "{tag:?}");
+    }
+    // A few odd forms that npm would accept are rejected too; the rule errs on the safe side.
+    for tag in ["x.1", "1.x.1", "> = 1"] {
         assert!(looks_like_version(tag), "{tag:?}");
     }
     for tag in [
@@ -323,6 +405,21 @@ fn rejects_dist_tags_that_npm_reads_as_a_version_or_range() {
         "release-1.2",
         "beta1",
         "stable",
+        "2026-lts",
+        "v2-next",
+        "1abc",
+        "01",
+        "1.2-rc",
+        "1.2.3-rc.01",
+        "V1",
+        "v 1",
+        "a||b",
+        "x || latest",
+        "1 -2",
+        ">",
+        "~",
+        "=",
+        "<1 >",
     ] {
         assert!(!looks_like_version(tag), "{tag:?}");
     }
@@ -734,6 +831,38 @@ fn completeness_needs_only_the_version_in_the_registry() {
     }
 }
 
+#[test]
+fn an_alias_is_decided_by_the_live_dist_tags_not_a_cached_document() {
+    let tarball = write_tarball("@scope/pi-extension", "1.4.0");
+    // The package document still shows `latest` at 1.3.0, but 1.5.0 was released since.
+    let fake = Fake::default()
+        .with_version("1.4.0", Some(integrity(&tarball.bytes)))
+        .with_dist_tag("latest", "1.3.0");
+    fake.state().live_dist_tags = Some(BTreeMap::from([("latest".into(), "1.5.0".into())]));
+    let publisher = publisher(&fake, declaration(&tarball.path));
+
+    let published = publisher
+        .publish(&release("1.4.0"), &Context::detached())
+        .unwrap();
+    assert_eq!(published[1].step, AssetStep::Kept("1.5.0 is higher".into()));
+    assert!(fake.state().dist_tags_set.is_empty());
+}
+
+#[test]
+fn an_alias_that_cannot_be_read_is_not_written() {
+    let tarball = write_tarball("@scope/pi-extension", "1.2.0");
+    let fake = Fake::default();
+    fake.state().dist_tags_unreadable = true;
+    let publisher = publisher(&fake, declaration(&tarball.path));
+
+    let published = publisher
+        .publish(&release("1.2.0"), &Context::detached())
+        .unwrap();
+    assert_eq!(published[0].step, AssetStep::Uploaded);
+    assert_eq!(published[1].step, AssetStep::Warning("HTTP 503".into()));
+    assert!(fake.state().dist_tags_set.is_empty());
+}
+
 /// One request the loopback registry received.
 #[derive(Debug)]
 struct Recorded {
@@ -834,6 +963,8 @@ fn the_client_reads_package_documents() {
 #[test]
 fn the_client_publishes_and_sets_dist_tags() {
     let (registry, requests) = serve(vec![
+        (200, r#"{"latest":"1.1.0","presswerk":"1.2.0"}"#),
+        (405, r#"{"error":"Method not allowed"}"#),
         (200, r#"{"ok":true}"#),
         (
             403,
@@ -851,6 +982,26 @@ fn the_client_publishes_and_sets_dist_tags() {
         }),
     )
     .unwrap();
+
+    assert_eq!(
+        client.dist_tags("@scope/pi-extension").unwrap(),
+        BTreeMap::from([
+            ("latest".into(), "1.1.0".into()),
+            ("presswerk".into(), "1.2.0".into()),
+        ])
+    );
+    let request = requests.recv().unwrap();
+    assert_eq!(
+        request.request_line,
+        "GET /npm/-/package/@scope%2Fpi-extension/dist-tags HTTP/1.1"
+    );
+    assert_eq!(
+        client.dist_tags("pi-extension"),
+        Err(DistTagError::Unsupported(
+            "HTTP 405: Method not allowed".into()
+        ))
+    );
+    requests.recv().unwrap();
 
     let document = json!({ "name": "pi-extension" });
     client.publish("pi-extension", &document).unwrap();
@@ -910,4 +1061,56 @@ fn credentials_never_appear_in_debug_output() {
     )
     .unwrap();
     assert!(!format!("{client:?}").contains("npm-debug-sentinel"));
+}
+
+#[test]
+fn errors_never_show_the_credentials_as_sent() {
+    let encoded = shared::base64("_json_key_base64:npm-echo-sentinel");
+    let echo: &'static str = Box::leak(
+        format!(r#"{{"error":"denied for Basic {encoded} (npm-echo-sentinel)"}}"#).into_boxed_str(),
+    );
+    let (registry, _requests) = serve(vec![
+        (403, echo),
+        (401, r#"{"error":"bad token npm-token-sentinel"}"#),
+    ]);
+    let basic = RegistryClient::new(
+        &registry,
+        Some(Authentication::Basic {
+            username: "_json_key_base64".into(),
+            password: "npm-echo-sentinel".into(),
+        }),
+    )
+    .unwrap();
+    let error = basic
+        .publish("pi-extension", &json!({}))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        !error.contains(&encoded) && !error.contains("npm-echo-sentinel"),
+        "{error}"
+    );
+    assert!(error.contains("denied for [redacted]"), "{error}");
+
+    let token = RegistryClient::new(
+        &registry,
+        Some(Authentication::Token("npm-token-sentinel".into())),
+    )
+    .unwrap();
+    let error = token.packument("pi-extension").unwrap_err().to_string();
+    assert!(!error.contains("npm-token-sentinel"), "{error}");
+}
+
+#[test]
+fn a_stalled_registry_fails_the_request() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    // Accepts the connection, then never answers.
+    let held = std::thread::spawn(move || listener.accept().map(|(stream, _)| stream));
+    let client = RegistryClient::new(&format!("http://{address}"), None)
+        .unwrap()
+        .with_timeouts(Duration::from_secs(5), Duration::from_millis(200));
+    let started = std::time::Instant::now();
+    assert!(client.packument("pi-extension").is_err());
+    assert!(started.elapsed() < Duration::from_secs(5));
+    drop(held.join());
 }

@@ -861,6 +861,10 @@ in
           { tag = "latest"; aliases = [ ]; }
           { aliases = [ "latest" "release-{major}.{minor}" ]; }
           { remove = [ "token" ]; username.value = "_json_key_base64"; password.env = "REGISTRY_PASSWORD"; }
+          # Tags that npm accepts although they start with a digit or v.
+          { tag = "2026-lts"; }
+          { tag = "v2-next"; aliases = [ "latest" "{major}-lts" ]; }
+          { registry = "https://registry.example.org:8443/npm/"; }
           # Every option without a default is required.
           { remove = [ "registry" ]; }
           { remove = [ "access" ]; }
@@ -869,6 +873,11 @@ in
           { name = "scope/pi-extension"; }
           { registry = "registry.npmjs.org"; }
           { registry = "https://user:secret@registry.npmjs.org"; }
+          # Registries are written the one way the CLI reads them, so claims recognize them.
+          { registry = "https://Registry.npmjs.org"; }
+          { registry = "https://registry.npmjs.org:443"; }
+          { registry = "http://localhost:80/npm"; }
+          { registry = "https://registry.npmjs.org//npm"; }
           { package = "/nix/store/00000000000000000000000000000000-fake.tgz"; }
           # Exactly one way to authenticate, and tokens and passwords are secrets.
           { remove = [ "token" ]; }
@@ -880,6 +889,10 @@ in
           { tag = "v1"; }
           { tag = "1.2"; }
           { tag = "x"; }
+          { tag = "||"; }
+          { tag = "1 - 2"; }
+          { tag = ">= 1"; }
+          { tag = "~ 1.2.3-rc.1"; }
           { aliases = [ "{major}" ]; }
           { aliases = [ "v{major}" ]; }
           { aliases = [ "{version}" ]; }
@@ -887,7 +900,7 @@ in
           { aliases = [ "presswerk" ]; }
           { aliases = [ "latest" "latest" ]; }
         ];
-      expected = [ true true true true true true true false false false false false false false false false false false false false false false false false false false false false ];
+      expected = [ true true true true true true true true true true ] ++ builtins.genList (_: false) 29;
     };
 
     "test npm dist-tag assertions link the npm rule" = {
@@ -899,8 +912,8 @@ in
           { aliases = [ "presswerk" ]; }
         ];
       expected = [
-        "publishers.npm.default.tag \"v1\" would be read as a version or range, which npm refuses as a dist-tag (https://docs.npmjs.com/cli/commands/npm-dist-tag#caveats); use a name that starts with a letter other than v"
-        "publishers.npm.default.aliases render to [\"1.2\"] for version 1.2.3, which npm would read as a version or range and refuses as a dist-tag (https://docs.npmjs.com/cli/commands/npm-dist-tag#caveats); use names that start with a letter other than v"
+        "publishers.npm.default.tag \"v1\" looks like a version or range, which npm refuses as a dist-tag (https://docs.npmjs.com/cli/commands/npm-dist-tag#caveats)"
+        "publishers.npm.default.aliases render to [\"1.2\"] for version 1.2.3, which look like a version or range, which npm refuses as a dist-tag (https://docs.npmjs.com/cli/commands/npm-dist-tag#caveats)"
         "publishers.npm.default.aliases must not contain the tag \"presswerk\": the tag is set with the upload and never moved"
       ];
     };
@@ -918,8 +931,10 @@ in
           { registry = "https://npm.pkg.github.com"; }
           { aliases = [ ]; }
           { tag = "other"; aliases = [ "next" ]; }
+          # The same registry, written with a trailing slash.
+          { registry = "https://registry.npmjs.org/"; aliases = [ ]; }
         ];
-      expected = [ true true false false ];
+      expected = [ true true false false false ];
     };
 
     "test publisher dependencies normalize to after edges" = {
