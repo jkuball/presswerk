@@ -50,12 +50,48 @@ the other side. Unknown publisher names and cycles fail module evaluation.
 
 Two publishers must never write the same remote object, such as the same tag in one OCI repository
 or two GitHub Releases for one tag in one repository: the second would only conflict once the tag is
-pushed and leave a partial release. Every publisher claims what it writes, and two publishers that
-claim the same object fail module evaluation. Claims are templates, such as the tag `{major}`,
-rendered with the sample version `1.2.3`. They are part of the release declaration, and `plan`,
-`prepare`, and `publish` render them again with the version they release, so
-a collision that only that version renders, such as an alias `0.1.0` next to the Helm chart of
-`0.1.0`, stops before anything is written.
+pushed and leave a partial release. Every publisher therefore claims what it writes. A claim is a
+destination, the remote, plus a key, the object within it. Only the key is a version template; the
+destination is fixed by the publisher's options:
+
+| Type | Destination | Keys |
+| --- | --- | --- |
+| `oci-image` | the OCI repository | every template in `tags` and `aliases` |
+| `oci-helm` | the OCI repository | the chart tag, `{version}` |
+| `github-release` | the GitHub repository, case-insensitive | the release tag, from `tag.format` |
+
+So two publishers that both use `{version}` collide only if they write to the same destination.
+An image and a Helm chart pushed to one repository do, since image and chart tags share the
+repository's tags:
+
+```nix
+{
+  publishers.oci-image.api = {
+    repository = "ghcr.io/foo/api";
+    tags = [ "{version}" ];
+    # …
+  };
+  publishers.oci-helm.chart = {
+    repository = "ghcr.io/foo/api"; # use ghcr.io/foo/charts/api instead
+    # …
+  };
+}
+```
+
+Module evaluation fails with:
+
+```text
+publishers.oci-helm.chart and publishers.oci-image.api both push to oci://ghcr.io/foo/api and both render 1.2.3 for version 1.2.3
+```
+
+With the chart in `ghcr.io/foo/charts/api`, both still render `{version}`, but the destinations
+differ, so nothing collides.
+
+Nix renders the keys with the sample version `1.2.3`. The claims are part of the release
+declaration, and `plan`, `prepare`, and `publish` render them again with the version they release,
+so a collision that only that version renders stops before anything is written. An image alias
+`0.1.0` next to a Helm chart in the same repository passes with `1.2.3`, but collides with the
+chart tag when `0.1.0` is released.
 
 ## Credentials
 

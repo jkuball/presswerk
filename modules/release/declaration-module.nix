@@ -385,7 +385,7 @@
                 options = {
                   destination = mkOption {
                     type = types.str;
-                    description = "The remote, such as `oci://ghcr.io/owner/project`.";
+                    description = "The remote, such as `oci://ghcr.io/owner/project`; claims only collide within one destination.";
                   };
                   key = mkOption {
                     type = types.str;
