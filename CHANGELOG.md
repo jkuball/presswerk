@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+- ✨ A previous release that Presswerk cannot read is now trusted with the `trustedPredecessor`
+  option in the release module, so `plan` passes and the usual `prepare` releases on top of it,
+  without running `prepare --trust-predecessor` by hand.
+- ✨ `plan` now accepts `--trust-predecessor` too.
+- ✨ A `trustedPredecessor` that names an older release than the previous one now has no effect,
+  and `plan` and `prepare` warn that it can be removed.
+
 ## [0.21.0] - 2026-11-21
 
 - 💥 Credentials are declared as `{ env = "NAME"; }` instead of `{ secret = "NAME"; }`; usernames
