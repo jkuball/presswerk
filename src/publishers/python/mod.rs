@@ -336,34 +336,43 @@ impl<I: Index> PythonPublisher<I> {
         Ok(())
     }
 
-    fn file_state(&self, distribution: &Distribution, remote: &[IndexFile]) -> FileState {
+    /// What the index holds of one local file. A listed file without a SHA-256 digest cannot be
+    /// verified, which is an error rather than a conflict: nothing says its bytes differ.
+    fn file_state(
+        &self,
+        distribution: &Distribution,
+        remote: &[IndexFile],
+    ) -> Result<FileState, PublicationError> {
         let Some(listed) = remote
             .iter()
             .find(|file| file.filename == distribution.filename)
         else {
-            return FileState::Missing;
+            return Ok(FileState::Missing);
         };
         match &listed.sha256 {
-            Some(digest) if *digest == distribution.sha256 => FileState::Matching,
-            Some(digest) => FileState::Conflicting(format!(
+            Some(digest) if *digest == distribution.sha256 => Ok(FileState::Matching),
+            Some(digest) => Ok(FileState::Conflicting(format!(
                 "{} on {} has sha256 {digest}, expected {}",
                 distribution.filename, self.index_url, distribution.sha256
-            )),
-            None => FileState::Conflicting(format!(
-                "{} on {} has no sha256 digest, so Presswerk cannot tell whether it matches",
+            ))),
+            None => Err(PublicationError::new(format!(
+                "{} on {} has no sha256 digest, so Presswerk cannot verify whether it matches",
                 distribution.filename, self.index_url
-            )),
+            ))),
         }
+    }
+
+    /// The state of every local file in one listing of the index.
+    fn file_states(&self, remote: &[IndexFile]) -> Result<Vec<FileState>, PublicationError> {
+        self.distributions
+            .iter()
+            .map(|distribution| self.file_state(distribution, remote))
+            .collect()
     }
 
     fn checked_state(&self, release: &Release) -> Result<PublisherState, PublicationError> {
         self.check_versions(release)?;
-        let remote = self.index.files(&self.project)?;
-        let states: Vec<FileState> = self
-            .distributions
-            .iter()
-            .map(|distribution| self.file_state(distribution, &remote))
-            .collect();
+        let states = self.file_states(&self.index.files(&self.project)?)?;
         if let Some(FileState::Conflicting(conflict)) = states
             .iter()
             .find(|state| matches!(state, FileState::Conflicting(_)))
@@ -389,10 +398,10 @@ impl<I: Index> PythonPublisher<I> {
         }
         let deadline = Instant::now() + self.lag.timeout;
         loop {
-            let remote = self.index.files(&self.project)?;
+            let remote = self.index.files_before(&self.project, deadline)?;
             let mut unlisted = Vec::new();
             for distribution in uploaded {
-                match self.file_state(distribution, &remote) {
+                match self.file_state(distribution, &remote)? {
                     FileState::Matching => {}
                     FileState::Missing => unlisted.push(distribution.filename.as_str()),
                     FileState::Conflicting(conflict) => {
@@ -440,13 +449,21 @@ impl<I: Index> Publisher for PythonPublisher<I> {
 
     fn publish(&self, release: &Release, ctx: &Context) -> Result<ArtifactSteps, PublicationError> {
         self.check_versions(release)?;
-        let remote = self.index.files(&self.project)?;
+        // Every file of this listing is checked before the first upload, so a conflict that
+        // appeared since the state check stops the run before anything is written.
+        let states = self.file_states(&self.index.files(&self.project)?)?;
+        if let Some(FileState::Conflicting(conflict)) = states
+            .iter()
+            .find(|state| matches!(state, FileState::Conflicting(_)))
+        {
+            return Err(PublicationError::new(conflict.clone()));
+        }
         let mut steps = Vec::with_capacity(self.distributions.len());
         let mut uploaded = Vec::new();
-        for distribution in &self.distributions {
-            let step = match self.file_state(distribution, &remote) {
+        for (distribution, state) in self.distributions.iter().zip(states) {
+            let step = match state {
                 FileState::Matching => AssetStep::AlreadyUploaded,
-                FileState::Conflicting(conflict) => return Err(PublicationError::new(conflict)),
+                FileState::Conflicting(_) => unreachable!("conflicts stopped the run"),
                 FileState::Missing => match self.index.upload(distribution) {
                     Ok(()) => {
                         uploaded.push(distribution);
@@ -456,7 +473,10 @@ impl<I: Index> Publisher for PythonPublisher<I> {
                     // matches.
                     Err(error) => {
                         let remote = self.index.files(&self.project)?;
-                        if self.file_state(distribution, &remote) != FileState::Matching {
+                        if !matches!(
+                            self.file_state(distribution, &remote),
+                            Ok(FileState::Matching)
+                        ) {
                             return Err(error);
                         }
                         AssetStep::AlreadyUploaded
@@ -689,28 +709,52 @@ mod tests {
     }
 
     #[test]
-    fn a_different_or_unverifiable_file_conflicts() {
+    fn a_different_file_conflicts_before_any_upload() {
         let directory = tempfile::tempdir().unwrap();
         let release = release("1.2.3");
         let ctx = Context::detached();
-        for (sha256, expected) in [
-            (Some("00"), "has sha256 00, expected"),
-            (None, "has no sha256 digest"),
-        ] {
-            let publisher = publisher(
-                FakeIndex::with(&[(WHEEL, sha256)]),
-                distributions(directory.path()),
-            );
-            let PublisherState::Conflicting(conflict) = publisher.state(&release, &ctx).unwrap()
-            else {
-                panic!("expected a conflict");
-            };
-            assert!(conflict.starts_with(WHEEL), "{conflict}");
-            assert!(conflict.contains(expected), "{conflict}");
-            let error = publisher.publish(&release, &ctx).unwrap_err().to_string();
-            assert!(error.contains(expected), "{error}");
-            assert!(publisher.index.uploads.lock().unwrap().is_empty());
-        }
+        // The wheel sorts first and is missing; the sdist conflicts, so nothing is uploaded.
+        let publisher = publisher(
+            FakeIndex::with(&[(SDIST, Some("00"))]),
+            distributions(directory.path()),
+        );
+        let PublisherState::Conflicting(conflict) = publisher.state(&release, &ctx).unwrap() else {
+            panic!("expected a conflict");
+        };
+        assert!(
+            conflict.starts_with(&format!(
+                "{SDIST} on https://pypi.org/simple/ has sha256 00, expected "
+            )),
+            "{conflict}"
+        );
+        assert_eq!(
+            publisher.publish(&release, &ctx).unwrap_err().to_string(),
+            conflict
+        );
+        assert!(publisher.index.uploads.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_file_without_a_digest_cannot_be_verified() {
+        let directory = tempfile::tempdir().unwrap();
+        let release = release("1.2.3");
+        let ctx = Context::detached();
+        let publisher = publisher(
+            FakeIndex::with(&[(SDIST, None)]),
+            distributions(directory.path()),
+        );
+        let expected = format!(
+            "{SDIST} on https://pypi.org/simple/ has no sha256 digest, so Presswerk cannot verify whether it matches"
+        );
+        assert_eq!(
+            publisher.state(&release, &ctx).unwrap_err().to_string(),
+            expected
+        );
+        assert_eq!(
+            publisher.publish(&release, &ctx).unwrap_err().to_string(),
+            expected
+        );
+        assert!(publisher.index.uploads.lock().unwrap().is_empty());
     }
 
     #[test]

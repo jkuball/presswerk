@@ -170,10 +170,18 @@ pub fn read_directory(directory: &Path) -> Result<Vec<Distribution>, Publication
                 ))
             })?
             .path();
-        // `metadata` follows symlinks, as the store paths of `symlinkJoin` are.
-        if std::fs::metadata(&path).is_ok_and(|metadata| metadata.is_file()) {
-            paths.push(path);
+        // `metadata` follows symlinks, as the store paths of `symlinkJoin` are. An entry that
+        // cannot be read could be a distribution of the release, so it stops the run.
+        let metadata = std::fs::metadata(&path).map_err(|error| {
+            PublicationError::new(format!("could not read {}: {error}", path.display()))
+        })?;
+        if !metadata.is_file() {
+            return Err(PublicationError::new(format!(
+                "{} is not a regular file; the distributions must be files",
+                path.display()
+            )));
         }
+        paths.push(path);
     }
     paths.sort();
     if paths.is_empty() {
@@ -218,9 +226,44 @@ fn sdist_metadata(file: File, parsed: &Filename) -> Result<String, String> {
     Err(format!("has no {entry}"))
 }
 
+/// The core metadata fields that the upload form carries, by form name. Other headers stay out,
+/// so none can stand in for a field of the upload itself, such as `filetype`.
+const CORE_FIELDS: &[&str] = &[
+    "metadata_version",
+    "name",
+    "version",
+    "dynamic",
+    "platform",
+    "supported_platform",
+    "summary",
+    "description",
+    "description_content_type",
+    "keywords",
+    "home_page",
+    "download_url",
+    "author",
+    "author_email",
+    "maintainer",
+    "maintainer_email",
+    "license",
+    "license_expression",
+    "license_file",
+    "classifiers",
+    "requires_dist",
+    "requires_python",
+    "requires_external",
+    "project_urls",
+    "provides_extra",
+    "provides_dist",
+    "obsoletes_dist",
+    "requires",
+    "provides",
+    "obsoletes",
+];
+
 /// Core metadata, in email header format, as upload form fields, like twine and uv send them:
-/// each header in snake case, `Classifier` and `Project-URL` in their plural form names, and the
-/// message body as `description`.
+/// each core metadata header in snake case, `Classifier` and `Project-URL` in their plural form
+/// names, and the message body as `description`.
 #[must_use]
 pub fn form_fields(text: &str) -> Vec<(String, String)> {
     let text = text.replace("\r\n", "\n");
@@ -252,6 +295,7 @@ pub fn form_fields(text: &str) -> Vec<(String, String)> {
     if !body.is_empty() {
         fields.push(("description".to_owned(), body.to_owned()));
     }
+    fields.retain(|(field, _)| CORE_FIELDS.contains(&field.as_str()));
     fields
 }
 
@@ -352,7 +396,7 @@ pub(crate) mod tests {
 
     #[test]
     fn forwards_metadata_as_form_fields() {
-        let text = "Metadata-Version: 2.1\r\nName: legacy\r\nVersion: 1.0.0\r\nDescription: First line\r\n        |  indented\r\n        |\r\n        |last\r\nRequires-Dist: requests\r\nRequires-Dist: rich; extra == \"cli\"\r\n";
+        let text = "Metadata-Version: 2.1\r\nName: legacy\r\nVersion: 1.0.0\r\nDescription: First line\r\n        |  indented\r\n        |\r\n        |last\r\nRequires-Dist: requests\r\nFiletype: sdist\r\nSha256-Digest: 00\r\n  folded\r\nX-Custom: kept out\r\nRequires-Dist: rich; extra == \"cli\"\r\n";
         assert_eq!(
             form_fields(text),
             [
@@ -435,6 +479,30 @@ pub(crate) mod tests {
         let error = read_directory(directory.path()).unwrap_err().to_string();
         assert!(
             error.starts_with("my_package-1.2.3-py3-none-any.whl: "),
+            "{error}"
+        );
+
+        // A wheel that cannot be read is never left out.
+        let directory = tempfile::tempdir().unwrap();
+        sdist(directory.path(), "my_package-1.2.3.tar.gz", METADATA);
+        std::os::unix::fs::symlink(
+            directory.path().join("missing"),
+            directory.path().join("my_package-1.2.3-py3-none-any.whl"),
+        )
+        .unwrap();
+        let error = read_directory(directory.path()).unwrap_err().to_string();
+        assert!(error.starts_with("could not read "), "{error}");
+        assert!(
+            error.contains("my_package-1.2.3-py3-none-any.whl"),
+            "{error}"
+        );
+
+        let directory = tempfile::tempdir().unwrap();
+        sdist(directory.path(), "my_package-1.2.3.tar.gz", METADATA);
+        std::fs::create_dir(directory.path().join("nested")).unwrap();
+        let error = read_directory(directory.path()).unwrap_err().to_string();
+        assert!(
+            error.ends_with("nested is not a regular file; the distributions must be files"),
             "{error}"
         );
     }
