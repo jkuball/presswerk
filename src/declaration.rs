@@ -1291,10 +1291,10 @@ mod tests {
         let error = crate::publishers::check_claims(&declaration.publishers, &declaration.version)
             .unwrap_err();
         assert!(
-            error.contains("oci-image.default and oci-helm.default"),
+            error.contains("publishers.oci-image.default and publishers.oci-helm.default"),
             "{error}"
         );
-        assert!(error.contains("both render 1.2.3"), "{error}");
+        assert!(error.contains("both claim 1.2.3"), "{error}");
     }
 
     #[test]
@@ -1348,8 +1348,8 @@ mod tests {
         .unwrap_err();
         assert!(
             error.contains(
-                "oci-image.debug and oci-image.default both push to oci://ghcr.io/owner/project"
-            ) && error.contains("both render latest"),
+                "publishers.oci-image.debug and publishers.oci-image.default both claim latest in oci://ghcr.io/owner/project"
+            ) && error.contains("both claim latest"),
             "{error}"
         );
     }

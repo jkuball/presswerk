@@ -441,19 +441,25 @@ impl<'de> Deserialize<'de> for Publishers {
 /// Checks that no two publishers write the same remote object for `version`, with each claim's
 /// key rendered for it.
 pub fn check_claims(publishers: &Publishers, version: &Version) -> Result<(), String> {
-    let mut claimed: BTreeMap<Claim, String> = BTreeMap::new();
+    let mut claimed: BTreeMap<Claim, (String, String)> = BTreeMap::new();
     for (address, claim) in publishers.claims().map_err(|error| error.to_string())? {
+        let template = claim.key.clone();
         let claim = Claim {
             key: shared::template::render(&claim.key, version),
             ..claim
         };
-        if let Some(other) = claimed.get(&claim) {
+        if let Some((other, other_template)) = claimed.get(&claim) {
+            let as_written = if *other_template == template {
+                String::new()
+            } else {
+                format!(", as {other_template} and {template}")
+            };
             return Err(format!(
-                "{other} and {address} both push to {} and both render {} for version {version}",
-                claim.destination, claim.key
+                "publishers.{other} and publishers.{address} both claim {} in {} for release {version}{as_written}",
+                claim.key, claim.destination
             ));
         }
-        claimed.insert(claim, address);
+        claimed.insert(claim, (address, template));
     }
     Ok(())
 }
@@ -528,10 +534,15 @@ mod tests {
         check_claims(&declaration.publishers, &Version::new(1, 2, 3)).unwrap();
         let error = check_claims(&declaration.publishers, &declaration.version).unwrap_err();
         assert!(
-            error.contains("oci-image.image and oci-helm.chart"),
+            error.contains("publishers.oci-image.image and publishers.oci-helm.chart"),
             "{error}"
         );
-        assert!(error.contains("both render 0.1.0"), "{error}");
+        assert!(
+            error.ends_with(
+                "both claim 0.1.0 in oci://ghcr.io/owner/project for release 0.1.0, as 0.1.0 and {version}"
+            ),
+            "{error}"
+        );
     }
 
     #[test]

@@ -753,6 +753,17 @@ in
             chart = image;
           };
         };
+        # Different templates that name the same object.
+        alias = failedAssertion {
+          publishers.oci-image.image = imagePublisher // {
+            tags = [ "v{version}" ];
+            aliases = [ "1.2.3" ];
+          };
+          publishers.oci-helm.chart = {
+            inherit (imagePublisher) repository username password;
+            chart = image;
+          };
+        };
         github = failedAssertion {
           publishers.github-release.a.repository = "owner/project";
           publishers.github-release.b = {
@@ -762,8 +773,9 @@ in
         };
       };
       expected = {
-        image = "publishers.oci-helm.chart and publishers.oci-image.image both push to oci://ghcr.io/owner/project and both render 1.2.3 for version 1.2.3";
-        github = "publishers.github-release.a and publishers.github-release.b both push to https://api.github.com/repos/owner/project and both render v1.2.3 for version 1.2.3";
+        image = "publishers.oci-helm.chart and publishers.oci-image.image both claim {version} in oci://ghcr.io/owner/project";
+        alias = "publishers.oci-helm.chart and publishers.oci-image.image both claim the same object in oci://ghcr.io/owner/project: {version} and 1.2.3";
+        github = "publishers.github-release.a and publishers.github-release.b both claim v{version} in https://api.github.com/repos/owner/project";
       };
     };
 

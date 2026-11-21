@@ -83,6 +83,7 @@
         (address: publisher: map
           (claim: claim // {
             inherit address;
+            template = claim.key;
             key = renderTemplate claim.key;
           })
           publisher.claims)
@@ -648,8 +649,13 @@
           {
             assertion = sharedClaims == [ ];
             message =
-              let shared = builtins.head sharedClaims;
-              in "publishers.${shared.claim.address} and publishers.${shared.other.address} both push to ${shared.claim.destination} and both render ${shared.claim.key} for version 1.2.3";
+              let
+                inherit (builtins.head sharedClaims) claim other;
+                both = "publishers.${claim.address} and publishers.${other.address} both claim";
+              in
+              if claim.template == other.template
+              then "${both} ${claim.template} in ${claim.destination}"
+              else "${both} the same object in ${claim.destination}: ${claim.template} and ${other.template}";
           }
           {
             assertion = config.stable || versionMajor == "0";

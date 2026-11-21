@@ -932,10 +932,10 @@ fn the_plan_rejects_an_oci_helm_tag_shared_with_an_oci_image_publisher() {
     .to_string();
 
     assert!(
-        error.contains("oci-image.image and oci-helm.chart"),
+        error.contains("publishers.oci-image.image and publishers.oci-helm.chart"),
         "{error}"
     );
-    assert!(error.contains("both render 0.1.0"), "{error}");
+    assert!(error.contains("both claim 0.1.0"), "{error}");
 }
 
 #[test]
