@@ -76,7 +76,7 @@ Every field is required unless noted otherwise, and unknown fields are rejected.
   `username` and a `password` credential.
   `cargo` may be missing in older declarations. A Cargo publisher has the `name` of its crate, the
   absolute store path of its `crate` archive, its sparse `index` URL, and a `token` credential.
-  `python` may be missing in older declarations. A Python publisher has a `project` name, the
+  `python` may be missing in older declarations. A Python publisher has the project `name`, the
   absolute store path of its `distributions` directory, a `repositoryUrl` and an `indexUrl`, and a
   `username` and a `password` credential.
 - `trustedPredecessor`: optional, and present only when declared. The previous release the CLI

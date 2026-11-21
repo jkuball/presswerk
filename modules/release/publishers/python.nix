@@ -15,7 +15,7 @@
         imports = [ (publisherLib.instance { type = "python"; }) ];
 
         options = {
-          project = mkOption {
+          name = mkOption {
             type = types.strMatching "[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?";
             example = "my-package";
             description = "The project name on the index, as in `pyproject.toml`. Every distribution's name must match it, compared in normalized form, so `my_package` matches `my-package`.";
@@ -53,11 +53,11 @@
         };
 
         config = {
-          declaration = { inherit (config) project distributions repositoryUrl indexUrl username password; };
+          declaration = { inherit (config) name distributions repositoryUrl indexUrl username password; };
           # An index holds one release per project and version.
           claims = [{
             destination = "${lib.removeSuffix "/" config.indexUrl}/";
-            key = "${normalize config.project}=={version}";
+            key = "${normalize config.name}=={version}";
           }];
         };
       };
@@ -69,7 +69,7 @@
         example = lib.literalExpression ''
           {
             default = {
-              project = "my-package";
+              name = "my-package";
               distributions = self.packages.x86_64-linux.my-package-dist;
               repositoryUrl = "https://upload.pypi.org/legacy/";
               indexUrl = "https://pypi.org/simple/";

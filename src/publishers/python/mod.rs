@@ -35,7 +35,7 @@ const LABELS: Labels = Labels {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PythonDeclaration {
     /// The project name on the index, such as `my-package`.
-    pub project: String,
+    pub name: String,
     /// The store path of a directory that holds the wheels and the sdist.
     pub distributions: String,
     /// The legacy upload API, such as `https://upload.pypi.org/legacy/`.
@@ -48,10 +48,10 @@ pub struct PythonDeclaration {
 
 impl PythonDeclaration {
     fn validate(&self) -> Result<(), DeclarationError> {
-        if !is_project_name(&self.project) {
+        if !is_project_name(&self.name) {
             return Err(DeclarationError::Invalid(format!(
                 "Python project name {:?} must start and end with a letter or digit and contain only letters, digits, `-`, `_`, and `.`",
-                self.project
+                self.name
             )));
         }
         if !self.distributions.starts_with('/') {
@@ -131,7 +131,7 @@ impl Python {
         }
         let runner = PythonPublisher::new(
             self.declaration.index(ctx)?,
-            &self.declaration.project,
+            &self.declaration.name,
             &self.declaration.index_url,
             distribution::read_directory(Path::new(&self.declaration.distributions))?,
         );
@@ -205,11 +205,7 @@ impl Publisher for Python {
     }
 
     fn describe(&self, version: &Version, _tag: &str) -> Result<Description, String> {
-        describe(
-            &self.declaration.project,
-            &self.declaration.index_url,
-            version,
-        )
+        describe(&self.declaration.name, &self.declaration.index_url, version)
     }
 
     fn artifacts(&self) -> Vec<(String, String)> {
@@ -226,7 +222,7 @@ impl Publisher for Python {
     ) -> Result<Completeness, PublicationError> {
         Ok(completeness_of(
             &self.declaration.index(ctx)?,
-            &self.declaration.project,
+            &self.declaration.name,
             &self.declaration.index_url,
             release,
         ))
@@ -862,7 +858,7 @@ mod tests {
     #[test]
     fn decodes_and_validates_declarations() {
         let valid = json!({
-            "project": "my-package",
+            "name": "my-package",
             "distributions": "/nix/store/00000000000000000000000000000000-dist",
             "repositoryUrl": "https://upload.pypi.org/legacy/",
             "indexUrl": "https://pypi.org/simple/",
@@ -885,8 +881,8 @@ mod tests {
             )]
         );
         for (option, value) in [
-            ("project", json!("-my-package")),
-            ("project", json!("my package")),
+            ("name", json!("-my-package")),
+            ("name", json!("my package")),
             ("distributions", json!("dist")),
             ("repositoryUrl", json!("ftp://upload.pypi.org/legacy/")),
             (
@@ -908,7 +904,7 @@ mod tests {
             );
         }
         let mut unknown = valid;
-        unknown["name"] = json!("my-package");
+        unknown["project"] = json!("my-package");
         assert!(matches!(
             Python::from_declaration(&unknown),
             Err(DeclarationError::IncompatibleUnstableSchema(_))

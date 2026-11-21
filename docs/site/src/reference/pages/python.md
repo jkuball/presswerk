@@ -5,7 +5,7 @@ under [`publishers.python`](/reference/options/#publishers.python), keyed by a n
 ```nix presswerk-module
 {
   publishers.python.default = {
-    project = "my-package";
+    name = "my-package";
     distributions = self.packages.x86_64-linux.my-package-dist;
     repositoryUrl = "https://upload.pypi.org/legacy/";
     indexUrl = "https://pypi.org/simple/";
@@ -43,7 +43,7 @@ repository in Google Artifact Registry:
 ```nix presswerk-module
 {
   publishers.python.internal = {
-    project = "my-package";
+    name = "my-package";
     distributions = self.packages.x86_64-linux.my-package-dist;
     repositoryUrl = "https://europe-west3-python.pkg.dev/my-project/my-index/";
     indexUrl = "https://europe-west3-python.pkg.dev/my-project/my-index/simple/";
@@ -54,7 +54,7 @@ repository in Google Artifact Registry:
 ```
 
 One project version can only be released once per index, so two Python publishers with the same
-`project` and `indexUrl` fail module evaluation. Publishing one project to two indexes, such as
+`name` and `indexUrl` fail module evaluation. Publishing one project to two indexes, such as
 PyPI and a private mirror, takes two publishers.
 
 ## Distributions
@@ -93,7 +93,7 @@ my-package-dist = pkgs.stdenvNoCC.mkDerivation {
 
 Presswerk reads only what an upload needs: each file's name, its core metadata (`METADATA` in a
 wheel, `PKG-INFO` in an sdist), and its SHA-256 digest. It compares the project name and version in
-the filename and the metadata with `project` and the release version before it pushes the Git tag,
+the filename and the metadata with `name` and the release version before it pushes the Git tag,
 so a mismatched build leaves no release state behind. Nothing else is checked; the index decides
 whether the metadata is valid. The metadata is sent with each upload unchanged, as `twine` and
 `uv publish` send it.

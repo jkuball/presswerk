@@ -113,7 +113,7 @@ let
   };
 
   pythonPublisher = {
-    project = "My_Package";
+    name = "My_Package";
     distributions = image;
     repositoryUrl = "https://upload.pypi.org/legacy/";
     indexUrl = "https://pypi.org/simple";
@@ -689,7 +689,7 @@ in
       expected = [ true true false ];
     };
 
-    "test Python publishers normalize to store paths and claim the normalized project" = {
+    "test Python publishers normalize to store paths and claim the normalized name" = {
       expr =
         (mkRelease {
           sourceRoot = fixtureRoot;
@@ -699,7 +699,7 @@ in
         }).publishers.python.default;
       expected = {
         after = [ ];
-        project = "My_Package";
+        name = "My_Package";
         distributions = image.outPath;
         repositoryUrl = "https://upload.pypi.org/legacy/";
         indexUrl = "https://pypi.org/simple";
@@ -723,8 +723,8 @@ in
         [
           { }
           { username.env = "PYPI_USERNAME"; }
-          { project = "-my-package"; }
-          { project = "my package"; }
+          { name = "-my-package"; }
+          { name = "my package"; }
           { distributions = "/nix/store/00000000000000000000000000000000-dist"; }
           { repositoryUrl = "https://user:secret@upload.pypi.org/legacy/"; }
           { indexUrl = "ftp://pypi.org/simple/"; }
@@ -734,7 +734,7 @@ in
       expected = [ true true false false false false false false false ];
     };
 
-    "test Python publishers of one project on one index collide" = {
+    "test Python publishers of one name on one index collide" = {
       expr = map
         (other: succeeds (mkRelease {
           sourceRoot = fixtureRoot;
@@ -744,9 +744,9 @@ in
           publishers.python.other = pythonPublisher // other;
         }).publishers)
         [
-          { project = "other"; }
+          { name = "other"; }
           { indexUrl = "https://test.pypi.org/simple/"; }
-          { project = "my.package"; }
+          { name = "my.package"; }
           { indexUrl = "https://pypi.org/simple/"; }
         ];
       expected = [ true true false false ];
