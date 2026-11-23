@@ -80,8 +80,7 @@ Presswerk reads the archive only as far as the upload needs it: the packaged `Ca
 readme it names become the request's metadata. The crate's name must be `name` and its version the
 release version; Presswerk checks both before it pushes the Git tag, so a mismatched
 archive leaves no release state behind. Nothing else is checked, such as `publish` in
-`Cargo.toml` or missing metadata: the registry decides what it accepts. Docs are not uploaded,
-including kellnr's rustdoc uploads.
+`Cargo.toml` or missing metadata: the registry decides what it accepts. Docs are not uploaded.
 
 Keep the crate's `Cargo.toml` among the release's [version files](/reference/version-files/), so
 the package always carries the release version.
