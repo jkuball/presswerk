@@ -197,6 +197,7 @@ in
           reference/options
           reference/publishers
           reference/publishers/github-release
+          reference/publishers/npm
           reference/publishers/oci-helm
           reference/publishers/oci-image
           reference/version-files
@@ -204,7 +205,7 @@ in
         for page in $pages; do
           test -s "$site/$page.md" || { echo "missing Markdown page $page.md" >&2; exit 1; }
         done
-        for page in options changelog declaration-schema cli publishers publishers/github-release publishers/oci-helm publishers/oci-image analyzers analyzers/gitmoji analyzers/conventional-commits; do
+        for page in options changelog declaration-schema cli publishers publishers/github-release publishers/npm publishers/oci-helm publishers/oci-image analyzers analyzers/gitmoji analyzers/conventional-commits; do
           test -s "$site/reference/$page/index.html" || { echo "missing reference page $page" >&2; exit 1; }
         done
         # Keep the published OCI image routes working after the page rename.

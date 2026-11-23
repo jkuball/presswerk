@@ -6,6 +6,7 @@
 //! with JSON in and out.
 
 pub mod github_release;
+pub mod npm;
 pub mod oci;
 pub mod shared;
 
@@ -24,6 +25,7 @@ use std::fmt;
 pub const TYPES: &[Registration] = &[
     Registration::of::<oci::image::OciImage>(),
     Registration::of::<oci::helm::OciHelm>(),
+    Registration::of::<npm::Npm>(),
     Registration::of::<github_release::GithubRelease>(),
 ];
 
@@ -486,13 +488,17 @@ mod tests {
     #[test]
     fn an_unknown_publisher_type_is_a_declaration_for_another_version() {
         let error =
-            ReleaseDeclaration::from_json(&declaration(json!({ "npm": { "default": {} } })))
+            ReleaseDeclaration::from_json(&declaration(json!({ "nuget": { "default": {} } })))
                 .unwrap_err();
         assert!(
             matches!(error, DeclarationError::IncompatibleUnstableSchema(_)),
             "{error}"
         );
-        assert!(error.to_string().contains("unknown publisher type \"npm\""));
+        assert!(
+            error
+                .to_string()
+                .contains("unknown publisher type \"nuget\"")
+        );
     }
 
     #[test]
