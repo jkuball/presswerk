@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.0] - 2026-11-23
 
 - ✨ An `npm` publisher publishes a tarball built by the flake to an npm registry, with dist-tag
   aliases such as `latest` that only move forward.
@@ -8,6 +8,55 @@
   registry.
 - ✨ A `python` publisher uploads the wheels and sdist built by the flake to PyPI or any other
   package index, and completes a partially uploaded release on retry.
+
+### ✨ Introduce new features
+
+- (python): Declare Python publishers in the flake
+- (python): Upload wheels and sdists to package indexes
+- (cargo): Declare the crate name explicitly instead of deriving it from the instance
+- (cargo): Add the Cargo publisher for sparse-index registries
+- (npm): Add an npm publisher
+
+### 📝 Add or update documentation
+
+- (docs): Note the Python publisher in the unreleased changes
+- (docs): Explain the canonical index URL and the approximate wait
+- (docs): Describe unverifiable Python files and canonical index URLs
+- (docs): Document the Python publisher
+- (docs): Drop the kellnr rustdoc note from the Cargo page
+- (docs): Note the Cargo publisher as unreleased
+- (docs): Name the crate with the explicit name option
+- (conception): Let publishers read what publishing needs and never validate content
+- (docs): Document the Cargo publisher
+- (docs): List the npm publisher in the declaration schema and the docs checks
+- (docs): List the built-in publishers without a count
+- (docs): Note the npm publisher in the unreleased changes
+- (docs): Document the npm publisher
+
+### 🐛 Fix a bug
+
+- (python): Require the canonical simple API URL
+- (python): Cross-check link names and scrub authenticated read errors
+- (python): Claim equivalent simple API URLs as one index
+- (python): Fail closed on unreadable listings and files, stalls, and credential echoes
+- (cargo): Validate the publish API as a base URL before appending the upload route
+- (cargo): Fail closed on unreadable index rows, bound index requests, check the publish API before the tag, and require canonical indexes
+- (npm): Decide pending aliases from live dist-tags and redact echoes before shortening
+- (npm): Claim canonical registries, follow npm's range grammar, and read live dist-tags
+
+### 🚸 Improve user experience / usability
+
+- (cargo): Report a yanked matching version as kept instead of repeating a note
+
+### ♻️ Refactor code
+
+- (python): Name the project with a name option like the other registry publishers
+- (publishers): Share the Base64 encoder
+- (publishers): Share the alias rule between publishers
+
+### ✅ Add, update, or pass tests
+
+- (cli): Use a publisher type that stays unknown in the predecessor test
 
 ## [0.22.0] - 2026-11-21
 
