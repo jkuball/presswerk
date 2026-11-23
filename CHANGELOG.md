@@ -4,6 +4,8 @@
 
 - ✨ An `npm` publisher publishes a tarball built by the flake to an npm registry, with dist-tag
   aliases such as `latest` that only move forward.
+- ✨ A `cargo` publisher uploads a crate built by the flake to crates.io or any sparse-index
+  registry.
 
 ## [0.22.0] - 2026-11-21
 

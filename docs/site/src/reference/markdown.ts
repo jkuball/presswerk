@@ -1,3 +1,4 @@
+import cargoPage from './pages/cargo.md?raw';
 import changelogPage from './pages/changelog.md?raw';
 import cliPage from './pages/cli.md?raw';
 import declarationSchemaPage from './pages/declaration-schema.md?raw';
@@ -168,6 +169,15 @@ export const referencePages: ReferencePage[] = [
     title: 'Release publishers',
     description: 'How Presswerk publishes releases outside the repository, and its built-in publishers.',
     markdown: (_, base) => fill(publishersPage, base, {}),
+  },
+  {
+    slug: 'reference/publishers/cargo',
+    title: 'Cargo publisher',
+    description: 'The Cargo publisher for crates.io and alternative registries: crate archives, retry behavior, workspaces, token, and options.',
+    markdown: ({ options }, base, target) =>
+      fill(cargoPage, base, {
+        options: optionList(options, 'publishers.cargo.', 3, target),
+      }),
   },
   {
     slug: 'reference/publishers/github-release',

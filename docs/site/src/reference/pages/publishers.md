@@ -21,6 +21,7 @@ publisher's page.
 
 Presswerk has these built-in publishers:
 
+- [Cargo](/reference/publishers/cargo/) for crates on crates.io and alternative registries
 - [GitHub Release](/reference/publishers/github-release/)
 - [npm](/reference/publishers/npm/) for package tarballs
 - [OCI: Helm Chart](/reference/publishers/oci-helm/) for packaged charts in OCI registries

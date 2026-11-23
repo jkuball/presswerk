@@ -48,7 +48,7 @@ Every field is required unless noted otherwise, and unknown fields are rejected.
   `emoji`, a `description`, and a `semver` level of `"major"`, `"minor"`, `"patch"`, or `null`.
   `conventional.catalog` is keyed by lowercase type, and each entry has a `title` and a `semver`
   level.
-- `publishers`: keyed by publisher type, `github-release`, `npm`, `oci-helm`, or `oci-image`, and then by
+- `publishers`: keyed by publisher type, `cargo`, `github-release`, `npm`, `oci-helm`, or `oci-image`, and then by
   name. All may be empty. Every publisher has `after`, a list of publisher addresses in
   `<type>.<name>` form that must complete first. It may be missing in older declarations and then
   means an empty list. The module-only `before` option never enters the declaration. A credential
@@ -74,6 +74,8 @@ Every field is required unless noted otherwise, and unknown fields are rejected.
   URL, its `access`, `public` or `restricted`, the dist-tag `tag` sent with the upload, and
   `aliases`, a list of templates without `{version}`. It has either a `token` credential, or a
   `username` and a `password` credential.
+  `cargo` may be missing in older declarations. A Cargo publisher has the `name` of its crate, the
+  absolute store path of its `crate` archive, its sparse `index` URL, and a `token` credential.
 - `trustedPredecessor`: optional, and present only when declared. The previous release the CLI
   trusts without reading its declaration, with its `tag` and the full hexadecimal `commit` SHA
   that tag points to.
