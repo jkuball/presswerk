@@ -19,7 +19,7 @@ publisher's page.
 
 ## Built-in publishers
 
-Presswerk has four built-in publishers:
+Presswerk has these built-in publishers:
 
 - [GitHub Release](/reference/publishers/github-release/)
 - [npm](/reference/publishers/npm/) for package tarballs
