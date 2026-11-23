@@ -48,7 +48,7 @@ Every field is required unless noted otherwise, and unknown fields are rejected.
   `emoji`, a `description`, and a `semver` level of `"major"`, `"minor"`, `"patch"`, or `null`.
   `conventional.catalog` is keyed by lowercase type, and each entry has a `title` and a `semver`
   level.
-- `publishers`: keyed by publisher type, `github-release`, `oci-helm`, or `oci-image`, and then by
+- `publishers`: keyed by publisher type, `github-release`, `npm`, `oci-helm`, or `oci-image`, and then by
   name. All may be empty. Every publisher has `after`, a list of publisher addresses in
   `<type>.<name>` form that must complete first. It may be missing in older declarations and then
   means an empty list. The module-only `before` option never enters the declaration. A credential
@@ -69,6 +69,11 @@ Every field is required unless noted otherwise, and unknown fields are rejected.
   may use `{major}`, `{minor}`, and `{patch}`; every tag contains `{version}`, no alias does, and
   `aliases` may be missing in older declarations. `compression` has either `gzip` or `zstd`, each
   with its `level`; it may be missing in older declarations and then means gzip at level 6.
+  `npm` may be missing in older declarations. An npm publisher has the `name` of its package, the
+  absolute store path of its `package` tarball or of a directory with exactly one, its `registry`
+  URL, its `access`, `public` or `restricted`, the dist-tag `tag` sent with the upload, and
+  `aliases`, a list of templates without `{version}`. It has either a `token` credential, or a
+  `username` and a `password` credential.
 - `trustedPredecessor`: optional, and present only when declared. The previous release the CLI
   trusts without reading its declaration, with its `tag` and the full hexadecimal `commit` SHA
   that tag points to.
