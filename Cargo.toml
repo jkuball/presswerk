@@ -29,4 +29,5 @@ ureq = { version = "2.12", features = ["json"] }
 url = "2"
 serde_yaml_ng = "0.10.0"
 zstd = "0.14.4"
+zip = { version = "9.8.1", default-features = false, features = ["deflate-flate2"] }
 

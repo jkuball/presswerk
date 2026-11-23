@@ -84,6 +84,7 @@ export default defineConfig({
                 { label: 'npm', slug: 'reference/publishers/npm' },
                 { label: 'OCI: Helm Chart', slug: 'reference/publishers/oci-helm' },
                 { label: 'OCI: Image', slug: 'reference/publishers/oci-image' },
+                { label: 'Python', slug: 'reference/publishers/python' },
               ],
             },
           ],

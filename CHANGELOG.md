@@ -6,6 +6,8 @@
   aliases such as `latest` that only move forward.
 - ✨ A `cargo` publisher uploads a crate built by the flake to crates.io or any sparse-index
   registry.
+- ✨ A `python` publisher uploads the wheels and sdist built by the flake to PyPI or any other
+  package index, and completes a partially uploaded release on retry.
 
 ## [0.22.0] - 2026-11-21
 
