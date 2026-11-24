@@ -20,5 +20,8 @@
     # Presswerk's own commits use Gitmoji, and documentation changes release a patch.
     analyzer.gitmoji.enable = true;
     analyzer.gitmoji.catalog.memo.semver = "patch";
+    # The hand-written highlights carry the release; the generated commit groups fold into a
+    # <details> block so they do not bury them. GitHub needs the blank lines around the Markdown.
+    changelog.template = builtins.readFile ./release-notes.md.j2;
   };
 }
