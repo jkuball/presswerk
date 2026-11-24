@@ -1,8 +1,26 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.1] - 2026-11-24
 
 - 🐛 `publish` keeps every fetched artifact from garbage collection until it is done with it.
+
+<details>
+<summary>Commits</summary>
+
+### 📝 Add or update documentation
+
+- (agents): Add agent instructions
+- (docs): Note the temporary GC roots of fetched artifacts
+
+### 🐛 Fix a bug
+
+- (artifacts): Keep fetched artifacts alive until publish is done
+
+### 🔧 Add or update configuration files
+
+- (release): Collapse commit groups in release notes
+
+</details>
 
 ## [0.23.0] - 2026-11-23
 
