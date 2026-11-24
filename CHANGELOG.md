@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- 🐛 `publish` keeps every fetched artifact from garbage collection until it is done with it.
+
 ## [0.23.0] - 2026-11-23
 
 - ✨ An `npm` publisher publishes a tarball built by the flake to an npm registry, with dist-tag

@@ -115,6 +115,7 @@ after the first failure; publishers already running finish.
 
 `publish` never builds anything, and evaluating an output for another system does not build it
 either. Before anything is written, `publish` fetches every artifact a publisher needs from the
-local Nix store or a substituter, and stops if one is missing. Whatever builds the artifacts only
-has to make them available to `publish`: in a binary cache it can read, or in the same Nix store,
-such as when one machine builds and publishes.
+local Nix store or a substituter, and stops if one is missing. Temporary GC roots keep the fetched
+artifacts in the store until `publish` is done. Whatever builds the artifacts only has to make them
+available to `publish`: in a binary cache it can read, or in the same Nix store, such as when one
+machine builds and publishes.
