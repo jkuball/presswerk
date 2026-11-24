@@ -753,7 +753,8 @@ pub fn publish_to_remote(
                 .map(move |(label, path)| (format!("{} {label}", node.name), path))
         })
         .collect();
-    crate::artifacts::fetch(
+    // The roots keep the artifacts from garbage collection until every publisher has run.
+    let _artifact_roots = crate::artifacts::fetch(
         artifacts
             .iter()
             .map(|(label, path)| (label.clone(), path.as_str())),
