@@ -2,8 +2,6 @@
 
 ## [0.23.1] - 2026-11-24
 
-- 🐛 `publish` keeps every fetched artifact from garbage collection until it is done with it.
-
 <details>
 <summary>All 4 commits</summary>
 
@@ -22,14 +20,9 @@
 
 </details>
 
-## [0.23.0] - 2026-11-23
+- 🐛 `publish` keeps every fetched artifact from garbage collection until it is done with it.
 
-- ✨ An `npm` publisher publishes a tarball built by the flake to an npm registry, with dist-tag
-  aliases such as `latest` that only move forward.
-- ✨ A `cargo` publisher uploads a crate built by the flake to crates.io or any sparse-index
-  registry.
-- ✨ A `python` publisher uploads the wheels and sdist built by the flake to PyPI or any other
-  package index, and completes a partially uploaded release on retry.
+## [0.23.0] - 2026-11-23
 
 <details>
 <summary>All 31 commits</summary>
@@ -85,14 +78,14 @@
 
 </details>
 
-## [0.22.0] - 2026-11-21
+- ✨ An `npm` publisher publishes a tarball built by the flake to an npm registry, with dist-tag
+  aliases such as `latest` that only move forward.
+- ✨ A `cargo` publisher uploads a crate built by the flake to crates.io or any sparse-index
+  registry.
+- ✨ A `python` publisher uploads the wheels and sdist built by the flake to PyPI or any other
+  package index, and completes a partially uploaded release on retry.
 
-- ✨ A previous release that Presswerk cannot read is now trusted with the `trustedPredecessor`
-  option in the release module, so `plan` passes and the usual `prepare` releases on top of it,
-  without running `prepare --trust-predecessor` by hand.
-- ✨ `plan` now accepts `--trust-predecessor` too.
-- ✨ A `trustedPredecessor` that names an older release than the previous one now has no effect,
-  and `plan` and `prepare` warn that it can be removed.
+## [0.22.0] - 2026-11-21
 
 <details>
 <summary>All 5 commits</summary>
@@ -116,16 +109,14 @@
 
 </details>
 
-## [0.21.0] - 2026-11-21
+- ✨ A previous release that Presswerk cannot read is now trusted with the `trustedPredecessor`
+  option in the release module, so `plan` passes and the usual `prepare` releases on top of it,
+  without running `prepare --trust-predecessor` by hand.
+- ✨ `plan` now accepts `--trust-predecessor` too.
+- ✨ A `trustedPredecessor` that names an older release than the previous one now has no effect,
+  and `plan` and `prepare` warn that it can be removed.
 
-- 💥 Credentials are declared as `{ env = "NAME"; }` instead of `{ secret = "NAME"; }`; usernames
-  may still be `{ value = "…"; }`. This affects every publisher with credentials, including the
-  GitHub Release token, which defaulted to `token.secret = "GITHUB_TOKEN"`. If the previous release
-  used the old syntax, `plan` reports it as unreadable; once you have verified that it is complete,
-  run `presswerk prepare --trust-predecessor <tag>=<commit>`, which `prepare` prints.
-- 💥 `publish` now stops before writing anything if a declared secret is missing.
-- ✨ Two publishers that claim the same tag or GitHub Release now stop the release before anything
-  is published.
+## [0.21.0] - 2026-11-21
 
 <details>
 <summary>All 27 commits</summary>
@@ -183,10 +174,16 @@
 
 </details>
 
-## [0.20.1] - 2026-11-19
+- 💥 Credentials are declared as `{ env = "NAME"; }` instead of `{ secret = "NAME"; }`; usernames
+  may still be `{ value = "…"; }`. This affects every publisher with credentials, including the
+  GitHub Release token, which defaulted to `token.secret = "GITHUB_TOKEN"`. If the previous release
+  used the old syntax, `plan` reports it as unreadable; once you have verified that it is complete,
+  run `presswerk prepare --trust-predecessor <tag>=<commit>`, which `prepare` prints.
+- 💥 `publish` now stops before writing anything if a declared secret is missing.
+- ✨ Two publishers that claim the same tag or GitHub Release now stop the release before anything
+  is published.
 
-- 🐛 `plan` and `prepare` build on a release that is committed but not yet published or whose tag
-  is not fetched yet, instead of failing.
+## [0.20.1] - 2026-11-19
 
 <details>
 <summary>All 7 commits</summary>
@@ -209,10 +206,10 @@
 
 </details>
 
-## [0.20.0] - 2026-11-18
+- 🐛 `plan` and `prepare` build on a release that is committed but not yet published or whose tag
+  is not fetched yet, instead of failing.
 
-- ✨ The `stable` option declares whether the public API is stable; while it is false, a breaking
-  change on `0.y.z` advances the minor version instead of releasing `1.0.0`.
+## [0.20.0] - 2026-11-18
 
 <details>
 <summary>All 8 commits</summary>
@@ -239,13 +236,10 @@
 
 </details>
 
-## [0.19.0] - 2026-11-18
+- ✨ The `stable` option declares whether the public API is stable; while it is false, a breaking
+  change on `0.y.z` advances the minor version instead of releasing `1.0.0`.
 
-- ✨ `publish` runs independent publishers at the same time, up to `--jobs`, and orders the others
-  with the `after` and `before` options.
-- 🐛 A failing publisher only skips the publishers that depend on it, and `publish` reports the
-  partial result and exits with a failure status.
-- ⚡️ The OCI publishers upload image layers in a pipeline.
+## [0.19.0] - 2026-11-18
 
 <details>
 <summary>All 18 commits</summary>
@@ -288,9 +282,13 @@
 
 </details>
 
-## [0.18.0] - 2026-11-17
+- ✨ `publish` runs independent publishers at the same time, up to `--jobs`, and orders the others
+  with the `after` and `before` options.
+- 🐛 A failing publisher only skips the publishers that depend on it, and `publish` reports the
+  partial result and exits with a failure status.
+- ⚡️ The OCI publishers upload image layers in a pipeline.
 
-- ✨ `publish` prints each step as soon as it completes instead of at the end.
+## [0.18.0] - 2026-11-17
 
 <details>
 <summary>1 commit</summary>
@@ -301,10 +299,9 @@
 
 </details>
 
-## [0.17.1] - 2026-11-17
+- ✨ `publish` prints each step as soon as it completes instead of at the end.
 
-- 🐛 A GitHub Release whose notes exceed GitHub's size limit links to the changelog instead of
-  failing.
+## [0.17.1] - 2026-11-17
 
 <details>
 <summary>1 commit</summary>
@@ -315,11 +312,10 @@
 
 </details>
 
-## [0.17.0] - 2026-11-17
+- 🐛 A GitHub Release whose notes exceed GitHub's size limit links to the changelog instead of
+  failing.
 
-- ✨ The OCI image publisher takes over the aliases of a trusted predecessor, and `plan` warns
-  about aliases that `publish` keeps or takes over, and before it reads aliases without
-  credentials.
+## [0.17.0] - 2026-11-17
 
 <details>
 <summary>All 12 commits</summary>
@@ -350,9 +346,11 @@
 
 </details>
 
-## [0.16.1] - 2026-11-16
+- ✨ The OCI image publisher takes over the aliases of a trusted predecessor, and `plan` warns
+  about aliases that `publish` keeps or takes over, and before it reads aliases without
+  credentials.
 
-- 🐛 `publish` checks that Git has a tagger identity before it writes anything.
+## [0.16.1] - 2026-11-16
 
 <details>
 <summary>All 5 commits</summary>
@@ -376,10 +374,9 @@
 
 </details>
 
-## [0.16.0] - 2026-11-15
+- 🐛 `publish` checks that Git has a tagger identity before it writes anything.
 
-- ✨ Hand-written notes under `## [Unreleased]` move into the new version section, and `prepare`
-  removes the unreleased section.
+## [0.16.0] - 2026-11-15
 
 <details>
 <summary>All 5 commits</summary>
@@ -397,9 +394,10 @@
 
 </details>
 
-## [0.15.0] - 2026-11-15
+- ✨ Hand-written notes under `## [Unreleased]` move into the new version section, and `prepare`
+  removes the unreleased section.
 
-- ✨ The changelog's version heading format and its strftime date format are declarable.
+## [0.15.0] - 2026-11-15
 
 <details>
 <summary>All 10 commits</summary>
@@ -425,10 +423,9 @@
 
 </details>
 
-## [0.14.0] - 2026-11-15
+- ✨ The changelog's version heading format and its strftime date format are declarable.
 
-- ✨ A Cargo workspace version file updates the workspace version and its members in one lock
-  file.
+## [0.14.0] - 2026-11-15
 
 <details>
 <summary>All 5 commits</summary>
@@ -452,9 +449,10 @@
 
 </details>
 
-## [0.13.0] - 2026-11-15
+- ✨ A Cargo workspace version file updates the workspace version and its members in one lock
+  file.
 
-- ✨ JSON and TOML version files select keys with quoted segments, such as `"tool.x".version`.
+## [0.13.0] - 2026-11-15
 
 <details>
 <summary>All 4 commits</summary>
@@ -477,10 +475,9 @@
 
 </details>
 
-## [0.12.0] - 2026-11-15
+- ✨ JSON and TOML version files select keys with quoted segments, such as `"tool.x".version`.
 
-- ✨ `prepare` adopts a predecessor that has no Presswerk declaration and trusts lightweight tags,
-  so an existing project can switch to Presswerk without a matching release.
+## [0.12.0] - 2026-11-15
 
 <details>
 <summary>All 8 commits</summary>
@@ -501,10 +498,10 @@
 
 </details>
 
-## [0.11.0] - 2026-11-15
+- ✨ `prepare` adopts a predecessor that has no Presswerk declaration and trusts lightweight tags,
+  so an existing project can switch to Presswerk without a matching release.
 
-- ✨ A changelog without version headings receives the new section before its first level-2
-  heading.
+## [0.11.0] - 2026-11-15
 
 <details>
 <summary>1 commit</summary>
@@ -515,9 +512,10 @@
 
 </details>
 
-## [0.10.1] - 2026-11-15
+- ✨ A changelog without version headings receives the new section before its first level-2
+  heading.
 
-- 👷 Presswerk's own releases publish from the release app's push; nothing changes for users.
+## [0.10.1] - 2026-11-15
 
 <details>
 <summary>1 commit</summary>
@@ -528,12 +526,9 @@
 
 </details>
 
-## [0.10.0] - 2026-11-15
+- 👷 Presswerk's own releases publish from the release app's push; nothing changes for users.
 
-- ✨ Changelog sections and GitHub Release bodies are rendered from a declarable MiniJinja
-  template, with the note groups ordered by release level.
-- 🐛 `publish` stops on a GitHub Release body that conflicts with the release and ignores later
-  edits to a published one.
+## [0.10.0] - 2026-11-15
 
 <details>
 <summary>All 6 commits</summary>
@@ -555,10 +550,12 @@
 
 </details>
 
-## [0.9.0] - 2026-11-15
+- ✨ Changelog sections and GitHub Release bodies are rendered from a declarable MiniJinja
+  template, with the note groups ordered by release level.
+- 🐛 `publish` stops on a GitHub Release body that conflicts with the release and ignores later
+  edits to a published one.
 
-- 💥 The OCI publisher type `publishers.oci` is now `publishers.oci-image`.
-- ✨ An `oci-helm` publisher pushes packaged Helm charts to OCI registries.
+## [0.9.0] - 2026-11-15
 
 <details>
 <summary>All 12 commits</summary>
@@ -595,9 +592,10 @@
 
 </details>
 
-## [0.8.2] - 2026-11-14
+- 💥 The OCI publisher type `publishers.oci` is now `publishers.oci-image`.
+- ✨ An `oci-helm` publisher pushes packaged Helm charts to OCI registries.
 
-- 🐛 Presswerk evaluates with the user's Nix CLI and enables the experimental features it needs.
+## [0.8.2] - 2026-11-14
 
 <details>
 <summary>All 4 commits</summary>
@@ -617,9 +615,9 @@
 
 </details>
 
-## [0.8.1] - 2026-11-14
+- 🐛 Presswerk evaluates with the user's Nix CLI and enables the experimental features it needs.
 
-- ⚡️ Building Presswerk from the flake reuses its cached Rust dependencies across releases.
+## [0.8.1] - 2026-11-14
 
 <details>
 <summary>All 7 commits</summary>
@@ -642,12 +640,9 @@
 
 </details>
 
-## [0.8.0] - 2026-11-14
+- ⚡️ Building Presswerk from the flake reuses its cached Rust dependencies across releases.
 
-- ✨ An OCI publisher pushes images built by the flake to container registries, with gzip or zstd
-  layers and aliases such as `{major}.{minor}`.
-- ✨ `plan` and `publish` check every publisher of the previous release, and a release no longer
-  needs a publisher.
+## [0.8.0] - 2026-11-14
 
 <details>
 <summary>All 54 commits</summary>
@@ -744,10 +739,12 @@
 
 </details>
 
-## [0.7.0] - 2026-11-12
+- ✨ An OCI publisher pushes images built by the flake to container registries, with gzip or zstd
+  layers and aliases such as `{major}.{minor}`.
+- ✨ `plan` and `publish` check every publisher of the previous release, and a release no longer
+  needs a publisher.
 
-- 💥 Every release declares its commit analyzer, such as `analyzer.gitmoji.enable = true`.
-- ✨ A Conventional Commits analyzer releases from Conventional Commit subjects.
+## [0.7.0] - 2026-11-12
 
 <details>
 <summary>All 8 commits</summary>
@@ -777,9 +774,10 @@
 
 </details>
 
-## [0.6.2] - 2026-11-12
+- 💥 Every release declares its commit analyzer, such as `analyzer.gitmoji.enable = true`.
+- ✨ A Conventional Commits analyzer releases from Conventional Commit subjects.
 
-- 📝 The README and the docs homepage describe Presswerk as reproducible releases.
+## [0.6.2] - 2026-11-12
 
 <details>
 <summary>All 10 commits</summary>
@@ -808,9 +806,9 @@
 
 </details>
 
-## [0.6.1] - 2026-11-11
+- 📝 The README and the docs homepage describe Presswerk as reproducible releases.
 
-- 🐛 The version badge in the docs links correctly again.
+## [0.6.1] - 2026-11-11
 
 <details>
 <summary>All 3 commits</summary>
@@ -823,10 +821,9 @@
 
 </details>
 
-## [0.6.0] - 2026-11-11
+- 🐛 The version badge in the docs links correctly again.
 
-- ✨ GitHub Releases attach build artifacts from the flake.
-- 🔥 Presswerk's own releases no longer attach its CLI.
+## [0.6.0] - 2026-11-11
 
 <details>
 <summary>All 4 commits</summary>
@@ -849,9 +846,10 @@
 
 </details>
 
-## [0.5.1] - 2026-11-11
+- ✨ GitHub Releases attach build artifacts from the flake.
+- 🔥 Presswerk's own releases no longer attach its CLI.
 
-- 📝 The docs read Presswerk's version from the release instead of a version file.
+## [0.5.1] - 2026-11-11
 
 <details>
 <summary>1 commit</summary>
@@ -862,10 +860,9 @@
 
 </details>
 
-## [0.5.0] - 2026-11-11
+- 📝 The docs read Presswerk's version from the release instead of a version file.
 
-- ✨ Version files can be TOML, JSON, plain text, or any text file matched by a regular
-  expression.
+## [0.5.0] - 2026-11-11
 
 <details>
 <summary>All 2 commits</summary>
@@ -877,9 +874,10 @@
 
 </details>
 
-## [0.4.1] - 2026-11-11
+- ✨ Version files can be TOML, JSON, plain text, or any text file matched by a regular
+  expression.
 
-- 🐛 The release commit subject names the declared tag.
+## [0.4.1] - 2026-11-11
 
 <details>
 <summary>All 2 commits</summary>
@@ -894,9 +892,9 @@
 
 </details>
 
-## [0.4.0] - 2026-11-11
+- 🐛 The release commit subject names the declared tag.
 
-- ✨ A badge version file generates a version badge for light, dark, or both colour schemes.
+## [0.4.0] - 2026-11-11
 
 <details>
 <summary>All 5 commits</summary>
@@ -914,9 +912,9 @@
 
 </details>
 
-## [0.3.5] - 2026-11-11
+- ✨ A badge version file generates a version badge for light, dark, or both colour schemes.
 
-- ⚡️ Presswerk's CI deploys the docs from the build it already ran; nothing changes for users.
+## [0.3.5] - 2026-11-11
 
 <details>
 <summary>All 2 commits</summary>
@@ -928,9 +926,9 @@
 
 </details>
 
-## [0.3.4] - 2026-11-11
+- ⚡️ Presswerk's CI deploys the docs from the build it already ran; nothing changes for users.
 
-- 🔍️ Search engines may crawl the docs and find them through the sitemap.
+## [0.3.4] - 2026-11-11
 
 <details>
 <summary>All 4 commits</summary>
@@ -950,9 +948,9 @@
 
 </details>
 
-## [0.3.3] - 2026-11-11
+- 🔍️ Search engines may crawl the docs and find them through the sitemap.
 
-- 📝 The README is a short entry point with a minimal release declaration.
+## [0.3.3] - 2026-11-11
 
 <details>
 <summary>All 5 commits</summary>
@@ -970,9 +968,9 @@
 
 </details>
 
-## [0.3.2] - 2026-11-11
+- 📝 The README is a short entry point with a minimal release declaration.
 
-- 🌐 The docs are served from presswerk.dev and deployed with each release.
+## [0.3.2] - 2026-11-11
 
 <details>
 <summary>All 4 commits</summary>
@@ -995,9 +993,9 @@
 
 </details>
 
-## [0.3.1] - 2026-11-11
+- 🌐 The docs are served from presswerk.dev and deployed with each release.
 
-- 📝 The published docs are readable by agents through `llms.txt`.
+## [0.3.1] - 2026-11-11
 
 <details>
 <summary>All 2 commits</summary>
@@ -1012,14 +1010,9 @@
 
 </details>
 
-## [0.3.0] - 2026-11-10
+- 📝 The published docs are readable by agents through `llms.txt`.
 
-- 💥 Declarations use the unstable `schemaVersion = 0` until Presswerk 1.0.
-- ✨ Gitmoji catalog entries can be removed with `lib.mkForce null`.
-- 🚸 `prepare` and `publish` report each step in aligned columns, and release note lines leave out
-  the Gitmoji.
-- 📝 The documentation site covers the release model, a walkthrough, CI integration, recovery, and
-  a generated reference.
+## [0.3.0] - 2026-11-10
 
 <details>
 <summary>All 124 commits</summary>
@@ -1183,9 +1176,14 @@
 
 </details>
 
-## [0.2.2] - 2026-11-07
+- 💥 Declarations use the unstable `schemaVersion = 0` until Presswerk 1.0.
+- ✨ Gitmoji catalog entries can be removed with `lib.mkForce null`.
+- 🚸 `prepare` and `publish` report each step in aligned columns, and release note lines leave out
+  the Gitmoji.
+- 📝 The documentation site covers the release model, a walkthrough, CI integration, recovery, and
+  a generated reference.
 
-- 💄 The docs site and the README carry Presswerk's brand.
+## [0.2.2] - 2026-11-07
 
 <details>
 <summary>All 10 commits</summary>
@@ -1217,9 +1215,9 @@
 
 </details>
 
-## [0.2.1] - 2026-11-07
+- 💄 The docs site and the README carry Presswerk's brand.
 
-- 📝 The repository is public, with a README and CI that work for outside contributors.
+## [0.2.1] - 2026-11-07
 
 <details>
 <summary>All 10 commits</summary>
@@ -1251,10 +1249,9 @@
 
 </details>
 
-## [0.2.0] - 2026-11-07
+- 📝 The repository is public, with a README and CI that work for outside contributors.
 
-- ✨ The Gitmoji catalog is declarable, and commits may use Gitmoji shortcodes.
-- 📄 Presswerk is licensed under MIT OR Apache-2.0.
+## [0.2.0] - 2026-11-07
 
 <details>
 <summary>All 18 commits</summary>
@@ -1306,11 +1303,10 @@
 
 </details>
 
-## [0.1.0] - 2026-11-06
+- ✨ The Gitmoji catalog is declarable, and commits may use Gitmoji shortcodes.
+- 📄 Presswerk is licensed under MIT OR Apache-2.0.
 
-- 🎉 Presswerk releases a flake from a Nix declaration: `plan` and `prepare` analyze Gitmoji
-  commits and write version files, the changelog, and a release commit, and `publish` creates the
-  Git tag and the GitHub Release.
+## [0.1.0] - 2026-11-06
 
 <details>
 <summary>All 23 commits</summary>
@@ -1363,3 +1359,7 @@
 - 🔧 Add direnv configuration
 
 </details>
+
+- 🎉 Presswerk releases a flake from a Nix declaration: `plan` and `prepare` analyze Gitmoji
+  commits and write version files, the changelog, and a release commit, and `publish` creates the
+  Git tag and the GitHub Release.
