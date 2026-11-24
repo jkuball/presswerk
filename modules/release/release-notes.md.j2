@@ -1,7 +1,7 @@
 {% if unreleased %}{{ unreleased }}
 {% if groups %}
-{% endif %}{% endif %}{% if groups %}<details>
-<summary>Commits</summary>
+{% endif %}{% endif %}{% if groups %}{% set count = groups | map(attribute="commits") | map("length") | sum %}<details>
+<summary>{% if count == 1 %}1 commit{% else %}All {{ count }} commits{% endif %}</summary>
 
 {% for group in groups %}### {{ group.title }}
 
