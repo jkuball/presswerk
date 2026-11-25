@@ -13,8 +13,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
-  pages: write
 
 concurrency:
   group: ${{ github.event_name == 'pull_request' && github.ref || 'presswerk-release' }}
@@ -23,9 +21,10 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    outputs:
+      pages-artifact: ${{ steps.docs.outputs.artifact }}
     # Release runs publish one exact commit: the app's push of a release commit, or a
     # dispatched candidate for recovery.
-    environment: ${{ (github.event_name == 'push' && github.actor == 'presswerk-releases[bot]' || github.event_name == 'workflow_dispatch' && inputs.candidate != '') && 'github-pages' || '' }}
     env:
       RELEASE: ${{ github.event_name == 'push' && github.actor == 'presswerk-releases[bot]' || github.event_name == 'workflow_dispatch' && inputs.candidate != '' }}
     steps:
@@ -122,16 +121,33 @@ jobs:
           "$(readlink -f "$RUNNER_TEMP/result-packages.x86_64-linux.presswerk")"
           --keep-revisions 5
 
+      # Artifacts outlive a run attempt, and deploy-pages finds its artifact by name, so every
+      # attempt that builds the docs uploads them under a name of its own.
       - name: Collect docs
+        id: docs
         if: env.RELEASE == 'true'
         run: |
           cp -rL --no-preserve=mode "$RUNNER_TEMP/result-packages.x86_64-linux.docs" "$RUNNER_TEMP/site"
+          echo "artifact=github-pages-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-pages-artifact@v4
         if: env.RELEASE == 'true'
         with:
+          name: ${{ steps.docs.outputs.artifact }}
           path: ${{ runner.temp }}/site
 
-      - name: Deploy docs
-        if: env.RELEASE == 'true'
-        uses: actions/deploy-pages@v4
+  # Deploying in its own job lets a failed deploy be re-run without building and uploading the
+  # docs again, and gives the upload time to become visible to deploy-pages' artifact lookup
+  # (actions/deploy-pages#451).
+  deploy-docs:
+    needs: ci
+    if: needs.ci.outputs.pages-artifact != ''
+    runs-on: ubuntu-latest
+    environment: github-pages
+    permissions:
+      id-token: write
+      pages: write
+    steps:
+      - uses: actions/deploy-pages@v4
+        with:
+          artifact_name: ${{ needs.ci.outputs.pages-artifact }}
