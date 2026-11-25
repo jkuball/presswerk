@@ -1,9 +1,23 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.2] - 2026-11-25
 
 - 📝 Every release in the changelog starts with hand-written highlights and folds its commits
   below them.
+
+<details>
+<summary>Commits (8)</summary>
+
+- 🔧 (release): List the commits flat below the highlights
+- 🔧 (release): Stop releasing documentation-only changes
+- 🔧 (release): Put the folded commits above the highlights
+- 🔧 (release): Count the commits in the release notes summary
+- 📝 (changelog): List every release's commits flat below its highlights
+- 📝 (changelog): Put the folded commits above the highlights
+- 📝 (changelog): Highlight every release and fold its commits
+- 💚 (ci): Deploy the docs in their own job from a per-attempt artifact
+
+</details>
 
 ## [0.23.1] - 2026-11-24
 
