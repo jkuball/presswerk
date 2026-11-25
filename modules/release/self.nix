@@ -19,8 +19,10 @@
     publishers.github-release.default.repository = "jkuball/presswerk";
     # Presswerk's own commits use Gitmoji.
     analyzer.gitmoji.enable = true;
-    # The hand-written highlights carry the release; the generated commit groups fold into a
-    # <details> block so they do not bury them. GitHub needs the blank lines around the Markdown.
+    # The hand-written highlights carry the release; the generated commits follow as one flat list,
+    # each marked with its Gitmoji, folded into a <details> block so they do not bury them. A
+    # release without highlights shows the list unfolded. GitHub needs the blank lines around the
+    # Markdown inside <details>.
     changelog.template = builtins.readFile ./release-notes.md.j2;
   };
 }

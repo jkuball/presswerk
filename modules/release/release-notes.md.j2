@@ -1,12 +1,11 @@
-{% if groups %}{% set count = groups | map(attribute="commits") | map("length") | sum %}<details>
-<summary>{% if count == 1 %}1 commit{% else %}All {{ count }} commits{% endif %}</summary>
+{% set count = groups | map(attribute="commits") | map("length") | sum %}{% if unreleased %}{{ unreleased }}
+{% if groups %}
+<details>
+<summary>Commits ({{ count }})</summary>
 
-{% for group in groups %}### {{ group.title }}
-
-{% for commit in group.commits %}- {{ commit.text }}
-{% endfor %}
-{% endfor %}</details>
-{% if unreleased %}
-{% endif %}{% endif %}{% if unreleased %}{{ unreleased }}
-{% elif not groups %}No recorded changes.
+{% for group in groups %}{% set emoji = group.title | split(" ") | first %}{% for commit in group.commits %}- {{ emoji }} {{ commit.text }}
+{% endfor %}{% endfor %}
+</details>
+{% endif %}{% elif groups %}{% for group in groups %}{% set emoji = group.title | split(" ") | first %}{% for commit in group.commits %}- {{ emoji }} {{ commit.text }}
+{% endfor %}{% endfor %}{% else %}No recorded changes.
 {% endif %}
