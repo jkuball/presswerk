@@ -18,7 +18,7 @@ user's point of view, in the style of the existing highlights, and wrap it at 10
 
 The line starts with the Gitmoji of the change and is one sentence. On release, `prepare`
 replaces the `## [Unreleased]` section with the new version heading and puts the hand-written
-lines above the commit groups that it generates from the commit subjects. The lines alone do
-not cause a release.
+lines above the folded list of commits that it generates from the commit subjects. The lines
+alone do not cause a release.
 
 Changes that are not user-visible, such as CI, refactors, and internal tooling, need no line.
